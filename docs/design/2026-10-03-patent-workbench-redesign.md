@@ -1,11 +1,25 @@
 # 专利工作台改造方案（dsh-personal-workbench → dsh-patent-workbench）
 
-> 状态：**阶段 0（建模定案）**，2026-10-03 用户逐项拍板。**本文件不改代码。**
+> 状态：**阶段 2 已完成**（阶段 0 定案与阶段 1 改名、阶段 2 案卷均已落地；阶段 3 起待做）。
 > 相关既有工作（另一仓库）：
 >
 > - `deepseek-harness/docs/dsh-workbench-integration-design.md`（2026-09-03 工作台↔专利案件集成，Phase 1–5）
 > - `deepseek-harness/.agents/notes/implemented/architecture/2026-09-03-workbench-case-bridge.{md,zh.md}`
 > - 本仓知识库设计权威源：`docs/design/2026-09-17-knowledge-recall.md`
+
+## 0. 实施进度
+
+| 阶段 | 状态 | 落地内容 / 提交 |
+| --- | --- | --- |
+| 0 建模定案 | ✅ | 本文件（提交 `4d60464`） |
+| 1 改名 | ✅ | `dsh-patent-workbench`：包名 / cordis id / PANEL_NAME / 模块 id / 仓库 URL / README；**刻意保留** DOM 前缀 `data-dsh-personal-workbench-*` 与数据目录 `~/.dsh/workbench/`（提交 `662f335`） |
+| 2 领域字典 + matters | ✅ | 迁移 20：`matters` / `matter_notices` / `matter_deadlines` / `matter_events` + `knowledge_entries.matter_id` + 四类领域字典；`db/repo/matters.ts`（CRUD + 校验）与 `api/routes/matters.ts`（REST）；`test/matters.test.mjs` 9 例 |
+| 3 期限引擎接入 | ⬜ | 依赖 DSH Patent 侧 `@deepseek-ai/dsh-patent-deadline-service`（B′，见 §4） |
+| 4 删除通用功能 | ⬜ | 点子 / 容量 / 日报周报 / 重复任务 + `DROP TABLE`（D4） |
+| 5 知识库加法 + UI | ⬜ | `matter_id` 关联、新 kind、本案卷优先；案件视图 / 期限看板 |
+| 6 bridge 收口 | ⬜ | `workbench_link_patent_case` → `_matter-log.md` → `matter_events` 只读投影 |
+
+已落地的额外事实（供阶段 3 核对）：`matter_notices.notice_kind` / `delivery_mode` 与 `matters.patent_kind` 的值域**逐字**取自 `@deepseek-ai/dsh-patent-deadline` 的 `NoticeKind` / `DeliveryMode` / `PatentKind`，起算时无需翻译层；`replaceMatterDeadlines` 重算时会保留用户已确认的期限状态（done / waived）。
 
 ## 1. 目标与边界
 
@@ -252,7 +266,7 @@ ALTER TABLE knowledge_entries ADD COLUMN matter_id TEXT;
 
 ## 12. 待办 / 未决
 
-- [ ] 阶段 1 前置：本仓当前**无 `.git` / `node_modules` / `lib`**（源码快照）——需 `git init`（或 fork 上游）与 `pnpm install` 才能跑门禁与提交。
+- [x] 阶段 1 前置：已 `git clone upstream`（v1.16.2 + 完整历史）→ `upstream` 仅 fetch、`origin` = `xujian519/dsh-patent-workbench`；`pnpm install` / 构建 / 回归均可跑。
 - [ ] DSH Patent 侧 B′ 的包名/接口最终定稿。
 - [ ] 案号 vs 工作目录：`patent-workspace/<案号>/` 与用户既有 `/Users/xujian/工作/` 目录的关系（`workspace_path` 可配置，不硬编码）。
 - [ ] 官文 PDF 字段抽取（发文日/官文类型）是走 AI 草稿门禁还是人工录入（阶段 3 决定）。
