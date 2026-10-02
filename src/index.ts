@@ -19,6 +19,7 @@ import type { LlmModalityProbe } from './api/routes/model-modalities.js'
 import { normalizeHostPath } from './api/routes/helpers.js'
 import { makeSkillRoutes } from './api/routes/skills.js'
 import { probeSkills } from './api/skills.js'
+import type { PatentDeadlineService } from './shared/patentDeadline.js'
 import { openWorkbenchDb, SchemaTooNewError, type WorkbenchDbConfig } from './db/database.js'
 import { seedDictionaries } from './db/seed.js'
 import { installKnowledgeRecall } from './knowledge-recall.js'
@@ -355,6 +356,14 @@ function applyReady(ctx: Context, db: DatabaseSync, config: Config): void {
 
   const routes = makeRoutes(db, {
     knowledgeRecall,
+    /**
+     * 期限引擎（DSH Patent 的 `patentDeadline` 服务）**软探测**。
+     *
+     * 该服务需在 profile 根域注册（见 `deepseek-harness` 的 patent-deadline 包）；
+     * 未安装/未注册时返回 undefined，重算端点降级为“期限引擎不可用 + 手工录入”。
+     * 绝不进 `inject`：否则未装 DSH Patent 的机器上整个工作台会 pending。
+     */
+    patentDeadline: () => probeService<PatentDeadlineService>(ctx, 'patentDeadline'),
     /**
      * 团队记忆服务：**软探测**（`dsh-team-memory` 目前只注册 AI 工具、没有 provide 服务，
      * 所以这里通常拿不到 → 走"本地 Markdown + 队列补传"的等价通道）。

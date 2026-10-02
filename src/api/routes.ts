@@ -31,6 +31,7 @@ import { makeTaskRoutes } from './routes/tasks.js'
 import type { TeamMemoryService } from '../review-memory.js'
 import { teamMemoryAvailable } from '../review-memory.js'
 import { normalizeRecentWorkspaces } from '../shared/quickWorkspaceRecent.js'
+import type { PatentDeadlineService } from '../shared/patentDeadline.js'
 import { classifyTaskDay } from '../shared/dailyPlanPolicy.js'
 import { isOpenTask } from '../shared/taskProgress.js'
 import type { WorkbenchSettings } from '../shared/contracts.js'
@@ -133,6 +134,13 @@ export interface WorkbenchRouteDeps extends ReminderRouteDeps {
    * 这条覆盖顺序只能用假的对象测，而不是真实文件。
    */
   personas?: PersonaRouteOptions
+  /**
+   * 期限引擎（DSH Patent 的 `patentDeadline` 服务）的**软探测**。
+   *
+   * **绝不能写进 `inject`**：它是可选增强，未安装时插件照样加载，
+   * 只是期限重算端点降级（明确报“期限引擎不可用”）。写进 inject 会让未装它的机器上整个插件 pending。
+   */
+  patentDeadline?: () => PatentDeadlineService | undefined
 }
 
 /**
@@ -369,7 +377,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
     ...makeIdeaRoutes(db),
     ...makeIdeaClusterRoutes(db),
     ...makeKnowledgeRoutes(db),
-    ...makeMatterRoutes(db),
+    ...makeMatterRoutes(db, { patentDeadline: deps.patentDeadline }),
     ...makeAiSessionRoutes(db),
     ...makeReportRoutes(db),
     ...makePlanRoutes(db),

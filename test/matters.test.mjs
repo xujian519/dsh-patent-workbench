@@ -242,8 +242,8 @@ test('deleteMatter: 级联官文/期限/事件，并解绑知识条目的 matter
 
 // --------------------------------------------------------------------------- 路由
 
-function startServer(db) {
-  const routes = makeRoutes(db, {})
+function startServer(db, deps = {}) {
+  const routes = makeRoutes(db, deps)
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     for (const route of routes) {
@@ -256,9 +256,9 @@ function startServer(db) {
   return server
 }
 
-async function withServer(fn) {
+async function withServer(fn, deps = {}) {
   const db = freshDb()
-  const server = startServer(db)
+  const server = startServer(db, deps)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address()
   const base = `http://127.0.0.1:${port}/api/workbench/matters`
@@ -320,4 +320,107 @@ test('routes: 建案 / 列表 / 详情 / 改阶段 / 官文 / 事件 / 删除', 
     assert.equal(removed.status, 200)
     assert.equal((await fetch(`${base}/${matter.id}`)).status, 404)
   })
+})
+
+// --------------------------------------------------------------------------- 期限重算（阶段 3：调 DSH Patent 的 patentDeadline 服务）
+
+/** 替身引擎：只验证"映射与落库"，期限规则本身在 DSH Patent 侧测。 */
+function stubEngine(seen) {
+  return {
+    evaluate(query) {
+      seen.push(query)
+      return {
+        computed: [{
+          id: 'priority-window', label: '优先权期限', legalBasis: '专利法第29条第1款',
+          rawDueDate: '2027-01-05', dueDate: '2027-01-05', daysRemaining: 107, status: 'normal',
+          rolledForward: false, triggerBasis: '申请日',
+        }],
+        pending: [{ id: 'grant-registration', label: '授权登记', legalBasis: '细则第X条', requiredInput: 'authorizationPublicationDate', reason: '缺授权公告日' }],
+        restDayRule: 'apply',
+      }
+    },
+    calendarCoverage: () => ({ years: [2026, 2027] }),
+  }
+}
+
+test('路由：期限重算调引擎、落库、返回待补输入', async () => {
+  const seen = []
+  await withServer(async (base) => {
+    const created = await (await fetch(base, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ caseNumber: 'D-1', title: '期限案卷', matterType: 'drafting', patentKind: 'invention', filingDate: '2026-01-05' }),
+    })).json()
+    const matterId = created.matter.id
+
+    const res = await fetch(`${base}/${matterId}/deadlines/recompute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ today: '2026-09-20' }),
+    })
+    assert.equal(res.status, 200)
+    const payload = await res.json()
+    assert.equal(payload.today, '2026-09-20')
+    assert.equal(payload.restDayRule, 'apply')
+    assert.deepEqual(payload.calendarCoverage.years, [2026, 2027])
+    // pending 没有届满日，只随响应返回，不进真日期列
+    assert.deepEqual(payload.pending.map((entry) => entry.id), ['grant-registration'])
+    assert.equal(payload.deadlines.length, 1)
+    assert.equal(payload.deadlines[0].deadlineKey, 'priority-window')
+    assert.equal(payload.deadlines[0].dueDate, '2027-01-05')
+    assert.equal(payload.deadlines[0].status, 'pending')
+    // computed_from 记来源（可追溯），但**不记** daysRemaining（每天都会变的派生值）
+    assert.equal(payload.deadlines[0].computedFrom.engine, '@deepseek-ai/dsh-patent-deadline')
+    assert.equal(payload.deadlines[0].computedFrom.today, '2026-09-20')
+    assert.equal(payload.deadlines[0].computedFrom.triggerBasis, '申请日')
+    assert.ok(!('daysRemaining' in payload.deadlines[0].computedFrom))
+
+    // 传给引擎的入参：值域逐字对齐（无翻译层）
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].kind, 'invention')
+    assert.deepEqual(seen[0].filingDate, { year: 2026, month: 1, day: 5 })
+    assert.deepEqual(seen[0].today, { year: 2026, month: 9, day: 20 })
+    assert.equal(seen[0].claimsPriority, false)
+
+    // 重算保留用户已确认的状态（done 不被刷回 pending）
+    const stored = (await (await fetch(`${base}/${matterId}/deadlines`)).json()).deadlines
+    assert.equal(stored.length, 1)
+    await fetch(`${base}/${matterId}/deadlines/${stored[0].id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'done' }),
+    })
+    await fetch(`${base}/${matterId}/deadlines/recompute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ today: '2026-09-21' }),
+    })
+    const after = (await (await fetch(`${base}/${matterId}/deadlines`)).json()).deadlines
+    assert.equal(after[0].status, 'done')
+    assert.equal(after[0].computedFrom.today, '2026-09-21')
+  }, { patentDeadline: () => stubEngine(seen) })
+})
+
+test('路由：期限引擎缺失时重算明确降级（409，且不偷偷写期限）', async () => {
+  await withServer(async (base) => {
+    const created = await (await fetch(base, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ caseNumber: 'D-2', title: '无引擎案卷', matterType: 'drafting', patentKind: 'utility-model', filingDate: '2026-02-01' }),
+    })).json()
+    const res = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, { method: 'POST' })
+    assert.equal(res.status, 409)
+    assert.match((await res.json()).error, /期限引擎不可用/)
+    const list = await (await fetch(`${base}/${created.matter.id}/deadlines`)).json()
+    assert.equal(list.deadlines.length, 0)
+  })
+})
+
+test('路由：必填缺失时重算返回 400 中文原因（不静默丢字段）', async () => {
+  const seen = []
+  await withServer(async (base) => {
+    const created = await (await fetch(base, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ caseNumber: 'D-3', title: '缺类型案卷', matterType: 'drafting' }),
+    })).json()
+    const res = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, { method: 'POST' })
+    assert.equal(res.status, 400)
+    assert.match((await res.json()).error, /专利类型/)
+    assert.equal(seen.length, 0)
+
+    const notFound = await fetch(`${base}/no-such-matter/deadlines/recompute`, { method: 'POST' })
+    assert.equal(notFound.status, 404)
+  }, { patentDeadline: () => stubEngine(seen) })
 })
