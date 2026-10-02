@@ -1,5 +1,5 @@
 /**
- * dsh-personal-workbench — host half.
+ * dsh-patent-workbench — host half.
  * V1/V1.5 能力已闭环；V2 起提供每日 AI 智能排序（daily_plans）。
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -32,7 +32,7 @@ import type { TeamMemoryService } from './review-memory.js'
 import { taskWorkspaceFolderName } from './client/taskFolder.js'
 import { loadPersonaTool, proposeDailyPlanTool, proposeIdeaClustersTool, proposeSubtasksTool, readPersonaResourceTool, requestCompletionTool, saveTaskMemoryTool, submitIdeaTasksTool, submitKnowledgeTool, submitReportTool, submitReviewTool, submitTaskTool, updateProgressTool, updateTaskTool } from './tools.js'
 
-export const name = 'personal-workbench'
+export const name = 'patent-workbench'
 
 /**
  * 插件依赖。
@@ -61,7 +61,7 @@ function probeService<T>(ctx: unknown, name: string): T | undefined {
 }
 
 const WORKBENCH_GUIDANCE = [
-  '本机已安装 dsh-personal-workbench 插件（个人工作台）：侧边栏「工作台」入口；',
+  '本机已安装 dsh-patent-workbench 插件（个人工作台）：侧边栏「工作台」入口；',
   'V1 能力：日历 + 任务列表、自然语言快速录入与 AI 澄清、子任务拆解（AI 提案 + 用户确认）、任务关联多个 Harness 会话。',
   'V1.5 已提供任务“执行”：任意节点（含父任务）均可执行，执行会话完成后应调用 workbench_request_completion 提交验收申请，由用户验收后完成；父任务验收通过时未完成子任务会级联完成。AI 不得直接把任务标记为完成/取消。',
   '任务进度（进度是显式值，不由子任务比例派生）：执行过程中**阶段性推进后请主动调用 workbench_update_progress 报一次进度**（0–99 直接生效，不需要用户确认）；这部分工作全部做完时调用 workbench_update_progress progress=100 并给出 summary —— 100 不是可存储的进度，它等同于提交完成验收申请（与 workbench_request_completion 同一条路径），AI 永远不能直接把任务标记为已完成/已取消。咨询/拆解/排序会话不得被这条提示诱导去执行任务。',
@@ -137,12 +137,12 @@ function registerWorkbenchCommand(ctx: Context, db: DatabaseSync): void {
   const commands = probeService<CommandsProbe>(ctx, 'commands')
   if (commands === undefined || typeof commands.register !== 'function') {
     // inject 保证了它存在；真拿不到也**不静默**：打一条可读日志，命令只是不可用。
-    const notice = '[dsh-personal-workbench] 未注册 /workbench 命令：宿主没有提供 commands 服务。'
+    const notice = '[dsh-patent-workbench] 未注册 /workbench 命令：宿主没有提供 commands 服务。'
     ctx.logger?.warn?.(notice)
     console.warn(notice)
     return
   }
-  ctx.effect(() => commands.register(workbenchCommandDefinition(db)), 'dsh-personal-workbench: command')
+  ctx.effect(() => commands.register(workbenchCommandDefinition(db)), 'dsh-patent-workbench: command')
 }
 
 /**
@@ -262,10 +262,10 @@ function applyDegraded(ctx: Context, error: unknown, config: Config): void {
   const detail = error instanceof SchemaTooNewError
     ? `数据库 schema 版本 ${error.dbVersion} 比当前插件支持的 ${error.supportedVersion} 新`
     : `无法打开数据库：${String(error)}`
-  const notice = `[dsh-personal-workbench] 已降级为空转：${detail}。`
+  const notice = `[dsh-patent-workbench] 已降级为空转：${detail}。`
     + '插件本体已加载但未注册路由/工具/提醒，工作台功能不可用。'
-    + '修复：把 @dely0/dsh-personal-workbench 升级到与数据库 schema 匹配的版本'
-    + '（如 `dsh plugin --profile web add @dely0/dsh-personal-workbench@latest`），然后重启 dsh web。'
+    + '修复：把 dsh-patent-workbench 升级到与数据库 schema 匹配的版本'
+    + '（如 `dsh plugin --profile web add dsh-patent-workbench@latest`），然后重启 dsh web。'
     + '请勿降级数据库 schema——那会丢数据语义。'
   ctx.logger?.error?.(notice)
   // 控制台兜底：logger 未必被宿主接管，而这条信息决定用户能不能自救。
@@ -274,11 +274,11 @@ function applyDegraded(ctx: Context, error: unknown, config: Config): void {
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'plugin:workbench',
     order: SECTION_ORDER,
-    text: `本机 dsh-personal-workbench 插件当前处于**降级空转**状态，工作台功能全部不可用。`
+    text: `本机 dsh-patent-workbench 插件当前处于**降级空转**状态，工作台功能全部不可用。`
       + `原因：${detail}。`
       + '请告知用户：升级该插件到与数据库 schema 匹配的版本后重启 dsh web 即可恢复；'
       + '不要试图降级数据库，也不要调用任何 workbench_* 工具（它们未注册）。',
-  }), 'dsh-personal-workbench: degraded-prompt')
+  }), 'dsh-patent-workbench: degraded-prompt')
 }
 
 /** 数据库正常可用时的完整装配（原 apply 主体）。 */
@@ -400,7 +400,7 @@ function applyReady(ctx: Context, db: DatabaseSync, config: Config): void {
       const disposers = routes.map((route) => ctx.webServer.register(route))
       return () => { for (const dispose of disposers) dispose() }
     },
-    'dsh-personal-workbench: routes',
+    'dsh-patent-workbench: routes',
   )
 
   ctx.effect(
@@ -419,7 +419,7 @@ function applyReady(ctx: Context, db: DatabaseSync, config: Config): void {
       ].map((tool) => ctx.tools.register(tool))
       return () => { for (const dispose of disposers) dispose() }
     },
-    'dsh-personal-workbench: tools',
+    'dsh-patent-workbench: tools',
   )
 
   // `/workbench` 斜杠命令：走宿主原生命令注册（→ 原生 `/` 菜单），不自建 DOM 补全浮层。
@@ -443,7 +443,7 @@ function applyReady(ctx: Context, db: DatabaseSync, config: Config): void {
       order: SECTION_ORDER,
       text: WORKBENCH_GUIDANCE,
     })
-  }, 'dsh-personal-workbench: prompt')
+  }, 'dsh-patent-workbench: prompt')
 
-  ctx.effect(() => () => { db.close() }, 'dsh-personal-workbench: db')
+  ctx.effect(() => () => { db.close() }, 'dsh-patent-workbench: db')
 }

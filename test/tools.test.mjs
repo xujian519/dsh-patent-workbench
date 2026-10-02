@@ -29,7 +29,7 @@ function rmTempDir(dir) {
 }
 
 test('agent tools write pending drafts and update tasks', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-tools-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-tools-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -287,7 +287,7 @@ test('agent tools write pending drafts and update tasks', async () => {
 })
 
 test('workbench_update_task 改父任务：parent_id / parent_title 解析、顶层与防环', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-tools-reparent-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-tools-reparent-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -364,7 +364,7 @@ function localDateStr() {
  * 工具不能拒绝（同名任务可能是正当需求），但必须让 AI 有据可依地提醒用户。
  */
 test('workbench_submit_task 在同名任务已存在时给出提醒（尤其是当前会话就是它的关联会话）', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-tools-dup-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-tools-dup-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)

@@ -55,7 +55,7 @@ test('rc2：必须走 retain 才拿得到会话（旧写法 binding() 恒 undefi
   const ref = await acquireSession(host.sessions, 'new-1')
   assert.equal(ref.session, host.session, '拿到的必须就是那个会话驱动')
   assert.equal(host.retained.length, 1, '恰好 retain 一次')
-  assert.deepEqual(host.retained[0].options, { source: 'personal-workbench' },
+  assert.deepEqual(host.retained[0].options, { source: 'patent-workbench' },
     '必须带 source 标签：宿主按它做引用计数，也便于排查"谁占着这个会话"')
 })
 

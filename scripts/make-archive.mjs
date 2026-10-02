@@ -6,7 +6,7 @@
  * 存档的价值全在**可追溯**：拿到目录就能确认包、版本、指纹与当时的验收结论是一套的。
  *
  * 产出 `_local-archive/_archive-v<版本>-<日期时间>/`：
- *   - `dely0-dsh-personal-workbench-<版本>.tgz`  装盘包（正式产物）
+ *   - `dsh-patent-workbench-<版本>.tgz`  装盘包（正式产物）
  *   - `package.json`                              源码清单（版本号的来源）
  *   - `FINGERPRINT.txt`                           装盘产物 vs 开发树构建的逐文件指纹校验输出
  *   - `VERSION-CHECK.txt`                         装盘版本/profile 声明/schema 一致性检查输出
@@ -27,7 +27,7 @@ const note = process.argv[3] ?? ''
 if (version === undefined) { console.error('用法：node scripts/make-archive.mjs <版本> [备注]'); process.exit(2) }
 
 const ROOT = process.cwd()
-const tgzName = `dely0-dsh-personal-workbench-${version}.tgz`
+const tgzName = `dsh-patent-workbench-${version}.tgz`
 const tgzPath = join(ROOT, tgzName)
 if (!existsSync(tgzPath)) {
   console.error(`❌ 找不到 ${tgzName}（先在仓库根目录跑 pnpm pack）`)

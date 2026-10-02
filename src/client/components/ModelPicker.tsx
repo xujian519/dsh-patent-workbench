@@ -31,7 +31,7 @@ import { Icon } from './Icon.js'
 import type { ModelDirectoryState, PromptContentPart, QuickModelSelection } from '../viewTypes.js'
 
 /** 快速录入模型选择的 localStorage 键（本仓自己的前缀，不与 fork 混用）。 */
-const QUICK_MODEL_STORAGE_KEY = 'dsh-personal-workbench.quickModelSelection'
+const QUICK_MODEL_STORAGE_KEY = 'dsh-patent-workbench.quickModelSelection'
 
 /**
  * 模型浮层的期望宽度 —— 与 `.wb-model-menu` 的 CSS 保持一致。

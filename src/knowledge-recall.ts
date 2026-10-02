@@ -1232,7 +1232,7 @@ export function installKnowledgeRecall(
     name: 'plugin:workbench-knowledge-guide',
     order: 260,
     text: KNOWLEDGE_GUIDE,
-  }), 'dsh-personal-workbench: knowledge-guide')
+  }), 'dsh-patent-workbench: knowledge-guide')
 
   if (!autoInject) {
     ctx.logger?.info?.('[workbench-knowledge] 自动注入已按配置关闭（工具与开关仍然可用）')
@@ -1268,7 +1268,7 @@ export function installKnowledgeRecall(
         return ''
       }
     },
-  }), 'dsh-personal-workbench: knowledge-recall')
+  }), 'dsh-patent-workbench: knowledge-recall')
 
   // 会话开始：登记"开工前"召回（能关联到任务才有 query）。
   events.on('agent/session-start', ((payload: { agent?: { session?: { header?: { id?: string; cwd?: string; origin?: string } } } }) => {

@@ -93,7 +93,7 @@ function makeEnv(overrides = {}) {
     httpJson: async () => {
       calls.http += 1
       return overrides.httpJson === undefined
-        ? { ok: true, status: 200, body: { ok: true, name: '@dely0/dsh-personal-workbench', version: '1.15.8', buildId: 'wb-fixture', db: { schemaVersion: '19', taskCount: 1, dictionaryCount: 1 } } }
+        ? { ok: true, status: 200, body: { ok: true, name: 'dsh-patent-workbench', version: '1.15.8', buildId: 'wb-fixture', db: { schemaVersion: '19', taskCount: 1, dictionaryCount: 1 } } }
         : overrides.httpJson(calls)
     },
     readLogFrom: () => {
@@ -119,8 +119,8 @@ function makeEnv(overrides = {}) {
       dependencyReads += 1
       if (overrides.readProfileDependencies !== undefined) return overrides.readProfileDependencies(dependencyReads)
       return dependencyReads === 1
-        ? { '@dely0/dsh-personal-workbench': 'file:/_local-build/old.tgz', 'other-plugin': '^1.0.0' }
-        : { '@dely0/dsh-personal-workbench': 'file:/_local-build/new-dev-20261001.tgz', 'other-plugin': '^1.0.0' }
+        ? { 'dsh-patent-workbench': 'file:/_local-build/old.tgz', 'other-plugin': '^1.0.0' }
+        : { 'dsh-patent-workbench': 'file:/_local-build/new-dev-20261001.tgz', 'other-plugin': '^1.0.0' }
     },
     restartTarget: async () => {
       calls.restarts += 1
@@ -307,8 +307,8 @@ for (const [label, failOn, expectedStops] of [
     const env = makeEnv({
       commandTable: (command) => (command.includes(failOn) && failOn !== 'DIFF' ? { status: 1, stdout: '', stderr: `${label} 炸了`, ms: 2, timedOut: false } : okResult()),
       readProfileDependencies: (nth) => (failOn === 'DIFF' && nth > 1
-        ? { '@dely0/dsh-personal-workbench': 'file:/_local-build/new-dev.tgz', 'other-plugin': '^2.0.0' }
-        : { '@dely0/dsh-personal-workbench': 'file:/_local-build/new-dev.tgz', 'other-plugin': '^1.0.0' }),
+        ? { 'dsh-patent-workbench': 'file:/_local-build/new-dev.tgz', 'other-plugin': '^2.0.0' }
+        : { 'dsh-patent-workbench': 'file:/_local-build/new-dev.tgz', 'other-plugin': '^1.0.0' }),
     })
     const result = await runDevVerify(baseOptions(), env.deps)
     assert.equal(result.exitCode, EXIT.FAILED)

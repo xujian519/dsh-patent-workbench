@@ -23,7 +23,7 @@ import { listTarEntries } from './lib/tarReader.mjs'
 /**
  * ⚠️ tgz 路径**必须显式给**（2026-09-13 改）。
  *
- * 原先是 `process.argv[2] ?? 'dely0-dsh-personal-workbench-1.14.45.tgz'` ——
+ * 原先是 `process.argv[2] ?? 'dsh-patent-workbench-1.14.45.tgz'` ——
  * 一个写死的旧版本号默认值。它有两重坑：
  * 1. 忘了传参时会去校验一个跟当前版本无关的老包（甚至可能静默"通过"）；
  * 2. 整理归档后 tgz 已不在仓库根（历史包在 `_local-archive/tgz/`），
@@ -41,7 +41,7 @@ const expectedVersion = process.argv[3]
  * 本仓库的 GitHub 身份。dsh-market 认这个 npm 包的唯一依据就是包内
  * `repository` 能不能指回它（见下面 ①b 的说明）。
  */
-const EXPECTED_REPO = 'Dely0/dsh-personal-workbench'
+const EXPECTED_REPO = 'xujian519/dsh-patent-workbench'
 
 /** 把 gzip 流解成 Buffer（tar 是顺序格式，整份读进来最简单）。 */
 async function gunzip(file) {

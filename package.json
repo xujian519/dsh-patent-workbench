@@ -1,14 +1,14 @@
 {
-  "name": "@dely0/dsh-personal-workbench",
+  "name": "dsh-patent-workbench",
   "version": "1.16.2",
   "description": "DSH 个人工作台：日历 + 层级任务 + AI 澄清/拆解/执行/复盘 + AI 智能排序/日报周报 + 桌面提醒",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Dely0/dsh-personal-workbench.git"
+    "url": "git+https://github.com/xujian519/dsh-patent-workbench.git"
   },
-  "homepage": "https://github.com/Dely0/dsh-personal-workbench#readme",
+  "homepage": "https://github.com/xujian519/dsh-patent-workbench#readme",
   "bugs": {
-    "url": "https://github.com/Dely0/dsh-personal-workbench/issues"
+    "url": "https://github.com/xujian519/dsh-patent-workbench/issues"
   },
   "type": "module",
   "main": "./lib/index.js",

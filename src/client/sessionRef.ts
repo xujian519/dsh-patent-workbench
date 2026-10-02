@@ -41,7 +41,7 @@ export interface SessionReference {
 }
 
 /** 建立引用时要写给宿主看的能力来源标签（宿主按它做引用计数与释放）。 */
-const RETAIN_SOURCE = 'personal-workbench'
+const RETAIN_SOURCE = 'patent-workbench'
 
 /** 拿不到绑定时给用户看的原因：要能指导用户，而不是只丢一句"稍后重试"。 */
 export const SESSION_BINDING_ERROR = '会话绑定未就绪，请稍后重试'

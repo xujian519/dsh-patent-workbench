@@ -49,7 +49,7 @@ import { createApi, originOf } from '../verify/suites/_harness.mjs'
 /** 仓库根（本文件在 `scripts/repro/` 下）。 */
 const repoRoot = () => fileURLToPath(new URL('../../', import.meta.url))
 
-const EXTERNAL_URL = 'https://github.com/Dely0/dsh-personal-workbench/blob/main/README.md'
+const EXTERNAL_URL = 'https://github.com/xujian519/dsh-patent-workbench/blob/main/README.md'
 
 function parseArgs(argv) {
   const options = { url: 'http://127.0.0.1:3080', browser: undefined, evidenceDir: undefined, userDataRoot: undefined }

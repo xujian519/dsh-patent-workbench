@@ -1,4 +1,4 @@
-# 个人工作台（dsh-personal-workbench）
+# 个人工作台（dsh-patent-workbench）
 
 一份 DSH 个人工作台的领域语言表。**这里只放术语**，不放规格与实现；
 口径推理见 `docs/adr/`，一般设计方案见 `docs/design/`；任务级开发规格见 `docs/tasks/<任务ID>-<标题片段>/`，版本行为见 `docs/releases/`。

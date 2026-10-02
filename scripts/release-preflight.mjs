@@ -240,7 +240,7 @@ function gateArtifact() {
 function gateGitHubRelease() {
   banner('发布后 2/2 GitHub Release（走本机代理，公开端点不需要 token）')
   const proxy = process.env.DSH_GITHUB_PROXY ?? 'http://127.0.0.1:5782'
-  const r = run(`curl.exe -sS --max-time 60 -x ${proxy} -H "User-Agent: dsh-preflight" -H "Accept: application/vnd.github+json" https://api.github.com/repos/Dely0/dsh-personal-workbench/releases/latest`)
+  const r = run(`curl.exe -sS --max-time 60 -x ${proxy} -H "User-Agent: dsh-preflight" -H "Accept: application/vnd.github+json" https://api.github.com/repos/xujian519/dsh-patent-workbench/releases/latest`)
   let tag = null
   try { tag = JSON.parse(r.out).tag_name ?? null } catch { tag = null }
   const ok = tag === `v${VERSION}`

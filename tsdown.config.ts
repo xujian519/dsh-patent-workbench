@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import type { UserConfig } from 'tsdown'
 
-const ID = '@dely0/dsh-personal-workbench'
+const ID = 'dsh-patent-workbench'
 
 /**
  * 本次构建的标识（plan.md V04-B）。

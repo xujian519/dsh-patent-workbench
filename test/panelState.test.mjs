@@ -78,7 +78,7 @@ test('纯函数性：不改输入、同输入同输出', () => {
 })
 
 test('PANEL_NAME 是唯一的宿主面板标识（换值必须同步改宿主注册处）', () => {
-  assert.equal(PANEL_NAME, 'personal-workbench')
+  assert.equal(PANEL_NAME, 'patent-workbench')
   // 判定里硬编码的是这个常量本身，所以只要它和槽位注册一致就不会错位
-  assert.deepEqual(decidePanel({ stateReadable: true, hostPanelId: 'personal-workbench', intentOpen: false }), { show: true })
+  assert.deepEqual(decidePanel({ stateReadable: true, hostPanelId: 'patent-workbench', intentOpen: false }), { show: true })
 })

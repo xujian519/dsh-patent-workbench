@@ -208,7 +208,7 @@ export function saveMemoryNote(home: string, note: MemoryNote, now = new Date())
     created_at: now.toISOString(),
     local_only: false,
     supersedes: '',
-    source: 'dsh-personal-workbench/review',
+    source: 'dsh-patent-workbench/review',
   }) + `${note.contentMd.trimEnd()}\n`)
   return { file, id }
 }

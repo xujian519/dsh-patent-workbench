@@ -29,7 +29,7 @@ import { parseInline } from '../lib/client/inlineMarkdown.js'
 // ── L1：判据表 ────────────────────────────────────────────────────────────────
 
 const EXTERNAL = [
-  ['https://github.com/Dely0/dsh-personal-workbench/blob/main/README.md', 'https://github.com/Dely0/dsh-personal-workbench/blob/main/README.md'],
+  ['https://github.com/xujian519/dsh-patent-workbench/blob/main/README.md', 'https://github.com/xujian519/dsh-patent-workbench/blob/main/README.md'],
   ['http://127.0.0.1:8080/a.md', 'http://127.0.0.1:8080/a.md'],
   ['HTTPS://Example.COM/A', 'https://example.com/A'],
   ['  https://a.b/c  ', 'https://a.b/c'],

@@ -1,5 +1,5 @@
 /**
- * dsh-personal-workbench DB schema（对应 docs/DSH个人工作台/01_数据模型.md）
+ * dsh-patent-workbench DB schema（对应 docs/DSH个人工作台/01_数据模型.md）
  * 迁移只前向；所有“枚举”都走 dictionaries 表。
  */
 import type { DatabaseSync } from 'node:sqlite'
@@ -583,7 +583,7 @@ export const MIGRATIONS: Migration[] = [
        * 库里存一份快照会在修复后变成假的告警。
        */
       if (diagnostics.length > 0) {
-        for (const line of diagnostics) console.warn(`[dsh-personal-workbench] migration 19: ${line}`)
+        for (const line of diagnostics) console.warn(`[dsh-patent-workbench] migration 19: ${line}`)
       }
     },
   },

@@ -16,7 +16,7 @@ import { normalizeErrorCode, WechatChannelAdapter } from '../lib/reminder/adapte
 import { ReminderScheduler } from '../lib/reminder/scheduler.js'
 
 async function withDb(fn) {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-reminder-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-reminder-'))
   let db
   try {
     db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })

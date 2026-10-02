@@ -34,8 +34,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 /** 预授权范围（ADR0006）：只有测试实例 3080 / web 能被这条链重启。 */
 export const AUTHORIZED_PORT = 3080
 export const AUTHORIZED_PROFILE = 'web'
-export const PLUGIN_ID = 'personal-workbench'
-export const PLUGIN_NAME = '@dely0/dsh-personal-workbench'
+export const PLUGIN_ID = 'patent-workbench'
+export const PLUGIN_NAME = 'dsh-patent-workbench'
 
 /** 阶段顺序（`--dry-run` 打印它；链按它执行，任一步失败就停）。 */
 export const STAGE_PLAN = [
@@ -111,8 +111,8 @@ function scalarOrUndefined(value) {
  * 而需要的信息只有两个标量键。读不懂的情形一律返回 `unparsable`，由调用方 fail-closed。
  *
  * 支持两种真实形态：
- * - profile patch：顶层数组 `- id: personal-workbench` + `config:`；
- * - 包自带 bundle patch：`- insert:` 下面嵌套 `- id: personal-workbench`。
+ * - profile patch：顶层数组 `- id: patent-workbench` + `config:`；
+ * - 包自带 bundle patch：`- insert:` 下面嵌套 `- id: patent-workbench`。
  */
 export function findPluginEntries(text, { ids = [PLUGIN_ID], names = [PLUGIN_NAME] } = {}) {
   const lines = String(text ?? '').split(/\r?\n/)

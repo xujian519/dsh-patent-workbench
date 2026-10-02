@@ -1,5 +1,5 @@
 /**
- * dsh-personal-workbench client v0.2 — 方案 A 左右分栏：
+ * dsh-patent-workbench client v0.2 — 方案 A 左右分栏：
  *  - 左侧导航区：今日 / 可导航日历(周/月) / 树状列表（默认折叠、记忆展开）
  *  - 右侧详情区：仅显示选中任务；未选中显示占位
  *  - AI 澄清/咨询/拆解统一跳官方会话区；工作台侧边栏显示待确认草稿红点
@@ -138,7 +138,7 @@ function newTaskId(): string {
 }
 
 /** 知识库列表状态的本地存储键（Tab 与排序要在刷新后保持，见验收项）。 */
-const KNOWLEDGE_FILTER_STORAGE_KEY = 'dsh.personal-workbench.knowledgeList'
+const KNOWLEDGE_FILTER_STORAGE_KEY = 'dsh.patent-workbench.knowledgeList'
 
 /**
  * 「预计耗时」非法时的**行内红字**（文案定稿，见设计文档 §12.4）。
@@ -832,7 +832,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               NotificationCtor: readNotificationCtor(globalThis),
               title: `任务提醒：${reminder.title}`,
               body: `截止时间：${fmtTime(reminder.dueAt)}`,
-              tag: `dsh-personal-workbench:${reminder.reminderId}`,
+              tag: `dsh-patent-workbench:${reminder.reminderId}`,
             })
             if (!sent.ok) console.warn(`[workbench] 到期提醒未能发出系统通知：${sent.reason}`)
           }
@@ -1981,10 +1981,10 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [taskSortDir, setTaskSortDir] = useState<TaskSortDir>('asc')
   const [openFilter, setOpenFilter] = useState<'status' | 'priority' | 'type' | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('dsh.personal-workbench.treeExpanded') ?? '[]') as string[]) } catch { return new Set() }
+    try { return new Set(JSON.parse(localStorage.getItem('dsh.patent-workbench.treeExpanded') ?? '[]') as string[]) } catch { return new Set() }
   })
   useEffect(() => {
-    try { localStorage.setItem('dsh.personal-workbench.treeExpanded', JSON.stringify([...expanded])) } catch { /* ignore */ }
+    try { localStorage.setItem('dsh.patent-workbench.treeExpanded', JSON.stringify([...expanded])) } catch { /* ignore */ }
   }, [expanded])
   const toggleExpanded = (id: string): void => setExpanded((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const toggleTodayExpanded = (id: string): void => setTodayExpanded((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -3192,7 +3192,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
           onSendTestNotification={() => {
             const sent = sendSystemNotification({
               NotificationCtor: readNotificationCtor(globalThis),
-              title: 'dsh-personal-workbench 通知测试',
+              title: 'dsh-patent-workbench 通知测试',
               body: '如果你看到这条系统通知，说明桌面提醒已正常工作。',
             })
             if (sent.ok) {
@@ -4486,7 +4486,7 @@ function ensureStyle(): void {
  */
 
 
-export const name = 'personal-workbench-client'
+export const name = 'patent-workbench-client'
 /**
  * 声明的服务。
  *
@@ -4890,7 +4890,7 @@ let workbenchHost: {
  * ## 关键设计：**开合以宿主 `activePanelId` 为准**（v1.14.45 定案）
  *
  * 上一版按**本地** `open` / `forcedClosed` 两个变量决定显隐，于是宿主自己的入口行
- * 点下去之后：宿主 `activePanelId` 变成 `personal-workbench`（侧栏那一行高亮、
+ * 点下去之后：宿主 `activePanelId` 变成 `patent-workbench`（侧栏那一行高亮、
  * 会话内容让位），而我们的 `.wb-panel-host` 拿不到任何通知 → `data-open` 仍是
  * `undefined` → **中央一片空白**（用户截图实测："点了没用"，其实是"没人通知我们"）。
  *
@@ -5060,7 +5060,7 @@ export function apply(ctx: unknown): () => void {
    * 「用户在本插件里显式关掉了面板」的本地权威标志（v1.14.30）。
    *
    * 为什么必须有它：当 `layout.selectPanel` 拿不到时，我们**无法通知宿主取消选中**，
-   * 宿主的 `activePanelId` 会一直停在 `personal-workbench`。此时若显隐只信宿主状态，
+   * 宿主的 `activePanelId` 会一直停在 `patent-workbench`。此时若显隐只信宿主状态，
    * 那张 `fixed; inset:0; z-index:55` 的满屏层就**再也关不掉**，永久盖住会话区
    * （2026-09-13 实测：点「返回对话」后 `data-open` 仍为 "1"）。
    *
@@ -5466,7 +5466,7 @@ export function apply(ctx: unknown): () => void {
     // 与 dsh-cost-meter / dsh-pocket 同构：inject 保证宿主槽位存在时才注册。
     try {
       slots.inject('conversation.session.header.actions', () => slots.register(
-        { name: 'conversation.session.header.actions', id: 'personal-workbench', order: -4, inject: () => ({ workbench: slotApi }) },
+        { name: 'conversation.session.header.actions', id: 'patent-workbench', order: -4, inject: () => ({ workbench: slotApi }) },
         WorkbenchHeaderEntry as unknown as (props: Record<string, unknown>) => JSX.Element | null,
       ))
     } catch (error) {

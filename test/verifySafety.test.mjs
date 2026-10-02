@@ -288,8 +288,8 @@ test('V03 解析：patch 里嵌套 insert / profile patch 的 config 都能被�
   const bundle = [
     '# bundle layer',
     '- insert:',
-    '    - id: personal-workbench',
-    "      name: '@dely0/dsh-personal-workbench'",
+    '    - id: patent-workbench',
+    "      name: 'dsh-patent-workbench'",
     '      config: {}',
     '- id: something-else',
     '  config:',
@@ -304,8 +304,8 @@ test('V03 解析：patch 里嵌套 insert / profile patch 的 config 都能被�
     '- id: dsh-pocket',
     '  config:',
     '    port: 3082',
-    '- id: personal-workbench',
-    "  name: '@dely0/dsh-personal-workbench'",
+    '- id: patent-workbench',
+    "  name: 'dsh-patent-workbench'",
     '  config:',
     '    dbPath: "C:/tmp/verify/web.db"',
     '    dataDir: C:/tmp/verify',
@@ -314,7 +314,7 @@ test('V03 解析：patch 里嵌套 insert / profile patch 的 config 都能被�
   assert.equal(profiled.entries.length, 1)
   assert.deepEqual(profiled.entries[0].config, { dbPath: 'C:/tmp/verify/web.db', dataDir: 'C:/tmp/verify' })
 
-  const dynamic = findPluginEntries(['- id: personal-workbench', '  config:', '    dbPath: !!js process.env.WB_DB'].join('\n'))
+  const dynamic = findPluginEntries(['- id: patent-workbench', '  config:', '    dbPath: !!js process.env.WB_DB'].join('\n'))
   assert.equal(dynamic.entries[0].unknownKeys.includes('dbPath'), true, '表达式算不出实际值时必须标记为不可静态判定')
   assert.equal(dynamic.entries[0].config.dbPath, undefined)
 })

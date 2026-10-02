@@ -267,7 +267,7 @@ const persistence = await evaluate(`(() => {
   const target = tabs.find(t => !t.classList.contains('on'))
   target.click()
   return new Promise((res) => setTimeout(() => {
-    const saved = (() => { try { return localStorage.getItem('dsh.personal-workbench.tab.knowledge') } catch (e) { return 'unavailable' } })()
+    const saved = (() => { try { return localStorage.getItem('dsh.patent-workbench.tab.knowledge') } catch (e) { return 'unavailable' } })()
     const onNow = document.querySelector('#kbRoot .tab.on')?.textContent.trim() ?? ''
     const stateTab = typeof S === 'undefined' ? '(module scoped)' : S.knowledge.tab
     res({ saved, onNow, stateTab })

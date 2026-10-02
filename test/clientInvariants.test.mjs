@@ -85,7 +85,7 @@ test('I4：写 `<html>` 的属性必须都是本插件自己的（绝不碰别�
   /** 白名单：自用的 CSS 变量（面板左边界 + 桌面壳标题栏让位）。 */
   const OWN_STYLE_VARS = new Set(['--wb-sidebar-w', '--wb-top-inset'])
   /** 别人家的前缀：`data-dsh-<别的插件>` —— 出现即越界。 */
-  const FOREIGN = /^data-dsh-(?!personal-workbench)/
+  const FOREIGN = /^data-dsh-(?!patent-workbench)/
 
   const violations = []
   for (const { path, text } of sources) {

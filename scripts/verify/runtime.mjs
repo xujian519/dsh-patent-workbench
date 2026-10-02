@@ -309,7 +309,7 @@ export async function restartTarget(options, deps = {}) {
 export function readInstalledInfo(profileDir, deps = {}) {
   const exists = deps.existsSync ?? existsSync
   const read = deps.readFileSync ?? readFileSync
-  const base = join(profileDir, 'node_modules', '@dely0', 'dsh-personal-workbench')
+  const base = join(profileDir, 'node_modules', 'dsh-patent-workbench')
   const info = { base, version: 'unknown', buildId: 'unknown', schemaVersion: undefined }
   try { info.version = JSON.parse(read(join(base, 'package.json'), 'utf8')).version ?? 'unknown' } catch { /* 缺失留给编排判 */ }
   if (exists(join(base, 'lib', 'build-info.json'))) {

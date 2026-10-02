@@ -49,7 +49,7 @@ function removeTempDir(dir) {
  * 见 docs/issues/2026-09-12-subtask-type-code-silently-dropped.md
  */
 test('confirmTaskDraft reports invalid subtask codes instead of silently dropping them', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-drop-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-drop-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -129,7 +129,7 @@ test('confirmTaskDraft reports invalid subtask codes instead of silently droppin
 })
 
 test('db migrations, dictionaries and task tree', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-db-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-db-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -305,7 +305,7 @@ test('db migrations, dictionaries and task tree', () => {
 })
 
 test('effective due date dynamically inherits nearest ancestor due', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-effective-due-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-effective-due-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -344,7 +344,7 @@ test('effective due date dynamically inherits nearest ancestor due', () => {
 })
 
 test('status cascade aggregation, repair and shared memory', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-cascade-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-cascade-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -395,7 +395,7 @@ test('status cascade aggregation, repair and shared memory', () => {
 })
 
 test('subtask_plan confirm is idempotent and preserves estimated_minutes', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-subtask-plan-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-subtask-plan-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -444,7 +444,7 @@ test('subtask_plan confirm is idempotent and preserves estimated_minutes', () =>
 })
 
 test('idea_tasks confirm preserves estimated_minutes written in snake_case', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-idea-est-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-idea-est-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -470,7 +470,7 @@ test('idea_tasks confirm preserves estimated_minutes written in snake_case', () 
 })
 
 test('archiving a task hides its descendants from the active list but keeps them restorable', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-archive-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-archive-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -519,7 +519,7 @@ test('archiving a task hides its descendants from the active list but keeps them
 })
 
 test('effective workspace path dynamically inherits nearest ancestor workspace', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-effective-ws-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-effective-ws-'))
   try {
     const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
     seedDictionaries(db)
@@ -561,7 +561,7 @@ test('effective workspace path dynamically inherits nearest ancestor workspace',
  * 审计事件、以及移动后有效截止/工作区跟随新父任务。
  */
 test('改父任务：写库 / 移到顶层 / 防环守卫 / 审计事件 / 继承跟随新父任务', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-personal-workbench-reparent-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-reparent-'))
   let db
   try {
     db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })

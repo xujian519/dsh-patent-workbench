@@ -3,7 +3,7 @@
  * 单独成文件是因为样式（styles.ts）与组件（index.tsx）都要引用同一批名字。
  */
 
-export const PANEL_NAME = 'personal-workbench'
+export const PANEL_NAME = 'patent-workbench'
 export const ACTIVE_ATTR = 'data-dsh-personal-workbench-active'
 export const PENDING_ATTR = 'data-dsh-personal-workbench-pending'
 export const VIEW_ATTR = 'data-dsh-personal-workbench-view'

@@ -1,6 +1,6 @@
 ---
 name: dsh-release
-description: DSH 插件（@dely0/dsh-personal-workbench / dsh-team-memory / dsh-skill-hub 等）**公开发布**的硬门禁与命令序列：发布前置（用户实测确认）、范围表、改版本号、同步 README 版本历史与致谢、写 Release Notes、发版前检查（PII 两面 + 变异探针）、打 tag、pnpm publish 到 npm、用 REST 建 **GitHub Release**、发布后复核（**tarball 与 shasum 对账**）。当你要「发版 / 发布 / 打 tag / 发 npm / 建 Release / 写 Release Notes / 升版本号 / 检查有没有私人信息」时使用。只管发布链条；**装盘进 profile 与重启**（本机生效）归 dsh-safe-plugin-ops，两者一前一后。
+description: DSH 插件（dsh-patent-workbench / dsh-team-memory / dsh-skill-hub 等）**公开发布**的硬门禁与命令序列：发布前置（用户实测确认）、范围表、改版本号、同步 README 版本历史与致谢、写 Release Notes、发版前检查（PII 两面 + 变异探针）、打 tag、pnpm publish 到 npm、用 REST 建 **GitHub Release**、发布后复核（**tarball 与 shasum 对账**）。当你要「发版 / 发布 / 打 tag / 发 npm / 建 Release / 写 Release Notes / 升版本号 / 检查有没有私人信息」时使用。只管发布链条；**装盘进 profile 与重启**（本机生效）归 dsh-safe-plugin-ops，两者一前一后。
 whenToUse: 本轮要动 public 版本号、要给仓库打 tag、要 `npm publish`、要在 GitHub 上建 Release 或写 Release Notes 时。
 ---
 

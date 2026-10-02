@@ -9,7 +9,7 @@
  *
  * ## 复现的机理
  *
- * "选过模型"唯一的持久落点是 `localStorage['dsh-personal-workbench.quickModelSelection']`
+ * "选过模型"唯一的持久落点是 `localStorage['dsh-patent-workbench.quickModelSelection']`
  *（`ModelPicker.tsx` 的 `QUICK_MODEL_STORAGE_KEY`）。v1.15.7 修的那个 P0 是：
  * 该键有值时若**当次解析不到模型目录**，旧代码在 `openQuickEntry` 第一行就抛错 ⇒
  * **点「快速录入」毫无反应**，而且唯一的写入口（模型下拉）被门禁挡死 ⇒ 界面内改不回默认。
@@ -37,7 +37,7 @@ import { join } from 'node:path'
 import { createApi, ensureWorkbenchPanel, launchSuiteBrowser, parseSuiteArgs, sleep, waitFor } from '../verify/suites/_harness.mjs'
 import { discoverBrowser } from '../verify/browser.mjs'
 
-const KEY = 'dsh-personal-workbench.quickModelSelection'
+const KEY = 'dsh-patent-workbench.quickModelSelection'
 const PROBE_SELECTION = {
   provider: 'repro-nonexistent-provider',
   model: 'repro-nonexistent-model',

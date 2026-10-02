@@ -380,7 +380,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
         const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined
         writeJson(res, 200, {
           ok: true,
-          name: '@dely0/dsh-personal-workbench',
+          name: 'dsh-patent-workbench',
           version: PACKAGE_VERSION,
           buildId: PACKAGE_BUILD_ID,
           db: {

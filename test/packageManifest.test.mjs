@@ -26,7 +26,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-const REPO = 'Dely0/dsh-personal-workbench'
+const REPO = 'xujian519/dsh-patent-workbench'
 
 test('package.json 必须声明指回本仓库的 repository（市场映射的唯一依据）', () => {
   const url = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url

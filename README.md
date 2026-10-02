@@ -1,10 +1,17 @@
-# dsh-personal-workbench
+# dsh-patent-workbench
 
-[![npm version](https://img.shields.io/npm/v/@dely0/dsh-personal-workbench)](https://www.npmjs.com/package/@dely0/dsh-personal-workbench)
-[![license](https://img.shields.io/npm/l/@dely0/dsh-personal-workbench)](./LICENSE)
+[![license](https://img.shields.io/github/license/xujian519/dsh-patent-workbench)](./LICENSE)
+[![repo](https://img.shields.io/badge/repo-xujian519%2Fdsh--patent--workbench-blue)](https://github.com/xujian519/dsh-patent-workbench)
 
-**DSH（DeepSeek Harness）个人工作台插件**：把 DSH 变成「日历 + 层级任务 + AI 助手」的工作台。
-自然语言录入任务，AI 澄清 / 拆解 / 执行 / 复盘，数据全部留在本机。
+**面向专利律师 / 代理人的 DSH（DeepSeek Harness）工作台插件**（fork 自
+[Dely0/dsh-personal-workbench](https://github.com/Dely0/dsh-personal-workbench)）。
+
+> 🚧 **改造进行中**：本仓库正从通用「日历 + 层级任务 + 知识库」工作台改造为**专利律师工作台**
+> （管理/办公层：案件 · 期限 · 官文登记 · 客户 · 办案沉淀库；专业判定检索/三性/撰写/答复/无效
+> 留给专利内核 DSH Patent）。分阶段方案与决策见
+> [`docs/design/2026-10-03-patent-workbench-redesign.md`](docs/design/2026-10-03-patent-workbench-redesign.md)。
+>
+> **现状**：仍是改造前的通用工作台形态 —— 日历 + 层级任务 + AI 助手，数据全部留在本机。
 
 [English](#english) · 简体中文
 
@@ -31,7 +38,7 @@
 前置：**DSH ≥ `0.1.5-rc.1`**（Web 版）、Node `^22.19.0` 或 `>=24.0.0`、pnpm `>=11.7.0 <12`。
 
 ```sh
-dsh plugin --profile web add @dely0/dsh-personal-workbench
+dsh plugin --profile web add git+https://github.com/xujian519/dsh-patent-workbench.git
 ```
 
 > ⚠️ **装完必须重启 `dsh web`，只刷新浏览器不够**：客户端 bundle 由宿主在**启动时**读进内存，
@@ -41,9 +48,9 @@ dsh plugin --profile web add @dely0/dsh-personal-workbench
 
 ```sh
 # GitHub 源码
-dsh plugin --profile web add git+https://github.com/Dely0/dsh-personal-workbench.git
+dsh plugin --profile web add git+https://github.com/xujian519/dsh-patent-workbench.git
 # Release tarball
-dsh plugin --profile web add file:/path/to/dsh-personal-workbench-<version>.tgz
+dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 ```
 
 ## 快速上手
@@ -71,8 +78,8 @@ dsh plugin --profile web add file:/path/to/dsh-personal-workbench-<version>.tgz
 ## 开发
 
 ```sh
-git clone https://github.com/Dely0/dsh-personal-workbench.git
-cd dsh-personal-workbench
+git clone https://github.com/xujian519/dsh-patent-workbench.git
+cd dsh-patent-workbench
 pnpm install
 pnpm check                 # 类型检查 + 构建
 pnpm test                  # 全量回归（跑构建产物）
@@ -161,8 +168,9 @@ turn DSH into a calendar + hierarchical task list + AI assistant workbench. All 
 Requires **DSH ≥ `0.1.5-rc.1`** (web), Node `^22.19.0` or `>=24.0.0`, pnpm `>=11.7.0 <12`.
 
 ```sh
-dsh plugin --profile web add @dely0/dsh-personal-workbench
-# or: dsh plugin --profile web add git+https://github.com/Dely0/dsh-personal-workbench.git
+dsh plugin --profile web add git+https://github.com/xujian519/dsh-patent-workbench.git
+# or from a release tarball:
+dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 ```
 
 > ⚠️ **You must restart `dsh web` after installing** — the client bundle is read into memory at host startup, so a browser refresh keeps serving the old code.

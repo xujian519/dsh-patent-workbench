@@ -35,7 +35,7 @@ param(
   [Parameter(Mandatory = $true)][string]$Tag,
   [string]$Title,
   [Parameter(Mandatory = $true)][string]$BodyFile,
-  [string]$Repo = 'Dely0/dsh-personal-workbench',
+  [string]$Repo = 'xujian519/dsh-patent-workbench',
   [switch]$Prerelease
 )
 
@@ -87,7 +87,7 @@ $headers = @{
   Authorization          = "Bearer $token"
   Accept                 = 'application/vnd.github+json'
   'X-GitHub-Api-Version' = '2022-11-28'
-  'User-Agent'           = 'dsh-personal-workbench-release'
+  'User-Agent'           = 'dsh-patent-workbench-release'
 }
 $payload = @{
   tag_name   = $Tag

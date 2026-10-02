@@ -20,7 +20,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-const PLUGIN = '@dely0/dsh-personal-workbench'
+const PLUGIN = 'dsh-patent-workbench'
 
 function readJson(path) {
   try {

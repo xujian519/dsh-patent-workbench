@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PROFILE = process.env.DSH_PROFILE_DIR ?? join(homedir(), '.dsh', 'profiles', 'web')
 const DEV = join(ROOT, 'lib')
-const INSTALLED = join(PROFILE, 'node_modules', '@dely0', 'dsh-personal-workbench', 'lib')
+const INSTALLED = join(PROFILE, 'node_modules', 'dsh-patent-workbench', 'lib')
 
 const json = process.argv.includes('--json')
 
@@ -69,7 +69,7 @@ let devVersion = 'unknown'
 let installedVersion = 'unknown'
 try { devVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version } catch { /* ignore */ }
 try {
-  installedVersion = JSON.parse(readFileSync(join(PROFILE, 'node_modules', '@dely0', 'dsh-personal-workbench', 'package.json'), 'utf8')).version
+  installedVersion = JSON.parse(readFileSync(join(PROFILE, 'node_modules', 'dsh-patent-workbench', 'package.json'), 'utf8')).version
 } catch { /* ignore */ }
 
 const consistent = report.missing.length === 0 && report.differing.length === 0 && devVersion === installedVersion
