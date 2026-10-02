@@ -10,7 +10,6 @@ import {
   createDraft, confirmTaskDraft, confirmDailyPlanDraft, getDailyPlan, updateDailyPlan, deleteDailyPlan,
   getAiSession, registerAiSession, listReminders, ensureRecurringInstances,
   createKnowledge, updateKnowledge, listKnowledge, getKnowledge, deleteKnowledge, confirmKnowledgeDraft,
-  createIdea, listIdeas, createIdeaCluster, getIdeaCluster, confirmIdeaClusterDraft, confirmIdeaTaskDraft,
   getDraftBySession, listTaskSessions, linkTaskSession, localDateString,
   completeTaskCascade, repairParentCompletion, addTaskMemory, getTaskMemoryContext, listTaskMemories,
   archiveTask, restoreTask, confirmSubtaskPlanDraft, validateDraftTaskItem,
@@ -273,18 +272,6 @@ test('db migrations, dictionaries and task tree', () => {
     assert.equal(deleteKnowledge(db, k1.id), true)
     assert.equal(getKnowledge(db, k1.id), undefined)
 
-    // ideas & clusters
-    const i1 = createIdea(db, { title: 'TTS 语音输出', kindCode: 'plugin', tags: ['TTS'] })
-    const i2 = createIdea(db, { title: '语音备忘录', kindCode: 'skill', tags: ['语音'] })
-    assert.equal(listIdeas(db, { q: '语音' }).length, 2)
-    const clusterDraft = createDraft(db, { kindCode: 'idea_cluster', sessionId: 's-cluster', payload: { clusters: [{ title: '语音方向', summary: '两个语音点子', idea_ids: [i1.id, i2.id] }] } })
-    const clusters = confirmIdeaClusterDraft(db, clusterDraft.id)
-    assert.equal(clusters.length, 1)
-    assert.equal(getIdeaCluster(db, clusters[0].id).ideas.length, 2)
-    const taskDraft = createDraft(db, { kindCode: 'idea_tasks', sessionId: 's-idea-task', payload: { sourceIdeaIds: [i1.id], tasks: [{ title: '验证 TTS 方案', type_code: 'code_impl', priority_code: 'p1' }] } })
-    const tasks = confirmIdeaTaskDraft(db, taskDraft.id)
-    assert.equal(tasks.length, 1)
-    assert.deepEqual(tasks[0].extra.sourceIdeaIds, [i1.id])
     db.close()
   } finally {
     removeTempDir(dir)
@@ -423,32 +410,6 @@ test('subtask_plan confirm is idempotent and preserves estimated_minutes', () =>
     const reused = confirmSubtaskPlanDraft(db, draft3.id).tasks
     assert.equal(reused[0].id, renamed.id)
     assert.equal(getTask(db, renamed.id).estimatedMinutes, null)
-
-    db.close()
-  } finally {
-    removeTempDir(dir)
-  }
-})
-
-test('idea_tasks confirm preserves estimated_minutes written in snake_case', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-idea-est-'))
-  try {
-    const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
-    seedDictionaries(db)
-
-    const idea = createIdea(db, { title: 'idea', contentMd: 'x' })
-    const draft = createDraft(db, {
-      kindCode: 'idea_tasks',
-      sessionId: 's-idea',
-      payload: {
-        sourceIdeaIds: [idea.id],
-        sourceClusterId: null,
-        tasks: [{ title: 'from idea', type_code: 'code_impl', priority_code: 'p1', estimated_minutes: 1095 }],
-      },
-    })
-    const created = confirmIdeaTaskDraft(db, draft.id)
-    assert.equal(created.length, 1)
-    assert.equal(created[0].estimatedMinutes, 1095)
 
     db.close()
   } finally {

@@ -29,14 +29,14 @@
  *
  * 用法：
  *   node scripts/repro/harness-real-browser.mjs                 # 跑全部批
- *   node scripts/repro/harness-real-browser.mjs --case listview # 只跑知识库/点子批
+ *   node scripts/repro/harness-real-browser.mjs --case listview # 只跑知识库批
  *   node scripts/repro/harness-real-browser.mjs --case capacity # 只跑今日容量批
  *
  * ⚠️ 成功路径必须**显式 `process.exit(0)`**：CDP/Edge 子进程有时会让 Node 自然结束延迟或挂住，
  * 靠"脚本跑到底"当成功信号会出现假绿（本文件原先就没有显式退出码）。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -70,7 +70,6 @@ const CAPACITY_OUT = resolve('_local-archive/capacity/harness')
 mkdirSync(CAPACITY_OUT, { recursive: true })
 
 const { KnowledgeList, KnowledgePager, KnowledgeToolbar, EMPTY_KNOWLEDGE_FILTERS, kindTabs, selectedKind } = await import(pathToFileURL(resolve('lib/client/components/KnowledgeList.js')).href)
-const { IdeaCardGrid } = await import(pathToFileURL(resolve('lib/client/components/IdeaCardGrid.js')).href)
 const { buildListPage, toContentItem } = await import(pathToFileURL(resolve('lib/client/listPresentation.js')).href)
 const { WORKBENCH_CSS } = await import(pathToFileURL(resolve('lib/client/styles.js')).href)
 const { CapacityRulePanel } = await import(pathToFileURL(resolve('lib/client/components/CapacityRulePanel.js')).href)
@@ -87,11 +86,6 @@ const KINDS = [
   { kind: 'knowledge_kind', code: 'decision', name: '决策记录', config: { color: '#8B7BE8' } },
   { kind: 'knowledge_kind', code: 'snippet', name: '片段/模板', config: { color: '#2E9B7B' } },
 ]
-const IDEA_KINDS = [
-  { kind: 'idea_kind', code: 'project', name: '项目点子', config: { color: '#4F86F7' } },
-  { kind: 'idea_kind', code: 'spark', name: '突发奇想', config: { color: '#E7634C' } },
-]
-
 /** 137 条：够 3 页，跨多个时间档位，标签/类型分布明显 */
 const entries = Array.from({ length: 137 }, (_, i) => toContentItem({
   id: 'k' + i,
@@ -102,20 +96,6 @@ const entries = Array.from({ length: 137 }, (_, i) => toContentItem({
   createdAt: at((i % 500) * DAY),
   updatedAt: at(i < 8 ? i * HOUR : i < 30 ? (1 + (i % 5)) * DAY : i < 60 ? (8 + (i % 20)) * DAY : (60 + i) * DAY),
 }))
-const ideas = Array.from({ length: 4 }, (_, i) => ({
-  ...toContentItem({
-    id: 'i' + i,
-    title: `点子 ${i}：天线测试系统接入 AI 调试`,
-    contentMd: '通过 AIDebugBridge 让 AI 自己截图、看 DOM、点 UI、读参数。',
-    tags: ['AI', '天线测试'],
-    kindCode: IDEA_KINDS[i % IDEA_KINDS.length].code,
-    createdAt: at(30 * DAY),
-    updatedAt: at((i + 1) * DAY),
-  }),
-  clusterIds: i === 0 ? ['f1'] : [],
-}))
-const CLUSTERS = [{ id: 'f1', title: '天线测试方向' }, { id: 'f2', title: '工作台优化' }]
-
 const filters = { ...EMPTY_KNOWLEDGE_FILTERS }
 const page = buildListPage({
   items: entries,
@@ -131,11 +111,6 @@ const toolbar = renderToStaticMarkup(createElement(KnowledgeToolbar, {
 }))
 const list = renderToStaticMarkup(createElement(KnowledgeList, { page, dicts: KINDS, selectedId: 'k2', onOpen: () => {} }))
 const pager = renderToStaticMarkup(createElement(KnowledgePager, { page, pageSize: 10, onPage: () => {}, onPageSize: () => {} }))
-const grid = renderToStaticMarkup(createElement(IdeaCardGrid, {
-  ideas, dicts: IDEA_KINDS, selectedId: 'i0', pickedIds: new Set(['i0']), clusters: CLUSTERS,
-  onOpen: () => {}, onTogglePick: () => {}, onFileInto: () => {}, onCreateFolder: () => {},
-}))
-
 /**
  * ── 容量批（本次新增）────────────────────────────────────────────────────────
  *
@@ -202,8 +177,7 @@ const capShell = (capacity, includeOverdue, open) => `
 </div>`
 
 const knowledgeMarkup = RUN_LISTVIEW
-  ? `<div class="pane" id="knowledge" data-kb-harness>${toolbar}${list}${pager}</div>
-  <div class="pane" id="ideas">${grid}</div>` : ''
+  ? `<div class="pane" id="knowledge" data-kb-harness>${toolbar}${list}${pager}</div>` : ''
 const capacityMarkup = RUN_CAPACITY
   ? `<div class="pane" id="capacity">
    <div id="cap-collapsed">${capShell(capacityDefault, false, false)}</div>
@@ -223,35 +197,12 @@ writeFileSync(PAGE, `<!DOCTYPE html>
      .wb-app-scope 是它内部的**滚动区** —— 与真实面板一致 */
   .wb-app-scope { overflow: auto; }
   .pane { width: 880px; padding: 14px; box-sizing: border-box; }
-  #ideas { padding-top: 24px; }
 </style></head>
 <body><div class="wb-panel-host" data-open="1"><div class="wb-app-scope" data-dsh-personal-workbench-view data-harness-scroller>
 ${knowledgeMarkup}
 ${capacityMarkup}
 </div></div>
 <script>
-  // 用一个**最小替身菜单**验证 CSS 层：真菜单要 React 运行时（见文件头说明）。
-  // 它的类名与内联定位方式与真菜单一致。
-  window.__openStubMenu = function () {
-    const anchor = document.querySelector('#ideas [data-idea-fold]')
-    const box = anchor.getBoundingClientRect()
-    const el = document.createElement('div')
-    el.className = 'wb-idea-foldmenu'
-    el.setAttribute('data-idea-foldmenu', '')
-    el.style.position = 'fixed'
-    el.style.top = (box.bottom + 6) + 'px'
-    el.style.left = box.left + 'px'
-    el.style.width = '210px'
-    // 放真按钮进去：空盒子高度为 0，elementFromPoint 命中不了，也就测不出"点不动"
-    for (const label of ['天线测试方向', '工作台优化', '＋新建文件夹…']) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.textContent = label
-      el.appendChild(btn)
-    }
-    document.body.appendChild(el)   // portal 到 body，与真实现一致
-    return el
-  }
   /**
    * 容量批的"状态切换"替身：React 状态在静态渲染下点不动，
    * 所以这里切的是**已经渲染好的三份节点**的显隐（布局/文案一样要经过真 CSS）。
@@ -333,34 +284,13 @@ check('页面无脚本异常', pageErrors.length === 0, pageErrors.join(' | '))
 // ---- 真样式是否真的作用上了（否则后面所有断言都是空的） ----
 if (RUN_LISTVIEW) {
 const styleApplied = await evaluate(`(() => {
-  const cards = document.querySelector('.wb-idea-cards')
   return {
     tabsDisplay: getComputedStyle(document.querySelector('.wb-tabs')).display,
     rowDisplay: getComputedStyle(document.querySelector('.wb-kb-row')).display,
-    cardsDisplay: getComputedStyle(cards).display,
-    cardsCols: getComputedStyle(cards).gridTemplateColumns,
-    // 用 computed style 而不是翻 cssRules：position:fixed 那条规则在 @media 块里，平铺查 cssRules 查不到
-    menuPosition: (() => {
-      const el = document.createElement('div')
-      el.className = 'wb-idea-foldmenu'
-      document.body.appendChild(el)
-      const pos = getComputedStyle(el).position
-      el.remove()
-      return pos
-    })(),
-    // ☑ 的静息态必须在这里读：后面的用例会 focus 它，一旦 focus 就会被 :focus-within 显形。
-    // ⚠️ 要看**未选中**那张卡：第一张是 picked，它的 ☑ 本来就该常显（单独断言）。
-    pickIdleOpacity: getComputedStyle(document.querySelector('.wb-idea-card2:not(.picked) [data-idea-pick]')).opacity,
-    pickedPickOpacity: getComputedStyle(document.querySelector('.wb-idea-card2.picked [data-idea-pick]')).opacity,
-    paneWidth: Math.round(document.querySelector('#ideas').getBoundingClientRect().width),
     viewportWidth: window.innerWidth,
   }
 })()`)
-check('真样式已生效（Tab / 行 / 卡片都有布局）', styleApplied.tabsDisplay === 'flex' && styleApplied.rowDisplay === 'flex' && styleApplied.cardsDisplay === 'grid', JSON.stringify(styleApplied))
-check('☑ 未选中时静息不可见（opacity 0）', styleApplied.pickIdleOpacity === '0', styleApplied.pickIdleOpacity)
-check('☑ 已选中时常显（否则会忘了选过什么）', styleApplied.pickedPickOpacity === '1', styleApplied.pickedPickOpacity)
-check('菜单 CSS 是 position:fixed', styleApplied.menuPosition === 'fixed', styleApplied.menuPosition)
-check('卡片是 2 列网格（窗口够宽时）', styleApplied.cardsCols.split(' ').length === 2, `cols=${styleApplied.cardsCols} pane=${styleApplied.paneWidth} viewport=${styleApplied.viewportWidth}`)
+check('真样式已生效（Tab / 行都有布局）', styleApplied.tabsDisplay === 'flex' && styleApplied.rowDisplay === 'flex', JSON.stringify(styleApplied))
 
 // ---- 知识库：结构 + 布局 ----
 const kb = await evaluate(`(() => {
@@ -459,84 +389,11 @@ check('工具栏：按钮没被压成竖排（宽>高）', toolbarBox.noVertical
 check('工具栏：按钮顺序为 新建 → AI 总结 → 清空筛选', toolbarBox.order[0] < toolbarBox.order[1] && toolbarBox.order[1] < toolbarBox.order[2], JSON.stringify(toolbarBox.order))
 check('工具栏：只占一行（高度接近一个控件）', toolbarBox.barHeight < toolbarBox.btnRowHeight * 2, `bar=${toolbarBox.barHeight} btn=${toolbarBox.btnRowHeight}`)
 
-// ---- 点子卡片：真布局 + hover/focus ----
-const idea = await evaluate(`(async () => {
-  const pane = document.querySelector('#ideas')
-  const cards = [...pane.querySelectorAll('[data-idea-card]')]
-  const boxes = cards.map((c) => c.getBoundingClientRect())
-  const pick = pane.querySelector('[data-idea-pick]')
-  const fold = pane.querySelector('[data-idea-fold]')
-  // focus 是异步落焦的：必须等一帧再读 computed style，否则读到的是 focus 之前的态
-  pick.focus()
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-  const focusedOpacity = getComputedStyle(pick).opacity
-  const focusVisible = document.activeElement === pick
-  const pickBox = pick.getBoundingClientRect()
-  const cardBox = cards[0].getBoundingClientRect()
-  const result = {
-    cards: cards.length,
-    twoColumns: Math.abs(boxes[0].top - boxes[1].top) < 2 && Math.abs(boxes[0].left - boxes[1].left) > 100,
-    equalHeights: Math.abs(boxes[0].height - boxes[1].height) < 2,
-    leftBorder: getComputedStyle(cards[0]).borderLeftWidth,
-    colorVar: getComputedStyle(cards[0]).getPropertyValue('--wb-idea-color').trim(),
-    focusedOpacity, focusVisible,
-    pickInsideCard: pickBox.top >= cardBox.top && pickBox.right <= cardBox.right + 1,
-    foldDisabled: fold.disabled,
-    pickedCount: pane.querySelectorAll('.wb-idea-card2.picked').length,
-    pressedTrue: pane.querySelector('[aria-pressed="true"]') !== null,
-  }
-  pick.blur()
-  return result
-})()`)
-check('点子：4 张卡片、2 列、等高', idea.cards === 4 && idea.twoColumns && idea.equalHeights, JSON.stringify({ n: idea.cards, two: idea.twoColumns, eq: idea.equalHeights }))
-check('点子：卡片有类型色左边框', parseFloat(idea.leftBorder) >= 3 && idea.colorVar !== '', JSON.stringify({ border: idea.leftBorder, color: idea.colorVar }))
-check('点子：键盘聚焦后 ☑ 可见（复审 F6）', idea.focusVisible === true && idea.focusedOpacity === '1', JSON.stringify({ focus: idea.focusVisible, op: idea.focusedOpacity }))
-check('点子：☑ 在卡片内部（没飘出去）', idea.pickInsideCard === true, JSON.stringify(idea))
-check('点子：已选卡片有 picked + aria-pressed', idea.pickedCount === 1 && idea.pressedTrue === true, JSON.stringify({ picked: idea.pickedCount, pressed: idea.pressedTrue }))
-check('点子：有文件夹时「归入文件夹」可点', idea.foldDisabled === false, String(idea.foldDisabled))
-
-// ---- 菜单（CSS 层替身）：fixed + 不被 overflow 祖先裁 + 不随滚动移动 ----
-// 先把按钮滚进视口：替身只按"按钮下方"摆，不像真 placeFolderMenu 那样会翻转到视口内
-await evaluate(`document.querySelector('#ideas').scrollIntoView({ block: 'center' })`)
-await sleep(300)
-const menu = await evaluate(`(async () => {
-  const el = window.__openStubMenu()
-  const scroller = document.querySelector('.wb-app-scope')
-  const boxBefore = el.getBoundingClientRect()
-  // 命中「菜单里的一项」——菜单容器本身是 pointer-events:none（两段式的第一段），
-  // 只有它的子元素可点；探容器内边距会永远命不中，测的就不是真问题了。
-  const probe = el.querySelector('button')
-  const hitAtRest = (() => { const r = probe.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === probe })()
-  scroller.scrollBy(0, 40)
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-  const boxAfter = el.getBoundingClientRect()
-  const hit = (() => { const r = probe.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === probe : hitAtRest })()
-  return {
-    parentIsBody: el.parentElement === document.body,
-    anchorVisible: boxBefore.top > 0 && boxBefore.bottom < innerHeight,
-    inViewport: (() => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight })(),
-    hitAtRest,
-    position: getComputedStyle(el).position,
-    // overflow:auto 的祖先**不是** fixed 的包含块：滚动后视口坐标应当不变（证明前提正确）
-    viewportStable: Math.round(boxBefore.top) === Math.round(boxAfter.top) && Math.round(boxBefore.left) === Math.round(boxAfter.left),
-    scrolled: scroller.scrollTop,
-    // 面板的 overflow 裁不住 fixed 元素：它仍然可被命中
-    hitTestable: hit,
-    insideViewport: boxAfter.left >= 0 && boxAfter.top >= 0,
-  }
-})()`)
-check('菜单：portal 到 body（复审 F4）', menu.parentIsBody === true, String(menu.parentIsBody))
-check('菜单：position 为 fixed', menu.position === 'fixed', menu.position)
-check('菜单：不被面板的 overflow 裁掉（仍可命中，pointer-events 两段式生效）', menu.hitAtRest === true, JSON.stringify({ hit: menu.hitAtRest, anchorVisible: menu.anchorVisible, inViewport: menu.inViewport }))
-check('菜单：滚动时视口坐标不变（证明 overflow 祖先不是包含块）', menu.viewportStable === true && menu.scrolled > 0, JSON.stringify(menu))
-check('菜单：整块在视口内', menu.insideViewport === true, String(menu.insideViewport))
-
 // 截图前把面板滚回顶部、并移掉那个浮动菜单：
 // 菜单是 fixed（不随滚动移动，这是设计使然），留着会压在知识库列表上，截图会误导人。
 // 工具栏与 Tab 条在顶部，是这次改动最该看的地方。
 await evaluate(`(() => {
   document.querySelector('.wb-app-scope').scrollTop = 0
-  document.querySelector('[data-idea-foldmenu]')?.remove()
   return true
 })()`)
 await sleep(250)

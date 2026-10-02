@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openWorkbenchDb } from '../lib/db/database.js'
 import { seedDictionaries } from '../lib/db/seed.js'
-import { proposeDailyPlanTool, proposeIdeaClustersTool, submitIdeaTasksTool, submitKnowledgeTool, submitTaskTool, updateTaskTool, requestCompletionTool, saveTaskMemoryTool } from '../lib/tools.js'
-import { createIdea, createDraft, createTask, confirmDailyPlanDraft, confirmTaskDraft, getTask, getTaskMemoryContext, getDraftBySession, getPendingDailyPlanDraft, getPendingDraftForSession, getPendingDraftForTask, linkTaskSession, updateTask } from '../lib/db/repo.js'
+import { proposeDailyPlanTool, submitKnowledgeTool, submitTaskTool, updateTaskTool, requestCompletionTool, saveTaskMemoryTool } from '../lib/tools.js'
+import { createDraft, createTask, confirmDailyPlanDraft, confirmTaskDraft, getTask, getTaskMemoryContext, getDraftBySession, getPendingDailyPlanDraft, getPendingDraftForTask, linkTaskSession, updateTask } from '../lib/db/repo.js'
 
 /**
  * 删临时目录，容忍 Windows 上刚 `close()` 时文件句柄尚未释放导致的 EPERM。
@@ -255,16 +255,6 @@ test('agent tools write pending drafts and update tasks', async () => {
     )
     assert.match(badLink, /fileLink must be a file:\/\/ URL or an absolute path/)
 
-    const idea1 = createIdea(db, { title: '点子A', kindCode: 'spark', tags: ['x'] })
-    const idea2 = createIdea(db, { title: '点子B', kindCode: 'plugin', tags: ['x'] })
-    const clusterTool = proposeIdeaClustersTool(db)
-    const cOut = await clusterTool.execute({ clusters: [{ title: 'X 方向', summary: '相关', idea_ids: [idea1.id, idea2.id] }] }, { agent: { session: { id: 'sess-cluster' } } })
-    assert.match(cOut, /点子王提案已保存/)
-    assert.ok(getPendingDraftForSession(db, 'sess-cluster', 'idea_cluster'))
-    const taskTool = submitIdeaTasksTool(db)
-    const tOut = await taskTool.execute({ source_idea_ids: [idea1.id], tasks: [{ title: '落地A', type_code: 'code_impl', priority_code: 'p1' }], summary: '结论' }, { agent: { session: { id: 'sess-idea-task' } } })
-    assert.match(tOut, /点子落地任务提案已保存/)
-    assert.ok(getPendingDraftForSession(db, 'sess-idea-task', 'idea_tasks'))
     db.close()
   } finally {
     rmTempDir(dir)

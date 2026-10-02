@@ -4,7 +4,7 @@
  */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
-import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmIdeaClusterDraft, confirmIdeaTaskDraft, confirmKnowledgeDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, updateDraft, updateTaskWithCompletion } from '../../db/repo.js'
+import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmKnowledgeDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, updateDraft, updateTaskWithCompletion } from '../../db/repo.js'
 import { DRAFTS_PREFIX, isLoopbackRequest, pathSegments, publicTask, readJsonBody, writeJson } from './helpers.js'
 import { writeReviewToTeamMemory, teamMemoryAvailable, type TeamMemoryService } from '../../review-memory.js'
 
@@ -153,12 +153,6 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
             }
             if (draft.kindCode === 'knowledge') {
               return writeJson(res, 200, { ok: true, knowledge: confirmKnowledgeDraft(db, id) })
-            }
-            if (draft.kindCode === 'idea_cluster') {
-              return writeJson(res, 200, { ok: true, clusters: confirmIdeaClusterDraft(db, id) })
-            }
-            if (draft.kindCode === 'idea_tasks') {
-              return writeJson(res, 200, { ok: true, tasks: confirmIdeaTaskDraft(db, id).map(publicTask) })
             }
             if (draft.kindCode === 'review') {
               const taskId = typeof draft.payload.taskId === 'string' ? draft.payload.taskId : undefined

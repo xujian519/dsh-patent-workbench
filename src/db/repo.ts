@@ -232,15 +232,6 @@ export {
 } from './repo/knowledge.js'
 export type { KnowledgeInput, KnowledgeRow } from './repo/knowledge.js'
 
-// 点子 / 点子王域已抽到 repo/ideas.ts；此处再导出保持对外 API 不变
-export {
-  createIdea, getIdea, listIdeas, updateIdea, deleteIdea,
-  createIdeaCluster, getIdeaCluster, listIdeaClusters, deleteIdeaCluster, listIdeaClustersForIdea,
-  updateIdeaCluster, addIdeaToCluster, removeIdeaFromCluster, listUnfiledIdeas, mergeIdeaClusters,
-  confirmIdeaClusterDraft, confirmIdeaTaskDraft, getPendingDraftForSession,
-} from './repo/ideas.js'
-export type { IdeaInput, IdeaRow, IdeaClusterInput, IdeaClusterRow } from './repo/ideas.js'
-
 // 案卷域已抽到 repo/matters.ts（专利工作台阶段 2）；此处再导出保持对外 API 不变
 export {
   MATTER_STAGE_CODES, PATENT_KINDS, NOTICE_KINDS, REPEATABLE_NOTICE_KINDS, DELIVERY_MODES,

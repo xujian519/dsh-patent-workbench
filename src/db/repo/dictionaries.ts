@@ -96,7 +96,6 @@ export function dictionaryUsageCount(db: DatabaseSync, kind: string, code: strin
     case 'type': return Number((db.prepare('SELECT COUNT(*) AS c FROM tasks WHERE type_code = ?').get(code) as { c: number }).c)
     case 'status': return Number((db.prepare('SELECT COUNT(*) AS c FROM tasks WHERE status_code = ?').get(code) as { c: number }).c)
     case 'priority': return Number((db.prepare('SELECT COUNT(*) AS c FROM tasks WHERE priority_code = ?').get(code) as { c: number }).c)
-    case 'idea_kind': return Number((db.prepare('SELECT COUNT(*) AS c FROM ideas WHERE kind_code = ?').get(code) as { c: number }).c)
     case 'knowledge_kind': return Number((db.prepare('SELECT COUNT(*) AS c FROM knowledge_entries WHERE kind_code = ?').get(code) as { c: number }).c)
     default: return 0
   }

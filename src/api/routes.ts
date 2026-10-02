@@ -1,8 +1,8 @@
 /**
  * /api/workbench/* 路由入口。Loopback-only 保护（同 dsh-ssh 的信任围栏）。
  *
- * 领域路由已拆分到 routes/：tasks / reminders / drafts / ideas / idea-clusters /
- * knowledge / ai-sessions / reports / plans。本文件保留组合入口与跨领域基础端点
+ * 领域路由已拆分到 routes/：tasks / reminders / drafts / knowledge /
+ * ai-sessions / plans。本文件保留组合入口与跨领域基础端点
  * （workspaces/ensure、settings、bootstrap、maintenance、health）。
  */
 import { mkdirSync, readFileSync } from 'node:fs'
@@ -15,8 +15,6 @@ import {
 import { makeAiSessionRoutes } from './routes/ai-sessions.js'
 import { makeDraftRoutes } from './routes/drafts.js'
 import { isLoopbackRequest, readJsonBody, todayRange, writeJson } from './routes/helpers.js'
-import { makeIdeaClusterRoutes } from './routes/idea-clusters.js'
-import { makeIdeaRoutes } from './routes/ideas.js'
 import { makeKnowledgeRoutes } from './routes/knowledge.js'
 import type { KnowledgeRecallManager } from '../knowledge-recall.js'
 import { makeModelModalityRoutes, type LlmModalityProbe } from './routes/model-modalities.js'
@@ -373,8 +371,6 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
       },
     },
     ...makeDraftRoutes(db, { teamMemory: deps.teamMemory }),
-    ...makeIdeaRoutes(db),
-    ...makeIdeaClusterRoutes(db),
     ...makeKnowledgeRoutes(db),
     ...makeMatterRoutes(db, { patentDeadline: deps.patentDeadline }),
     ...makeAiSessionRoutes(db),

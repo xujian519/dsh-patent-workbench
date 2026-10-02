@@ -55,8 +55,6 @@ export const AI_SESSIONS_PREFIX = '/api/workbench/ai-sessions'
 export const KNOWLEDGE_PREFIX = '/api/workbench/knowledge'
 /** 知识库自动召回的可观测端点前缀（日志/状态/开关），见 `api/knowledgeRecallRoute.ts`。 */
 export const KNOWLEDGE_RECALL_PREFIX = '/api/workbench/knowledge-recall'
-export const IDEAS_PREFIX = '/api/workbench/ideas'
-export const IDEA_CLUSTERS_PREFIX = '/api/workbench/idea-clusters'
 /** 案卷域前缀（专利工作台阶段 2）。 */
 export const MATTERS_PREFIX = '/api/workbench/matters'
 

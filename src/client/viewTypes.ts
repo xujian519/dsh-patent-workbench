@@ -65,8 +65,6 @@ export interface DailyPlanView {
 }
 // 提醒相关类型来自共享契约（前后端单一事实来源），此处不再重复定义。
 export interface KnowledgeEntry { id: string; kindCode: string; title: string; contentMd: string; tags: string[]; sourceTaskId: string | null; sourceSessionId: string | null; sourceReviewId: string | null; fileLink: string | null; createdAt: string; updatedAt: string }
-export interface Idea { id: string; title: string; contentMd: string; kindCode: string; tags: string[]; sourceSessionId: string | null; createdAt: string; updatedAt: string }
-export interface IdeaClusterView { id: string; title: string; summaryMd: string; tags: string[]; ideas: Idea[]; createdAt: string; updatedAt: string }
 export interface Bootstrap {
   dictionaries: Dict[]
   stats: { overdue: number; todayDue: number; doing: number; total: number }

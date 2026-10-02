@@ -56,8 +56,6 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
   { kind: 'draft_kind', code: 'review', name: '复盘确认', sortOrder: 40, config: {} },
   { kind: 'draft_kind', code: 'daily_plan', name: '今日计划', sortOrder: 50, config: {} },
   { kind: 'draft_kind', code: 'knowledge', name: '知识条目', sortOrder: 70, config: {} },
-  { kind: 'draft_kind', code: 'idea_cluster', name: '点子王提案', sortOrder: 80, config: {} },
-  { kind: 'draft_kind', code: 'idea_tasks', name: '点子落地任务', sortOrder: 90, config: {} },
 
   // 知识库分类
   // ⚠️ 颜色是**字典数据**（用户可在「设置 → 字典管理」里改），不是 UI 里的硬编码调色板。
@@ -68,13 +66,6 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
   { kind: 'knowledge_kind', code: 'decision', name: '决策记录', sortOrder: 30, config: { color: '#8B7BE8' } },
   { kind: 'knowledge_kind', code: 'snippet', name: '片段/模板', sortOrder: 40, config: { color: '#2E9B7B' } },
 
-  // 点子类型（同样必须有 color：卡片瀑布的左侧色条与类型徽标都取它）
-  { kind: 'idea_kind', code: 'project', name: '项目点子', sortOrder: 10, config: { color: '#4F86F7' } },
-  { kind: 'idea_kind', code: 'skill', name: '技能点子', sortOrder: 20, config: { color: '#2E9B7B' } },
-  { kind: 'idea_kind', code: 'plugin', name: '插件点子', sortOrder: 30, config: { color: '#8B7BE8' } },
-  { kind: 'idea_kind', code: 'spark', name: '突发奇想', sortOrder: 40, config: { color: '#E7634C' } },
-  { kind: 'idea_kind', code: 'random', name: '莫名其妙的点子', sortOrder: 50, config: { color: '#D98E32' } },
-
   // 重复规则
   { kind: 'recurrence', code: 'none', name: '不重复', sortOrder: 10, config: {} },
   { kind: 'recurrence', code: 'daily', name: '每天', sortOrder: 20, config: {} },
@@ -83,8 +74,6 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
 
   // V2 复用型 AI 会话范围
   { kind: 'ai_session_scope', code: 'daily_plan', name: '今日计划会话', sortOrder: 10, config: {} },
-  { kind: 'ai_session_scope', code: 'idea_association', name: '点子关联会话', sortOrder: 40, config: {} },
-  { kind: 'ai_session_scope', code: 'idea_brainstorm', name: '点子头脑风暴会话', sortOrder: 50, config: {} },
   { kind: 'draft_status', code: 'pending', name: '待确认', sortOrder: 10, config: {} },
   { kind: 'draft_status', code: 'confirmed', name: '已确认', sortOrder: 20, config: {} },
   { kind: 'draft_status', code: 'abandoned', name: '已放弃', sortOrder: 30, config: {} },

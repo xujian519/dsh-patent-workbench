@@ -11,7 +11,7 @@
  * 2. **可渲染、可验证**：`DraftBanner.tsx` 里带 `createPortal`/`useState`，在 `node --test`
  *    与 headless 浏览器里都渲染不了；这一层是纯展示（只依赖 React + MarkdownText），
  *    于是能进 `tsconfig.build.json` 白名单，被真组件渲染与真样式浏览器 harness 断言到
- *    （同 `KnowledgeList.tsx` / `IdeaCardGrid.tsx` 的做法）。
+ *    （同 `KnowledgeList.tsx` 的做法）。
  *
  * 提示文案**不在**这里拼：它来自 `shared/knowledgeDraftOverwrite.ts`，
  * 与工具回执共用同一份口径（"同一语义只算一次"）。

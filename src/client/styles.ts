@@ -404,12 +404,8 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-row.done .wb-row-title { text-decoration: line-through; }
 .wb-row.selected { box-shadow: inset 3px 0 0 var(--dsw-alias-state-business-primary, #4f8ef7); }
 .wb-form input:focus, .wb-form select:focus, .wb-form textarea:focus { border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8ef7) 65%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8ef7) 16%, transparent); outline: none; }
-.wb-idea-card { display: flex; flex-direction: column; margin-bottom: 0; padding: 12px; cursor: pointer; }
-.wb-idea-card .wb-idea-summary { font-size: 12px; color: var(--dsw-alias-label-secondary); line-height: 1.5; min-height: 36px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.wb-idea-card .wb-idea-foot { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
 .wb-file-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--wb-border, rgba(127,127,127,.22)); background: color-mix(in srgb, var(--dsw-alias-label-primary, #888) 5%, transparent); border-radius: 99px; padding: 3px 10px; font-size: 12px; color: var(--dsw-alias-label-secondary); }
 .wb-file-chip code { background: transparent; border: none; padding: 0; }
-.wb-cluster-meta { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
 .wb-empty { border: 1px dashed var(--wb-border-soft, rgba(127,127,127,.16)); border-radius: 12px; margin: 4px; }
 /* ---- P0: 任务详情摘要 + Tabs + 吸顶操作条 ---- */
 .wb-detail-actions { position: sticky; top: 0; z-index: 16; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; padding: 9px 12px; border: 1px solid var(--wb-border-soft, rgba(127,127,127,.18)); border-radius: 12px; background: color-mix(in srgb, var(--dsw-alias-bg-base, #111) 88%, transparent); backdrop-filter: blur(8px); box-shadow: 0 6px 18px rgba(0,0,0,.08); }
@@ -975,65 +971,6 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 
 /* 空态：从灰底占位改为邀请式文案 */
 [data-dsh-personal-workbench-view] .wb-empty { padding: 26px 18px; }
-[data-dsh-personal-workbench-view] .wb-empty-ic {
-  width: 34px; height: 34px; margin: 0 auto 9px; border-radius: 10px;
-  display: grid; place-items: center; background: var(--wb-accent-soft); color: var(--wb-accent);
-}
-
-/* 点子文件夹（v1.13.0 新增：文件夹优先） */
-[data-dsh-personal-workbench-view] .wb-idea-crumb {
-  display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--wb-ink-3); margin-bottom: 11px;
-}
-[data-dsh-personal-workbench-view] .wb-idea-crumb b { color: var(--wb-ink-1); font-weight: 650; }
-[data-dsh-personal-workbench-view] .wb-folder-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 11px; margin-bottom: 18px;
-}
-[data-dsh-personal-workbench-view] .wb-folder {
-  position: relative; border: 1px solid var(--wb-line); border-radius: var(--wb-r-2);
-  background: var(--wb-surface); box-shadow: var(--wb-sh-1); padding: 12px 13px; cursor: pointer;
-  transition: border-color .12s ease, background .12s ease;
-}
-[data-dsh-personal-workbench-view] .wb-folder:hover { border-color: color-mix(in srgb, var(--wb-line) 60%, var(--wb-ink-2)); }
-[data-dsh-personal-workbench-view] .wb-folder.selected { border-color: var(--wb-accent-line); background: var(--wb-accent-soft); }
-[data-dsh-personal-workbench-view] .wb-folder-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
-[data-dsh-personal-workbench-view] .wb-folder-ic {
-  width: 25px; height: 25px; border-radius: 8px; flex: none; display: grid; place-items: center;
-  background: var(--wb-accent-soft); color: var(--wb-accent);
-}
-[data-dsh-personal-workbench-view] .wb-folder-head h4 {
-  margin: 0; flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-[data-dsh-personal-workbench-view] .wb-folder-cnt {
-  flex: none; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums;
-  background: var(--wb-sunk); border: 1px solid var(--wb-line-soft); border-radius: 999px; padding: 3px 7px; color: var(--wb-ink-2);
-}
-[data-dsh-personal-workbench-view] .wb-folder-mini { display: flex; flex-direction: column; gap: 4px; }
-[data-dsh-personal-workbench-view] .wb-folder-mini span {
-  font-size: 12px; color: var(--wb-ink-2); background: var(--wb-sunk); border-radius: 6px; padding: 5px 8px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-[data-dsh-personal-workbench-view] .wb-folder-mini span.more { background: transparent; color: var(--wb-ink-3); padding-left: 0; }
-[data-dsh-personal-workbench-view] .wb-folder.new {
-  border-style: dashed; box-shadow: none; display: grid; place-items: center; text-align: center;
-  color: var(--wb-ink-3); font-size: 12.5px; min-height: 116px;
-}
-[data-dsh-personal-workbench-view] .wb-folder-acts {
-  position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s ease;
-}
-[data-dsh-personal-workbench-view] .wb-folder:hover .wb-folder-acts { opacity: 1; }
-[data-dsh-personal-workbench-view] .wb-icon-btn {
-  width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
-  border: 1px solid var(--wb-line); background: var(--dsw-alias-bg-layer-2, var(--wb-surface)); color: var(--wb-ink-2);
-}
-[data-dsh-personal-workbench-view] .wb-icon-btn:hover { color: var(--wb-ink-1); background: var(--wb-sunk); }
-[data-dsh-personal-workbench-view] .wb-member {
-  display: flex; align-items: center; gap: 9px; padding: 9px 13px;
-  border-bottom: 1px solid var(--wb-line-soft); font-size: 12.5px;
-}
-[data-dsh-personal-workbench-view] .wb-member:last-child { border-bottom: none; }
-[data-dsh-personal-workbench-view] .wb-member .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* 会话标题栏入口（官方槽位 conversation.session.header.actions） */
 .wb-header-entry {
   display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
@@ -1055,7 +992,6 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
   .wb-settings { grid-template-columns: 1fr; gap: 12px; }
   .wb-settings-nav { flex-direction: row; flex-wrap: wrap; }
   .wb-settings-nav button { width: auto; }
-  [data-dsh-personal-workbench-view] .wb-folder-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   .wb-overlay, .wb-dialog, .wb-toast, .wb-toast.leaving { animation: none; }
@@ -1105,7 +1041,7 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-kb-tag-more { border-style:dashed; }
 
 /* 「更多标签」浮层：portal 到 document.body（工具栏在滚动容器里，留在里面会被裁）。
-   与 .wb-idea-foldmenu 同一套：容器 pointer-events:none 防继承、z-index 高于面板宿主 55。 */
+   容器 pointer-events:none 防继承、z-index 高于面板宿主 55。 */
 .wb-tagmenu { position:fixed; z-index:60; min-width:210px; max-width:280px; padding:6px;
   background:var(--dsw-alias-bg-layer-2, #1c1c1f); border:1px solid var(--wb-line);
   border-radius:10px; box-shadow:0 12px 32px rgba(0,0,0,.45); pointer-events:none; }
@@ -1175,60 +1111,6 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-kb-pnum.on { border-color:var(--wb-accent-line); color:var(--wb-ink-1); background:var(--wb-accent-soft); font-weight:600; }
 .wb-kb-pnum:disabled { opacity:.35; cursor:default; }
 
-/* ===========================================================================
-   点子页（打样 1 号）：卡片瀑布。文件夹区沿用原有样式，未改。
-   =========================================================================== */
-.wb-idea-cards { display:grid; grid-template-columns:1fr 1fr; gap:11px; }
-.wb-idea-card2 { position:relative; display:flex; flex-direction:column; gap:8px; cursor:pointer;
-  padding:12px 13px 11px; border:1px solid var(--wb-line-soft); border-left:3px solid var(--wb-idea-color, var(--wb-ink-3));
-  border-radius:11px; background:var(--wb-surface); box-shadow:var(--wb-sh-1);
-  transition:border-color .14s ease, transform .14s ease, background .14s ease; }
-.wb-idea-card2:hover { background:color-mix(in srgb, var(--wb-ink-1) 5%, var(--wb-surface)); transform:translateY(-1px); }
-.wb-idea-card2.sel { border-color:var(--wb-accent-line); box-shadow:0 0 0 1px var(--wb-accent-line), var(--wb-sh-2); }
-.wb-idea-card2.picked { border-color:var(--wb-accent-line); background:var(--wb-accent-soft); }
-.wb-idea-title { font-size:13.5px; font-weight:600; line-height:1.45; padding-right:26px;
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-.wb-idea-sum2 { font-size:11.5px; color:var(--wb-ink-3); line-height:1.6;
-  display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
-.wb-idea-foot2 { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:2px; }
-.wb-idea-stamp { color:var(--wb-ink-3); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:auto; }
-.wb-idea-pick { position:absolute; top:9px; right:9px; width:19px; height:19px; border-radius:6px;
-  border:1px solid var(--wb-line); background:var(--wb-sunk); color:transparent; font-size:11px; line-height:1;
-  cursor:pointer; opacity:0; transition:opacity .12s ease, background .12s ease; padding:0; }
-.wb-idea-card2:hover .wb-idea-pick,
-.wb-idea-card2.picked .wb-idea-pick,
-/* 键盘用户：Tab 焦点落在 ☑ 上时必须看得见（只靠 hover 显形 = 焦点落在隐形控件上） */
-.wb-idea-pick:focus-visible,
-.wb-idea-card2:focus-within .wb-idea-pick { opacity:1; }
-.wb-idea-pick:focus-visible { outline:2px solid var(--wb-accent); outline-offset:1px; }
-.wb-idea-pick[aria-pressed="true"] { color:var(--wb-ink-1); border-color:var(--wb-accent); background:var(--wb-accent); }
-.wb-idea-foldbtn { border:1px solid var(--wb-line); background:transparent; color:var(--wb-ink-3);
-  border-radius:7px; padding:2px 8px; font:inherit; font-size:11px; cursor:pointer; white-space:nowrap; }
-.wb-idea-foldbtn:hover:not(:disabled) { color:var(--wb-ink-1); background:color-mix(in srgb, var(--wb-ink-1) 7%, transparent); }
-.wb-idea-foldbtn:disabled { opacity:.45; cursor:default; }
-.wb-idea-empty { padding:22px; text-align:center; color:var(--wb-ink-3); font-size:12.5px;
-  border:1px dashed var(--wb-line); border-radius:11px; grid-column:1 / -1; }
-/* 菜单 portal 到 document.body（见 IdeaCardGrid.tsx）：网格/卡片/面板的 overflow 与层叠都裁不到它。
-   ⚠️ 两条坑都是 scripts/repro/harness-real-browser.mjs 的命中测试抓出来的（都是"看得见、点不动"）：
-   1. pointer-events 是**继承**属性：面板宿主 .wb-panel-host 是 pointer-events:none
-      （为了让左侧导航栏在面板铺开时仍可点）→ portal 到 body 的菜单连点击都收不到。
-      按「容器 none + 菜单本体 auto」两段写，与 .wb-toasts / .wb-toast 同一套办法。
-   2. z-index 必须**高于 .wb-panel-host 的 55**：否则面板里的卡片会盖在菜单上面，
-      菜单看得见但点到的还是卡片（实测 z-index:40 时 elementFromPoint 命中的是 .wb-idea-card2）。 */
-.wb-idea-foldmenu { position:fixed; z-index:60; min-width:200px; padding:4px;
-  background:var(--dsw-alias-bg-layer-2, #1c1c1f); border:1px solid var(--wb-line);
-  border-radius:10px; box-shadow:0 12px 32px rgba(0,0,0,.45);
-  pointer-events:none; overflow-y:auto; }
-.wb-idea-foldmenu > * { pointer-events:auto; }
-.wb-idea-foldmenu button { display:flex; align-items:center; gap:7px; width:100%; text-align:left;
-  border:none; background:transparent; color:var(--wb-ink-1); font:inherit; font-size:12.5px;
-  padding:7px 9px; border-radius:7px; cursor:pointer; }
-.wb-idea-foldmenu button:hover { background:color-mix(in srgb, var(--wb-ink-1) 8%, transparent); }
-.wb-idea-foldic { flex:none; }
-.wb-idea-foldnote { padding:5px 9px 7px; font-size:11px; color:var(--wb-ink-3); border-top:1px solid var(--wb-line-soft); margin-top:3px; }
-@media (max-width: 720px) {
-  .wb-idea-cards { grid-template-columns:1fr; }
-}
 `
 
 /**

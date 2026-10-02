@@ -10,7 +10,6 @@ import { readFileSync } from 'node:fs'
  */
 const indexSource = readFileSync('src/client/index.tsx', 'utf8')
 const knowledgeSource = readFileSync('src/client/components/KnowledgeList.tsx', 'utf8')
-const ideaSource = readFileSync('src/client/components/IdeaCardGrid.tsx', 'utf8')
 const tabBarSource = readFileSync('src/client/components/TabBar.tsx', 'utf8')
 const taskListSource = readFileSync('src/client/components/TaskList.tsx', 'utf8')
 const settingsSource = readFileSync('src/client/components/SettingsModal.tsx', 'utf8')
@@ -69,33 +68,6 @@ test('接线：分类语义只派生一处（不许再写 kinds[0] ?? all）', (
   assert.equal(rawDerivations, 1, `kinds[0] 只该出现在 selectedKind 里，实际 ${rawDerivations} 处`)
 })
 
-test('接线：点子菜单位置复用 placePopover，不再自造第二份摆放实现', () => {
-  assert.match(ideaSource, /import \{ placePopover, type PopoverPlacement \} from '\.\.\/popoverPlacement\.js'/, '复用权威实现')
-  assert.match(ideaSource, /export function placeFolderMenu/, '包装函数还在（便于单测与语义表达）')
-  assert.match(ideaSource, /prefer: 'bottom'/, '菜单默认往下弹')
-  // 错误前提的"按包含块夹取"必须彻底删掉（overflow 不是 fixed 的包含块）
-  assert.doesNotMatch(indexSource, /fixedContainingBlock/, '包含块探测已删除')
-  assert.doesNotMatch(indexSource, /setFolderMenuRect|folderMenuPos/, '菜单位置不再写到页面状态里')
-  const placements = (stripComments(ideaSource).match(/placePopover\(/g) ?? []).length
-    + (stripComments(indexSource).match(/placePopover\(/g) ?? []).length
-  assert.ok(placements >= 1, '至少有一处真的调用了权威摆放函数')
-  assert.doesNotMatch(stripComments(ideaSource), /getBoundingClientRect\(\)[\s\S]{0,400}?Math\.(min|max)\(/, '组件里不该再手写夹取算术')
-})
-
-test('接线：菜单 portal 到 body（网格/面板的 overflow 与层叠都管不到它）', () => {
-  assert.match(ideaSource, /createPortal\(menu, document\.body\)/, 'portal 到 body')
-  assert.match(ideaSource, /typeof document === 'undefined' \? menu : createPortal/, 'SSR 下退回原位渲染（否则测试与首屏会炸）')
-})
-
-test('接线：菜单位置同值不写（量 → 写状态 → 再渲染的回路不能自激）', () => {
-  const reposition = ideaSource.match(/const reposition = \(\): void => \{[\s\S]*?\n    \}/)
-  assert.ok(reposition !== null, 'reposition 存在')
-  assert.match(reposition[0], /setPlacement\(\(prev\) =>/, '用更新函数比较')
-  assert.match(reposition[0], /prev\.top === next\.top/, '比位置')
-  assert.match(reposition[0], /prev\.maxHeight === next\.maxHeight/, '比高度')
-  assert.match(reposition[0], /scrollHeight/, '高度用真实量值，不用估算常量')
-})
-
 test('接线：改筛选只能走 onChange，不许在 JSX 里直接改状态', () => {
   const toolbar = indexSource.match(/<KnowledgeToolbar[\s\S]*?\/>/)
   assert.ok(toolbar !== null, 'KnowledgeToolbar 已接线')
@@ -110,73 +82,6 @@ test('接线：Tab / 排序 / 每页条数在刷新后保持（验收项）', ()
     assert.match(writer[0], new RegExp(`${key}:`), `持久化字段缺 ${key}`)
   }
   assert.doesNotMatch(writer[0], /keyword:/, '关键词是瞬时意图，不该落盘')
-})
-
-test('接线：点子卡片网格给了"属于哪些文件夹"，组件不自己翻 ideaClusters', () => {
-  assert.match(indexSource, /const ideaCardItems = useMemo<IdeaCardItem\[\]>/, '派生集中在页面')
-  assert.match(indexSource, /clusterIds: ideaClusters\.filter/, '附上文件夹归属')
-  assert.match(indexSource, /<IdeaCardGrid/, '点子区换成了卡片网格')
-})
-
-test('接线：菜单位置在滚动时重算（fixed 浮层不随滚动移动，而按钮会动）', () => {
-  assert.match(ideaSource, /placeFolderMenu\(/, '位置由纯函数算')
-  assert.match(ideaSource, /document\.addEventListener\('scroll', reposition, true\)/, '捕获阶段监听滚动（面板内滚动也要重算）')
-  assert.match(ideaSource, /window\.addEventListener\('resize', reposition\)/, '改窗口尺寸也要重算')
-  assert.match(ideaSource, /removeEventListener\('scroll', reposition, true\)/, '监听器要成对清理（否则卸载后仍在跑）')
-})
-
-test('组件：多选与归入文件夹都在卡片上，且都不冒泡到整卡点击', () => {
-  // 两个按钮都是「先 stopPropagation，再干自己的事」，中间可以换行
-  const pick = ideaSource.match(/data-idea-pick=\{idea\.id\}[\s\S]{0,400}?onClick=\{\(e\) => \{ e\.stopPropagation\(\);/)
-  assert.ok(pick !== null, '☑ 必须 stopPropagation，否则点它会顺手打开详情')
-  const fold = ideaSource.match(/data-idea-fold=\{idea\.id\}[\s\S]{0,600}?e\.stopPropagation\(\)/)
-  assert.ok(fold !== null, '归入文件夹按钮必须 stopPropagation')
-})
-
-test('组件：菜单与网格是两个并列的东西，且用 fixed 定位（配合 portal）', () => {
-  // 菜单必须是**独立元素**：JSX 里它的渲染位置在网格容器闭合之后，而不是嵌在某张卡片里
-  const gridOpen = ideaSource.indexOf('data-idea-cards>')
-  assert.ok(gridOpen >= 0, '网格容器存在')
-  const gridClose = ideaSource.indexOf('</div>', gridOpen)
-  const menuRenderAt = ideaSource.indexOf('{menu !== null &&', gridOpen)
-  assert.ok(menuRenderAt > gridClose, `菜单的渲染位置必须在网格闭合之后（网格闭合 ${gridClose} / 菜单渲染 ${menuRenderAt}）`)
-  const css = readFileSync('src/client/styles.ts', 'utf8')
-  const rule = css.match(/\.wb-idea-foldmenu \{[^}]*\}/)
-  assert.ok(rule !== null, 'styles.ts 有 .wb-idea-foldmenu 规则')
-  assert.match(rule[0], /position:fixed/, '菜单必须 fixed（配合 portal，网格/面板的 overflow 才裁不到）')
-  /**
-   * portal 到 body 的浮层会**继承** `.wb-panel-host` 的 `pointer-events:none`
-   * （面板铺开时左侧导航栏仍要可点，所以宿主是 none）——也就是说菜单会看得见、点不动。
-   * 必须按「容器 none + 本体 auto」两段写，与 `.wb-toasts` / `.wb-toast` 同一套办法。
-   */
-  assert.match(rule[0], /pointer-events:none/, '浮层容器要 pointer-events:none（与 toast 一致）')
-  assert.match(css, /\.wb-idea-foldmenu > \* \{ pointer-events:auto; \}/, '浮层本体要 pointer-events:auto，否则点不动')
-  /**
-   * z-index 必须**高于面板宿主**（`.wb-panel-host` 是 55）：portal 到 body 的菜单
-   * 与面板是同层兄弟，z-index 低于 55 就会被面板里的卡片盖住 —— 看得见、点到的却是卡片。
-   * 实测 z-index:40 时 `elementFromPoint` 命中的是 `.wb-idea-card2`。
-   */
-  const menuZ = Number((rule[0].match(/z-index:(\d+)/) ?? [, '0'])[1])
-  const hostZ = Number((css.match(/\.wb-panel-host \{[^}]*z-index:\s*(\d+)/) ?? [, '0'])[1])
-  assert.ok(menuZ > hostZ, `菜单 z-index(${menuZ}) 必须高于面板宿主(${hostZ})，否则会被面板内容盖住`)
-})
-
-test('样式：多选 ☑ 对键盘用户可见（只靠 hover 显形 = 焦点落在隐形控件上）', () => {
-  const css = readFileSync('src/client/styles.ts', 'utf8')
-  assert.match(css, /\.wb-idea-pick:focus-visible/, '☑ 要有 focus-visible 规则')
-  const focusRule = css.match(/\.wb-idea-pick:focus-visible[\s\S]{0,200}?\{[^}]*\}/)
-  assert.ok(focusRule !== null && /opacity:1/.test(focusRule[0]), '聚焦时必须显形')
-})
-
-test('样式：新 UI 的类名都真的定义了（否则渲染出来是裸元素）', () => {
-  const css = readFileSync('src/client/styles.ts', 'utf8')
-  for (const cls of ['.wb-kb-list', '.wb-kb-row', '.wb-kb-ghead', '.wb-kb-pager', '.wb-kb-pnum',
-    '.wb-idea-cards', '.wb-idea-card2', '.wb-idea-pick', '.wb-idea-foldbtn', '.wb-idea-foldmenu',
-    // 第二轮：通用 Tab（知识库 + 任务页共用）、标签「更多」浮层
-    '.wb-tabs', '.wb-tab', '.wb-tab-dot', '.wb-tab-cnt',
-    '.wb-kb-tags', '.wb-kb-tag', '.wb-tagmenu', '.wb-tagmenu-item', '.wb-tagmenu-search']) {
-    assert.ok(css.includes(cls + ' ') || css.includes(cls + '{') || css.includes(cls + ','), `styles.ts 缺 ${cls}`)
-  }
 })
 
 test('知识库与任务页共用同一个 Tab 组件（同一语义不写两遍）', () => {
@@ -216,18 +121,13 @@ test('任务行：类型徽标已去掉（Tab 已表达类型），优先级/状
 test('设置页：字典管理里有「知识库类型」（原先漏了这个入口）', () => {
   assert.match(settingsSource, /type DictKind = [^\n]*'knowledge_kind'/, 'DictKind 含 knowledge_kind')
   assert.match(settingsSource, /\{ key: 'knowledge_kind', label: '知识库类型' \}/, '字典分区里有这个 Tab')
-  for (const key of ['type', 'status', 'priority', 'idea_kind']) {
-    assert.match(settingsSource, new RegExp(`\\{ key: '${key}'`), `原有分区不能丢：${key}`)
-  }
 })
 
-test('字典：知识库/点子类型的**出厂 config 必须带颜色**（否则 Tab 圆点与徽标全落灰色兜底）', () => {
+test('字典：知识库类型的**出厂 config 必须带颜色**（否则 Tab 圆点与徽标全落灰色兜底）', () => {
   const seed = readFileSync('src/db/seed.ts', 'utf8')
   const knowledgeSeeds = seed.match(/\{ kind: 'knowledge_kind'[^\n]*/g) ?? []
-  const ideaSeeds = seed.match(/\{ kind: 'idea_kind'[^\n]*/g) ?? []
   assert.equal(knowledgeSeeds.length, 4, 'knowledge_kind 种子 4 条')
-  assert.equal(ideaSeeds.length, 5, 'idea_kind 种子 5 条')
-  for (const line of [...knowledgeSeeds, ...ideaSeeds]) {
+  for (const line of knowledgeSeeds) {
     assert.match(line, /config: \{ color: '#[0-9A-Fa-f]{6}' \}/, `种子缺颜色：${line.slice(0, 60)}`)
   }
 })
@@ -246,7 +146,6 @@ test('迁移 16：给已存在的库回填这两类字典的颜色，且**不覆
   assert.ok(start > 0, '有 version 16 的迁移')
   const migration = schema.slice(start, schema.indexOf('\n]', start))
   assert.match(migration, /knowledge_kind:/, '覆盖知识库类型')
-  assert.match(migration, /idea_kind:/, '覆盖点子类型')
   // 已有颜色必须跳过 —— 否则用户自己配的色会被出厂值覆盖
   assert.match(migration, /if \(typeof config\.color === 'string' && config\.color\.trim\(\) !== ''\) continue/, '已有颜色跳过')
   assert.match(migration, /SELECT config FROM dictionaries WHERE kind = \? AND code = \?/, '先读后写')
@@ -263,7 +162,7 @@ test('标签区：单行 + 「更多」浮层，且**不再只渲染前 12 个**
   assert.match(tagFilter, /data-tagmore/, '有「更多」入口')
   assert.match(tagFilter, /data-tagmenu/, '有浮层')
   assert.doesNotMatch(knowledgeSource, /tagCounts\.slice\(0, 12\)/, '旧的"只显示前 12 个"必须消失')
-  // 浮层的定位前提与点子菜单一致：portal + fixed + 高于面板宿主
+  // 浮层的定位前提与面板宿主一致：portal + fixed + 高于面板宿主
   assert.match(tagFilter, /createPortal\(menu, document\.body\)/, '浮层 portal 到 body')
   const css = readFileSync('src/client/styles.ts', 'utf8')
   const rule = css.match(/\.wb-tagmenu \{[^}]*\}/)

@@ -1,8 +1,8 @@
 /**
- * 迁移 16 在**真实库副本**上的验证（绝不碰线上库）。
+ * 迁移 16 的颜色回填在**真实库副本**上的验证（绝不碰线上库；迁移 16 本身是冻结的历史迁移，这里顺带把后续迁移一起跑完，确认版本能推进到最新）。
  *
- * 断言：知识库/点子类型被回填颜色、已有颜色不被动、字段不被覆盖、其他字典不受影响、
- * 版本号推进到 16、重复跑幂等。
+ * 断言：知识库类型被回填颜色、已有颜色不被动、字段不被覆盖、其他字典不受影响、
+ * 版本号推进到最新、重复跑幂等。
  *
  * 用法：node scripts/repro/verify-kind-colors-migration.mjs
  */
@@ -36,31 +36,27 @@ const check = (name, ok, detail = '') => {
 const before = version()
 console.log(`副本版本：${before} → 目标 ${SCHEMA_VERSION}\n`)
 console.log('迁移前 knowledge_kind：', JSON.stringify(readKind('knowledge_kind')))
-console.log('迁移前 idea_kind：      ', JSON.stringify(readKind('idea_kind')))
 console.log('')
 
 // 造两个"用户已经自己配过"的场景，验证不会被覆盖
 db.prepare("UPDATE dictionaries SET config = ? WHERE kind = 'knowledge_kind' AND code = 'note'").run(JSON.stringify({ color: '#123456', 自定义: '保留我' }))
-db.prepare("UPDATE dictionaries SET config = ? WHERE kind = 'idea_kind' AND code = 'skill'").run(JSON.stringify({ color: '#654321' }))
 // 造一个"停用 + 改过名"的行，颜色仍应被补上
 db.prepare("UPDATE dictionaries SET active = 0, name = '我改过的名字' WHERE kind = 'knowledge_kind' AND code = 'decision'").run()
 // 造一行脏 config（不是合法 JSON）——不该把迁移搞崩
-db.prepare("UPDATE dictionaries SET config = 'not-json' WHERE kind = 'idea_kind' AND code = 'random'").run()
+db.prepare("UPDATE dictionaries SET config = 'not-json' WHERE kind = 'knowledge_kind' AND code = 'snippet'").run()
 
 migrate(db)
 
 const after = version()
-check('版本推进到 16', after === 16, `${before} → ${after}`)
+check('版本推进到最新', after === SCHEMA_VERSION, `${before} → ${after}（目标 ${SCHEMA_VERSION}）`)
 
 const knowledge = Object.fromEntries(readKind('knowledge_kind').map((r) => [r.code, JSON.parse(r.config)]))
-const idea = Object.fromEntries(readKind('idea_kind').map((r) => [r.code, JSON.parse(r.config)]))
 
 check('知识库类型全部有颜色', ['note', 'lesson', 'decision', 'snippet'].every((c) => typeof knowledge[c].color === 'string' && knowledge[c].color.startsWith('#')), JSON.stringify(knowledge))
-check('点子类型全部有颜色', ['project', 'skill', 'plugin', 'spark', 'random'].every((c) => typeof idea[c].color === 'string' && idea[c].color.startsWith('#')), JSON.stringify(idea))
-check('用户自己配过的颜色**不被覆盖**', knowledge.note.color === '#123456' && idea.skill.color === '#654321', `note=${knowledge.note.color} skill=${idea.skill.color}`)
+check('用户自己配过的颜色**不被覆盖**', knowledge.note.color === '#123456', `note=${knowledge.note.color}`)
 check('用户在同一 config 里的其他字段被保留', knowledge.note['自定义'] === '保留我', JSON.stringify(knowledge.note))
 check('停用/改名的行也补上颜色', knowledge.decision.color === '#8B7BE8', JSON.stringify(knowledge.decision))
-check('脏 config（非法 JSON）不崩，且补上颜色', typeof idea.random.color === 'string', JSON.stringify(idea.random))
+check('脏 config（非法 JSON）不崩，且补上颜色', typeof knowledge.snippet.color === 'string', JSON.stringify(knowledge.snippet))
 check('补的颜色互不相同（能区分类型）', new Set(['note', 'lesson', 'decision', 'snippet'].map((c) => knowledge[c].color)).size === 4, JSON.stringify(['note', 'lesson', 'decision', 'snippet'].map((c) => knowledge[c].color)))
 
 // 其他字典不该被动到
@@ -77,7 +73,7 @@ rmSync(work, { recursive: true, force: true })
 
 const failed = results.filter((r) => !r.ok)
 console.log('')
-console.log(`迁移 16 验证（真实库副本）：${results.length - failed.length}/${results.length} 通过`)
+console.log(`迁移 16 颜色回填验证（真实库副本）：${results.length - failed.length}/${results.length} 通过`)
 if (failed.length > 0) {
   for (const f of failed) console.log('  - ' + f.name + ' :: ' + f.detail)
   process.exit(1)

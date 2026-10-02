@@ -2,7 +2,7 @@
  * 草稿通知 → 微信通道。
  *
  * 与任务到期提醒共用同一条管道（dsh-im 软探测 → 队列 → 调度器 → 策略节流/静默/汇总），
- * 只是"通知源"换成工作台草稿：AI 提交的验收申请、知识草稿、点子提案等。
+ * 只是"通知源"换成工作台草稿：AI 提交的验收申请、知识草稿、子任务提案等。
  *
  * 关键语义：
  * - **只推一次**：`task_drafts.notified_at` 非空即视为已进过队列，AI 反复更新同一草稿不重复打扰。
@@ -65,8 +65,6 @@ const KIND_LABELS: Record<string, string> = {
   completion: '完成验收申请',
   review: '复盘草稿',
   knowledge: '知识条目草稿',
-  idea_cluster: '点子王提案',
-  idea_tasks: '点子落地任务提案',
   subtask_plan: '子任务提案',
   task: '任务草稿',
 }

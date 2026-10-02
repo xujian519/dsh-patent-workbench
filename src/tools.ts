@@ -5,7 +5,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { DatabaseSync } from 'node:sqlite'
-import { addTaskMemory, assertValidFileLink, createDraft, getDailyPlan, getDeferredDraftForTask, getDictionary, getDraft, getIdea, getIdeaCluster, getPendingDailyPlanDraft, getPendingDraftForSession, getPendingDraftForTask, getPendingKnowledgeDraft, getTask, listActiveDictionaryCodes, listTaskEvents, listTaskSessions, listTasks, localDateString, setTaskProgress, submitCompletionDraft, taskIdProblem, updateDraft, updateTask } from './db/repo.js'
+import { addTaskMemory, assertValidFileLink, createDraft, getDailyPlan, getDeferredDraftForTask, getDictionary, getDraft, getPendingDailyPlanDraft, getPendingDraftForTask, getPendingKnowledgeDraft, getTask, listActiveDictionaryCodes, listTaskEvents, listTaskSessions, listTasks, localDateString, setTaskProgress, submitCompletionDraft, taskIdProblem, updateDraft, updateTask } from './db/repo.js'
 import { DEFAULT_PLAN_MINUTES, checkPlanMinutes, resolveDefaultPlanMinutes } from './shared/dailyPlanPolicy.js'
 import {
   PERSONA_BODY_MAX_CHARS,
@@ -413,108 +413,6 @@ function readDefaultEstimateMinutes(db: DatabaseSync): number {
   const row = db.prepare("SELECT value FROM meta WHERE key = 'default_estimate_minutes'").get() as { value: string } | undefined
   const parsed = row === undefined ? Number.NaN : Number(row.value)
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 1440 ? parsed : DEFAULT_PLAN_MINUTES
-}
-
-export function proposeIdeaClustersTool(db: DatabaseSync) {
-  return defineTool({
-    name: 'workbench_propose_idea_clusters',
-    description:
-      '个人工作台点子关联工具：把若干点子按主题关联成“点子王”（点子集）提案。只写 pending 草稿，由用户确认后创建点子王。' +
-      'clusters 数组每项 {title, summary, idea_ids, notes?}；idea_ids 必须是真实点子 id。同一会话重复提交更新同一草稿。',
-    parameters: {
-      draft_id: { type: 'string', description: '已有提案草稿 id；修改后再次提交时传' },
-      clusters: { type: 'json', required: true, description: '点子王提案数组，每项 {title, summary, idea_ids, notes?}' },
-    },
-    output: {
-      schema: { type: 'string' },
-      render: (_args, value: string) => text(value),
-    },
-    async execute(args: Record<string, unknown>, exec: { agent?: { session?: { id?: string } } }) {
-      const raw = Array.isArray(args.clusters) ? args.clusters as unknown[] : []
-      if (raw.length === 0) return '错误：clusters 不能为空'
-      const seenIdea = new Set<string>()
-      const clusters: Array<{ title: string; summary: string; idea_ids: string[]; idea_titles: string[]; notes?: Record<string, string> }> = []
-      for (let i = 0; i < raw.length; i += 1) {
-        const item = (typeof raw[i] === 'object' && raw[i] !== null ? raw[i] : {}) as Record<string, unknown>
-        const title = typeof item.title === 'string' && item.title.trim() !== '' ? item.title.trim() : `点子王 ${i + 1}`
-        const ideaIds = Array.isArray(item.idea_ids) ? item.idea_ids.filter((id): id is string => typeof id === 'string') : []
-        if (ideaIds.length === 0) return `错误：clusters[${i}] 没有 idea_ids`
-        for (const id of ideaIds) {
-          if (getIdea(db, id) === undefined) return `错误：点子 ${id} 不存在`
-          if (seenIdea.has(id)) return `错误：点子「${getIdea(db, id)?.title ?? id}」重复出现在多个点子王中`
-          seenIdea.add(id)
-        }
-        const ideaTitles = ideaIds.map((ideaId) => getIdea(db, ideaId)?.title ?? ideaId)
-        clusters.push({ title, summary: typeof item.summary === 'string' ? item.summary : '', idea_ids: ideaIds, idea_titles: ideaTitles, notes: typeof item.notes === 'object' && item.notes !== null ? item.notes as Record<string, string> : undefined })
-      }
-      const sessionId = exec.agent?.session?.id ?? null
-      const draftId = str(args.draft_id)
-      const existing = draftId === undefined ? getPendingDraftForSession(db, sessionId, 'idea_cluster') : getDraft(db, draftId)
-      if (draftId !== undefined && existing === undefined) return `错误：草稿 ${draftId} 不存在`
-      if (existing !== undefined && existing.statusCode !== 'pending') return `错误：草稿 ${draftId ?? existing.id} 状态为 ${existing.statusCode}，不能更新`
-      const draft = existing !== undefined
-        ? updateDraft(db, existing.id, { clusters, sessionId })
-        : createDraft(db, { kindCode: 'idea_cluster', sessionId, payload: { clusters } })
-      return `点子王提案已保存（id=${draft?.id}），等待用户在工作台确认。请用一句话告知用户可以检查提案。`
-    },
-  })
-}
-
-export function submitIdeaTasksTool(db: DatabaseSync) {
-  return defineTool({
-    name: 'workbench_submit_idea_tasks',
-    description:
-      '个人工作台点子落地工具：把头脑风暴结论转成任务提案（pending 草稿），用户确认后创建任务并保留来源点子/点子王。' +
-      'tasks 为任务数组，每项 {title, description?, type_code?, priority_code?, due_at?, estimated_minutes?, ai_policy_code?, children?}。' +
-      'source_idea_ids 与 source_cluster_id 至少传一个。同一会话重复提交更新同一草稿。',
-    parameters: {
-      draft_id: { type: 'string', description: '已有提案草稿 id；修改后再次提交时传' },
-      source_idea_ids: { type: 'json', description: '来源点子 id 数组' },
-      source_cluster_id: { type: 'string', description: '来源点子王 id' },
-      tasks: { type: 'json', required: true, description: '落地任务数组（可含 children 子任务树）' },
-      summary: { type: 'string', description: '头脑风暴小结（1-3 句）' },
-    },
-    output: {
-      schema: { type: 'string' },
-      render: (_args, value: string) => text(value),
-    },
-    async execute(args: Record<string, unknown>, exec: { agent?: { session?: { id?: string } } }) {
-      const raw = Array.isArray(args.tasks) ? args.tasks as unknown[] : []
-      if (raw.length === 0) return '错误：tasks 不能为空'
-      const sourceIdeaIds = Array.isArray(args.source_idea_ids) ? args.source_idea_ids.filter((id): id is string => typeof id === 'string') : []
-      const sourceClusterId = str(args.source_cluster_id)
-      if (sourceIdeaIds.length === 0 && sourceClusterId === undefined) return '错误：source_idea_ids 与 source_cluster_id 至少传一个'
-      for (const id of sourceIdeaIds) if (getIdea(db, id) === undefined) return `错误：点子 ${id} 不存在`
-      if (sourceClusterId !== undefined && getIdeaCluster(db, sourceClusterId) === undefined) return `错误：点子王 ${sourceClusterId} 不存在`
-      // 基本校验任务数组
-      const normalize = (items: unknown[], depth = 1): unknown[] => {
-        if (depth > 3) return []
-        return items.slice(0, 20).map((rawItem) => {
-          const item = (typeof rawItem === 'object' && rawItem !== null ? rawItem : {}) as Record<string, unknown>
-          return {
-            ...item,
-            title: typeof item.title === 'string' && item.title.trim() !== '' ? item.title : '(未命名任务)',
-            children: normalize(Array.isArray(item.children) ? item.children as unknown[] : [], depth + 1),
-          }
-        })
-      }
-      const tasks = normalize(raw)
-      // 点子落地同样校验：`confirmIdeaTaskDraft` 对未知 code 是**回退**（不是丢弃），
-      // 但"静默改类型"同样是用户看不到的偏差，所以在入口处就报错让 AI 改正。
-      const invalidIdeaTasks = validateTaskItems(db, tasks, { required: false })
-      if (invalidIdeaTasks !== undefined) return invalidIdeaTasks
-      const sessionId = exec.agent?.session?.id ?? null
-      const payload = { sourceIdeaIds, sourceClusterId: sourceClusterId ?? null, tasks, summary: str(args.summary) ?? '' }
-      const draftId = str(args.draft_id)
-      const existing = draftId === undefined ? getPendingDraftForSession(db, sessionId, 'idea_tasks') : getDraft(db, draftId)
-      if (draftId !== undefined && existing === undefined) return `错误：草稿 ${draftId} 不存在`
-      if (existing !== undefined && existing.statusCode !== 'pending') return `错误：草稿 ${draftId ?? existing.id} 状态为 ${existing.statusCode}，不能更新`
-      const draft = existing !== undefined
-        ? updateDraft(db, existing.id, payload)
-        : createDraft(db, { kindCode: 'idea_tasks', sessionId, payload })
-      return `点子落地任务提案已保存（id=${draft?.id}，${tasks.length} 个任务），等待用户确认后创建。请勿声称任务已创建。`
-    },
-  })
 }
 
 export function submitKnowledgeTool(db: DatabaseSync) {

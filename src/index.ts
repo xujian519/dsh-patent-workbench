@@ -31,7 +31,7 @@ import { ReminderScheduler } from './reminder/scheduler.js'
 import { readWeixinInboundCount } from './reminder/weixin-status.js'
 import type { TeamMemoryService } from './review-memory.js'
 import { taskWorkspaceFolderName } from './client/taskFolder.js'
-import { loadPersonaTool, proposeDailyPlanTool, proposeIdeaClustersTool, proposeSubtasksTool, readPersonaResourceTool, requestCompletionTool, saveTaskMemoryTool, submitIdeaTasksTool, submitKnowledgeTool, submitReviewTool, submitTaskTool, updateProgressTool, updateTaskTool } from './tools.js'
+import { loadPersonaTool, proposeDailyPlanTool, proposeSubtasksTool, readPersonaResourceTool, requestCompletionTool, saveTaskMemoryTool, submitKnowledgeTool, submitReviewTool, submitTaskTool, updateProgressTool, updateTaskTool } from './tools.js'
 
 export const name = 'patent-workbench'
 
@@ -71,8 +71,7 @@ const WORKBENCH_GUIDANCE = [
   'V2 提醒：任务到期提醒由工作台自动弹出页面横幅与桌面通知；不要用其他方式重复提醒。',
   '知识库：值得沉淀的经验教训/决策/笔记请调用 workbench_submit_knowledge 提交知识草稿（kind_code/tags）；如来自本地文档，应同时传入 file_link（file:// 或绝对路径）用于追溯；用户确认后入库；复盘时优先考虑。注意本工具按会话去重：一个会话只产生 1 条知识草稿，不带 draft_id 的重复提交是覆盖（回执会写明"已更新本会话已有草稿"，请照实转述，不要说成新建）；要在同一会话沉淀多条，走 POST /api/workbench/drafts。',
   '知识库自动召回（v1.15.3）：会话里会自动按你的提问检索知识库，命中的条目以「【工作台知识库】…」出现在上下文里（零命中时不插占位）。四个时机请主动调用 workbench_search_knowledge 再查一次：开工前 / 报错时 / 写码前 / 验收复盘前。用到了哪几条请调用 workbench_knowledge_recall_control(action=report_usage, entry_ids=[...]) 回报；本会话不想被自动检索就 action=turn_off。',
-  '点子/点子王：关联点子请调用 workbench_propose_idea_clusters；头脑风暴落地请调用 workbench_submit_idea_tasks。都只写草稿，用户确认后才生效。',
-  '/workbench 是个人工作台“快速录入新任务”的专用命令：当用户消息以 /workbench 开头时，只把后续文字理解为新任务线索，按 workbench-intake 规范澄清，并且只能调用 workbench_submit_task 写入 pending 任务草稿；不要执行、拆解、生成计划/报告/知识/点子/复盘，也不要处理微信提醒。',
+  '/workbench 是个人工作台“快速录入新任务”的专用命令：当用户消息以 /workbench 开头时，只把后续文字理解为新任务线索，按 workbench-intake 规范澄清，并且只能调用 workbench_submit_task 写入 pending 任务草稿；不要执行、拆解、生成计划/知识/复盘，也不要处理微信提醒。',
   '任务资料夹：每个任务的文件请放在提示词里声明的“任务资料夹”（形如 <任务ID>-<标题片段>）里，不要在工作区根目录散放文件。',
   '用户提到「工作台 / 任务 / 日历 / 提醒 / 子任务 / 计划」时即指本插件，请据此协作。',
 ].join('')
@@ -90,7 +89,7 @@ const WORKBENCH_INTAKE_COMMAND_PROMPT = [
   '你是“个人工作台”的任务澄清助手。请按 workbench-intake 规范执行。',
   '用户通过 /workbench 请求创建一个新的个人工作台任务。',
   '只处理新任务的澄清与提交：先一次询问一个主题、最多澄清 5 轮；信息足够后只能调用 workbench_submit_task 写入 pending 任务草稿。',
-  '不要执行任务本身，不要拆解任务，不要生成计划、报告、知识、点子、复盘，也不要处理微信提醒。',
+  '不要执行任务本身，不要拆解任务，不要生成计划、知识、复盘，也不要处理微信提醒。',
 ].join('\n')
 
 /**
@@ -415,7 +414,7 @@ function applyReady(ctx: Context, db: DatabaseSync, config: Config): void {
     () => {
       const disposers = [
         submitTaskTool(db), proposeSubtasksTool(db), proposeDailyPlanTool(db), submitKnowledgeTool(db),
-        proposeIdeaClustersTool(db), submitIdeaTasksTool(db), updateTaskTool(db), updateProgressTool(db), requestCompletionTool(db), submitReviewTool(db), saveTaskMemoryTool(db),
+        updateTaskTool(db), updateProgressTool(db), requestCompletionTool(db), submitReviewTool(db), saveTaskMemoryTool(db),
         /**
          * 角色（persona）两个工具（D12/S11）：只按**执行上下文真实 sessionId** 的绑定读，
          * 不接受任何 session/角色 id 入参（越权面在结构上不存在）。

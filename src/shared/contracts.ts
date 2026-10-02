@@ -111,7 +111,7 @@ export interface TaskSessionView {
 // 草稿
 // ---------------------------------------------------------------------------
 
-export type DraftKind = 'task' | 'subtask_plan' | 'daily_plan' | 'knowledge' | 'idea_cluster' | 'idea_tasks' | 'completion'
+export type DraftKind = 'task' | 'subtask_plan' | 'daily_plan' | 'knowledge' | 'completion'
 
 export interface DraftView {
   id: string
@@ -306,28 +306,8 @@ export interface WorkbenchSettings {
 }
 
 // ---------------------------------------------------------------------------
-// 点子 / 知识
+// 知识
 // ---------------------------------------------------------------------------
-
-export interface IdeaView {
-  id: string
-  title: string
-  contentMd: string
-  kindCode: string
-  tags: string[]
-  sourceSessionId: string | null
-  createdAt: string
-  updatedAt: string
-}
-
-export interface IdeaClusterView {
-  id: string
-  title: string
-  summary: string
-  ideaIds: string[]
-  notes: Record<string, unknown>
-  createdAt: string
-}
 
 export interface KnowledgeView {
   id: string
@@ -384,9 +364,7 @@ export interface ReminderTestResponse { ok: boolean; reason?: string }
 export interface DueRemindersResponse { ok: true; reminders: DueReminderView[] }
 export interface DraftResponse { ok: true; draft: DraftView | null; /** 仅无 session_id 的列表查询返回 */ deferredDrafts?: DraftView[] }
 export interface DraftsResponse { ok: true; drafts: DraftView[] }
-export interface IdeasResponse { ok: true; ideas: IdeaView[] }
 export interface KnowledgeResponse { ok: true; entries: KnowledgeView[] }
-export interface IdeaClustersResponse { ok: true; clusters: IdeaClusterView[] }
 export interface DeletedResponse { ok: true; deleted: boolean }
 
 /**

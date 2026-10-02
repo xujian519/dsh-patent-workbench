@@ -35,7 +35,7 @@ export interface ReminderPolicy {
 }
 
 /** 可推送的草稿类型（与 task_drafts.kind_code 对齐）。 */
-export const NOTIFIABLE_DRAFT_KINDS = ['completion', 'review', 'knowledge', 'idea_cluster', 'idea_tasks', 'subtask_plan', 'task'] as const
+export const NOTIFIABLE_DRAFT_KINDS = ['completion', 'review', 'knowledge', 'subtask_plan', 'task'] as const
 
 export const DEFAULT_REMINDER_POLICY: ReminderPolicy = {
   enabled: false,
@@ -51,7 +51,7 @@ export const DEFAULT_REMINDER_POLICY: ReminderPolicy = {
   breakerCooldownMinutes: 30,
   channel: 'auto',
   // 默认只开"验收申请"与"复盘草稿"：这两类才需要用户立刻动手。
-  // 报告/知识/点子/任务草稿默认关，避免噪音（可在设置页打开）。
+  // 知识/任务等其它草稿默认关，避免噪音（可在设置页打开）。
   draftNotifyKinds: ['completion', 'review'],
 }
 

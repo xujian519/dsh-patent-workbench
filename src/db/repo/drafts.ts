@@ -22,7 +22,7 @@ export type DraftTaskItem = Partial<TaskInput> & Record<string, unknown>
 
 /**
  * 把草稿里的一个任务节点归一化成 createTask 入参。
- * 三条确认路径（task / subtask_plan / idea_tasks）共用，避免各自只处理一种写法而静默丢字段
+ * 三条确认路径（task / subtask_plan）共用，避免各自只处理一种写法而静默丢字段
  * （历史事故：estimated_minutes 只读 camelCase，而提案工具写的是 snake_case）。
  */
 export function toTaskInputFromDraftItem(
@@ -411,8 +411,7 @@ export function getDeferredDraftForTask(db: DatabaseSync, kindCode: string, task
  * 「暂存」的适用范围：**默认全部草稿类型都可暂存**。
  *
  * 历史：v1.12.0 只给验收类草稿（completion / review）加了「⏸ 暂存（先验证）」，
- * 其余 9 种（task / subtask_plan / daily_plan / report / knowledge / idea_cluster /
- * idea_tasks）只有「确认」和「放弃」两个出口 —— 草稿 pending 时红点常驻、轮询每 5 秒
+ * 其余 7 种（task / subtask_plan / daily_plan / knowledge）只有「确认」和「放弃」两个出口 —— 草稿 pending 时红点常驻、轮询每 5 秒
  * 把它拉回来，用户被"钉"在工作台里，想去 DSH 里核对一下都做不到。
  *
  * 现在反过来：默认全部可暂存，用**黑名单**排除确实不该暂存的类型。

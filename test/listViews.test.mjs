@@ -12,7 +12,6 @@ import {
   knowledgeFilterActive,
   reconcileKnowledgeKinds,
 } from '../lib/client/components/KnowledgeList.js'
-import { IdeaCardGrid, folderMenuAnchor, placeFolderMenu } from '../lib/client/components/IdeaCardGrid.js'
 import { ALL, buildTabs, isTabActive, toggleTab } from '../lib/client/components/TabBar.js'
 import { filterTagOptions, pinnedVisibleTags, visibleTags } from '../lib/client/components/TagFilter.js'
 import { EMPTY_TASK_FILTER, countTasksByType } from '../lib/client/taskFilterSort.js'
@@ -36,7 +35,6 @@ const KINDS = [
   { kind: 'knowledge_kind', code: 'decision', name: '决策记录', config: { color: '#8B7BE8' } },
   { kind: 'knowledge_kind', code: 'snippet', name: '片段/模板', config: { color: '#2E9B7B' } },
 ]
-const IDEA_KINDS = [{ kind: 'idea_kind', code: 'project', name: '项目点子', config: { color: '#4F86F7' } }]
 
 const entry = (id, overrides = {}) => ({
   id,
@@ -254,69 +252,6 @@ test('KnowledgeList: 第 3 页渲染剩下的 30 条（末页不是固定 50）'
   assert.equal((html.match(/data-kb-row=/g) ?? []).length, 30)
 })
 
-/* ------------------------------ 点子卡片网格 ------------------------------ */
-
-const idea = (id, overrides = {}) => ({
-  id,
-  title: '点子 ' + id,
-  body: '点子内容 ' + id,
-  tags: ['AI'],
-  kindCode: 'project',
-  createdAt: at(30 * DAY),
-  updatedAt: at(DAY),
-  clusterIds: [],
-  ...overrides,
-})
-
-const gridProps = (overrides = {}) => ({
-  ideas: [idea('a'), idea('b')],
-  dicts: IDEA_KINDS,
-  selectedId: undefined,
-  pickedIds: new Set(),
-  clusters: [{ id: 'f1', title: '天线测试方向' }],
-  onOpen: () => {},
-  onTogglePick: () => {},
-  onFileInto: () => {},
-  onCreateFolder: () => {},
-  ...overrides,
-})
-
-test('IdeaCardGrid: 渲染成卡片网格（不是行列表）', () => {
-  const html = renderToStaticMarkup(createElement(IdeaCardGrid, gridProps()))
-  assert.match(html, /data-idea-cards/)
-  assert.match(html, /data-idea-card="a"/)
-  assert.match(html, /data-idea-card="b"/)
-  assert.match(html, /项目点子/, '类型徽标')
-  assert.match(html, /#AI/)
-  assert.match(html, /--wb-idea-color:#4F86F7/, '类型色条')
-})
-
-test('IdeaCardGrid: 每张卡片都有多选 ☑ 与「归入文件夹」入口', () => {
-  const html = renderToStaticMarkup(createElement(IdeaCardGrid, gridProps()))
-  assert.equal((html.match(/data-idea-pick=/g) ?? []).length, 2, '两张卡各一个 ☑')
-  assert.equal((html.match(/data-idea-fold=/g) ?? []).length, 2, '两张卡各一个归入入口')
-  const noClusters = renderToStaticMarkup(createElement(IdeaCardGrid, gridProps({ clusters: [] })))
-  assert.match(noClusters, /disabled="" data-idea-fold="a"|data-idea-fold="a" disabled/, '没有文件夹时入口禁用（不是点了没反应）')
-})
-
-test('IdeaCardGrid: 已选卡片带 picked 且 ☑ 是按下态（否则会忘了选过什么）', () => {
-  const html = renderToStaticMarkup(createElement(IdeaCardGrid, gridProps({ pickedIds: new Set(['a']) })))
-  assert.match(html, /wb-idea-card2 picked/, '已选样式')
-  assert.match(html, /aria-pressed="true"/)
-  assert.match(html, /aria-pressed="false"/, '未选的是 false，不是缺失')
-})
-
-test('IdeaCardGrid: 静息时渲染 HTML 里没有菜单（菜单由交互打开，且 portal 走 document.body）', () => {
-  const html = renderToStaticMarkup(createElement(IdeaCardGrid, gridProps()))
-  assert.doesNotMatch(html, /data-idea-foldmenu/, '没点开时不该渲染菜单')
-  // 菜单是 portal 到 body 的（组件源码里必须用 createPortal），见 listViewWiring.test.mjs 的扫描断言
-})
-
-test('IdeaCardGrid: 空集合什么都不渲染（空态由页面负责，不留两份实现）', () => {
-  const html = renderToStaticMarkup(createElement(IdeaCardGrid, gridProps({ ideas: [] })))
-  assert.equal(html, '', '空集合渲染出空字符串')
-})
-
 /* ------------------------------ 分类与字典对账（复审 F3） ------------------------------ */
 
 test('reconcileKnowledgeKinds: 字典里没有的分类回「全部」，合法分类与 all 不动', () => {
@@ -353,51 +288,6 @@ test('reconcileKnowledgeKinds: 未知分类被校正后不再出现"空列表 + 
 })
 
 /* ------------------------------ 菜单摆放（纯函数） ------------------------------ */
-
-test('placeFolderMenu: 下方放得开就往下放（下拉直觉）', () => {
-  const pos = placeFolderMenu({ left: 100, top: 100, bottom: 130, right: 200 }, { width: 600, height: 500 }, { width: 200, height: 100 })
-  assert.equal(pos.side, 'bottom')
-  assert.equal(pos.top, 136, 'top = bottom + gap')
-  assert.equal(pos.left, 100)
-})
-
-test('placeFolderMenu: 下方放不开就翻到上方', () => {
-  const pos = placeFolderMenu({ left: 100, top: 400, bottom: 430, right: 200 }, { width: 600, height: 500 }, { width: 200, height: 100 })
-  assert.equal(pos.side, 'top')
-  assert.ok(pos.top + 100 <= 400, '菜单下沿不该压到按钮')
-})
-
-test('placeFolderMenu: 高度收敛 —— 上下都放不开时菜单变矮而不是画到视口外', () => {
-  const viewport = { width: 600, height: 300 }
-  const pos = placeFolderMenu({ left: 60, top: 140, bottom: 170, right: 160 }, viewport, { width: 200, height: 400 })
-  assert.ok(pos.height <= pos.maxHeight, 'height 不能超过 maxHeight')
-  assert.ok(pos.top >= 8, `顶部越出：${pos.top}`)
-  assert.ok(pos.top + pos.height <= viewport.height - 8, `下沿越出：${pos.top + pos.height} > ${viewport.height - 8}`)
-})
-
-test('placeFolderMenu: 右边界溢出时向左挪，不越出视口', () => {
-  const viewport = { width: 300, height: 500 }
-  const pos = placeFolderMenu({ left: 280, top: 10, bottom: 40, right: 300 }, viewport, { width: 200, height: 100 })
-  assert.ok(pos.left + pos.width <= viewport.width - 8, `菜单右边界越出：${pos.left}+${pos.width}`)
-  assert.ok(pos.left >= 8)
-})
-
-test('placeFolderMenu: 非有限输入不会把菜单送到 NaN（走 placePopover 的兜底）', () => {
-  const pos = placeFolderMenu({ left: Number.NaN, top: Number.NaN, bottom: Number.NaN, right: Number.NaN }, { width: 800, height: 600 })
-  for (const value of [pos.left, pos.top, pos.width, pos.maxHeight, pos.height]) {
-    assert.ok(Number.isFinite(value), `出现非有限值：${JSON.stringify(pos)}`)
-  }
-})
-
-test('folderMenuAnchor: 锚点与视口是**视口坐标**（菜单 portal 到 body，不再按"包含块"换算）', () => {
-  const { anchor, viewport } = folderMenuAnchor({ top: 100, bottom: 130, left: 280, right: 380 }, { width: 1200, height: 800 })
-  assert.deepEqual(anchor, { top: 100, bottom: 130, left: 280, right: 380 })
-  assert.deepEqual(viewport, { width: 1200, height: 800 })
-  // 同一份输入喂给 placePopover（权威实现）必须得到同一个结果 —— 证明没有第二份摆放逻辑
-  const viaHelper = placeFolderMenu(anchor, viewport, { width: 200, height: 100 })
-  const viaAuthority = placePopover({ anchor, viewport, menu: { width: 200, height: 100 }, prefer: 'bottom' })
-  assert.deepEqual(viaHelper, viaAuthority)
-})
 
 test('placePopover 的 prefer：菜单要往下弹，选择器要往上弹（同一个算法两种场景）', () => {
   const anchor = { top: 200, bottom: 230, left: 100, right: 200 }
