@@ -246,3 +246,18 @@ export {
   confirmIdeaClusterDraft, confirmIdeaTaskDraft, getPendingDraftForSession,
 } from './repo/ideas.js'
 export type { IdeaInput, IdeaRow, IdeaClusterInput, IdeaClusterRow } from './repo/ideas.js'
+
+// 案卷域已抽到 repo/matters.ts（专利工作台阶段 2）；此处再导出保持对外 API 不变
+export {
+  MATTER_STAGE_CODES, PATENT_KINDS, NOTICE_KINDS, REPEATABLE_NOTICE_KINDS, DELIVERY_MODES,
+  normalizeCalendarDate, getMatter, getMatterByCaseNumber, listMatters, createMatter, updateMatter, deleteMatter,
+  listMatterNotices, createMatterNotice, deleteMatterNotice,
+  listMatterDeadlines, replaceMatterDeadlines, setMatterDeadlineStatus,
+  listMatterEvents, appendMatterEvent,
+} from './repo/matters.js'
+export type {
+  MatterStageCode, PatentKind, NoticeKind, DeliveryMode,
+  MatterInput, MatterPatch, MatterRow, MatterListFilter,
+  MatterNoticeInput, MatterNoticeRow, MatterDeadlineInput, MatterDeadlineRow,
+  MatterEventInput, MatterEventRow,
+} from './repo/matters.js'

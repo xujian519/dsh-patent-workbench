@@ -18,9 +18,10 @@ import { isLoopbackRequest, readJsonBody, todayRange, writeJson } from './routes
 import { makeIdeaClusterRoutes } from './routes/idea-clusters.js'
 import { makeIdeaRoutes } from './routes/ideas.js'
 import { makeKnowledgeRoutes } from './routes/knowledge.js'
-import { makeKnowledgeRecallRoutes } from './knowledgeRecallRoute.js'
 import type { KnowledgeRecallManager } from '../knowledge-recall.js'
 import { makeModelModalityRoutes, type LlmModalityProbe } from './routes/model-modalities.js'
+import { makeKnowledgeRecallRoutes } from './knowledgeRecallRoute.js'
+import { makeMatterRoutes } from './routes/matters.js'
 import { makePlanRoutes } from './routes/plans.js'
 import { makePersonaRoutes, type PersonaRouteOptions } from './routes/personas.js'
 import { makeQuickAttachmentRoutes } from './routes/quick-attachments.js'
@@ -368,6 +369,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
     ...makeIdeaRoutes(db),
     ...makeIdeaClusterRoutes(db),
     ...makeKnowledgeRoutes(db),
+    ...makeMatterRoutes(db),
     ...makeAiSessionRoutes(db),
     ...makeReportRoutes(db),
     ...makePlanRoutes(db),

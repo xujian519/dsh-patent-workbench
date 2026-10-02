@@ -4,7 +4,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 19
+export const SCHEMA_VERSION = 20
 
 export interface Migration {
   version: number
@@ -584,6 +584,161 @@ export const MIGRATIONS: Migration[] = [
        */
       if (diagnostics.length > 0) {
         for (const line of diagnostics) console.warn(`[dsh-patent-workbench] migration 19: ${line}`)
+      }
+    },
+  },
+  {
+    version: 20,
+    name: 'patent-matters',
+    up(db) {
+      /**
+       * 专利工作台阶段 2：把「案卷」从"顶层任务 + extra"升级为一等公民实体。
+       *
+       * 背景（决策 1，见 docs/design/2026-10-03-patent-workbench-redesign.md）：
+       * 2026-09-03 的集成用"案件 = 根任务、L1–L5 = 子任务"表达案卷（bridge 工具
+       * workbench_link_patent_case），但任务语义（今日/容量/优先级/重复）不适配案卷，
+       * 且案卷有大量专属字段（申请号/公开号/申请日/优先权/技术领域/IPC/代理师…）。
+       * 现改为 matters 一等实体，bridge 降级为 `_matter-log.md` → `matter_events` 的只读投影。
+       *
+       * 四条硬约束：
+       * 1. **阶段枚举对齐 patent-matter 技能**（open/retrieving/analyzing/drafting/review/closed，
+       *    对应 L1–L5）—— 不另造码，避免"同一语义两处实现"。
+       * 2. **patent_kind 独立于案型**：无效/侵权案也可能针对发明专利；patent-deadline 的
+       *    `patentType` 取它（`invention` / `utility-model` / `design`，逐字对齐不转译）。
+       * 3. **notice_kind / delivery_mode 取值逐字对齐 @deepseek-ai/dsh-patent-deadline**，
+       *    官文登记表就是它的 `notices` 输入源；阶段 3 由此起算期限。
+       * 4. **只加列不改历史**：`knowledge_entries.matter_id` 为可空加法列，老条目行为不变。
+       *
+       * 字典项在**迁移里插入**而不是只改 seed.ts：seedDictionaries 只对首次安装生效，
+       * 存量库（本机 workbench.db 已有 61 条知识）拿不到；迁移 16/19 同此做法。
+       */
+      db.exec(`
+        CREATE TABLE matters (
+          id                TEXT PRIMARY KEY,
+          case_number       TEXT NOT NULL UNIQUE,
+          title             TEXT NOT NULL,
+          client_id         TEXT,
+          matter_type       TEXT NOT NULL DEFAULT 'drafting',
+          patent_kind       TEXT,
+          stage_code        TEXT NOT NULL DEFAULT 'open',
+          application_no    TEXT,
+          publication_no    TEXT,
+          patent_no         TEXT,
+          filing_date       TEXT,
+          priority_date     TEXT,
+          claims_priority   INTEGER NOT NULL DEFAULT 0,
+          is_pct_national   INTEGER NOT NULL DEFAULT 0,
+          ipc               TEXT,
+          tech_field        TEXT,
+          inventors         TEXT,
+          applicant         TEXT,
+          attorney          TEXT,
+          workspace_path    TEXT,
+          closed_at         TEXT,
+          extra             TEXT NOT NULL DEFAULT '{}',
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX idx_matters_stage ON matters(stage_code, updated_at DESC);
+        CREATE INDEX idx_matters_client ON matters(client_id);
+
+        CREATE TABLE matter_notices (
+          id                TEXT PRIMARY KEY,
+          matter_id         TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
+          notice_kind       TEXT NOT NULL,
+          dispatch_date     TEXT NOT NULL,
+          delivery_mode     TEXT NOT NULL DEFAULT 'electronic',
+          delivery_date     TEXT,
+          designated_months INTEGER,
+          file_link         TEXT,
+          note              TEXT,
+          created_at        TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX idx_matter_notices_matter ON matter_notices(matter_id, dispatch_date DESC);
+
+        CREATE TABLE matter_deadlines (
+          id            TEXT PRIMARY KEY,
+          matter_id     TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
+          deadline_key  TEXT NOT NULL,
+          label         TEXT NOT NULL,
+          due_date      TEXT NOT NULL,
+          due_date_raw  TEXT NOT NULL,
+          basis         TEXT,
+          status        TEXT NOT NULL DEFAULT 'pending',
+          computed_at   TEXT NOT NULL,
+          computed_from TEXT NOT NULL DEFAULT '{}',
+          UNIQUE (matter_id, deadline_key)
+        ) STRICT;
+        CREATE INDEX idx_matter_deadlines_due ON matter_deadlines(due_date);
+
+        CREATE TABLE matter_events (
+          id         TEXT PRIMARY KEY,
+          matter_id  TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
+          action     TEXT NOT NULL,
+          artifact   TEXT,
+          approver   TEXT,
+          note       TEXT,
+          at         TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX idx_matter_events_matter ON matter_events(matter_id, at);
+      `)
+
+      // 知识条目关联案卷（只加列，老条目 NULL，行为不变）。
+      db.exec('ALTER TABLE knowledge_entries ADD COLUMN matter_id TEXT')
+      db.exec('CREATE INDEX idx_knowledge_matter ON knowledge_entries(matter_id)')
+
+      const at = new Date().toISOString()
+      const insert = db.prepare(
+        `INSERT OR IGNORE INTO dictionaries (kind, code, name, config, builtin, active, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)`,
+      )
+      /** 案型（做什么案子）。 */
+      const matterTypes: Array<[string, string, string]> = [
+        ['drafting', '撰写案', '#4F86F7'],
+        ['oa_response', '审查意见答复案', '#F39C12'],
+        ['search', '检索案', '#2E9B7B'],
+        ['patentability', '专利性分析案', '#6C5CE7'],
+        ['invalidation', '无效宣告案', '#E74C3C'],
+        ['reexamination', '复审案', '#E67E22'],
+        ['infringement', '侵权比对案', '#8B7BE8'],
+        ['annuity', '年费维持案', '#16A085'],
+        ['other', '其他', '#95A5A6'],
+      ]
+      /** 阶段（对齐 patent-matter 六态 / L1–L5）。 */
+      const matterStages: Array<[string, string, string]> = [
+        ['open', '建案', '#4F86F7'],
+        ['retrieving', '检索中', '#2E9B7B'],
+        ['analyzing', '分析中', '#6C5CE7'],
+        ['drafting', '撰写中', '#F39C12'],
+        ['review', '门禁/审批中', '#E67E22'],
+        ['closed', '归档', '#2E9B7B'],
+      ]
+      /** 专利类型：逐字对齐 patent-deadline 的 PatentKind。 */
+      const patentKinds: Array<[string, string, string]> = [
+        ['invention', '发明专利', '#E74C3C'],
+        ['utility-model', '实用新型专利', '#2980B9'],
+        ['design', '外观设计专利', '#8B7BE8'],
+      ]
+      /** 官文种类：逐字对齐 patent-deadline 的 NoticeKind。 */
+      const noticeKinds: Array<[string, string, string]> = [
+        ['office-action-first', '第一次审查意见通知书', '#F39C12'],
+        ['office-action-subsequent', '后续审查意见通知书', '#E67E22'],
+        ['substantive-exam-notice', '实质审查通知书', '#4F86F7'],
+        ['rejection-decision', '驳回决定', '#E74C3C'],
+        ['grant-notice', '授予专利权通知书', '#2E9B7B'],
+        ['reexamination-notice', '复审通知书', '#6C5CE7'],
+        ['invalidation-transfer', '无效宣告转送文件', '#8B7BE8'],
+      ]
+      const groups: Array<[string, Array<[string, string, string]>]> = [
+        ['matter_type', matterTypes],
+        ['matter_stage', matterStages],
+        ['patent_kind', patentKinds],
+        ['notice_kind', noticeKinds],
+      ]
+      for (const [kind, items] of groups) {
+        items.forEach(([code, name, color], index) => {
+          insert.run(kind, code, name, JSON.stringify({ color }), (index + 1) * 10, at, at)
+        })
       }
     },
   },

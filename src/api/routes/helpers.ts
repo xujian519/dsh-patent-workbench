@@ -58,6 +58,8 @@ export const KNOWLEDGE_PREFIX = '/api/workbench/knowledge'
 export const KNOWLEDGE_RECALL_PREFIX = '/api/workbench/knowledge-recall'
 export const IDEAS_PREFIX = '/api/workbench/ideas'
 export const IDEA_CLUSTERS_PREFIX = '/api/workbench/idea-clusters'
+/** 案卷域前缀（专利工作台阶段 2）。 */
+export const MATTERS_PREFIX = '/api/workbench/matters'
 
 export const MAX_LOCAL_DOC_BYTES = 1024 * 1024
 
