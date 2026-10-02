@@ -159,7 +159,7 @@ test('db migrations, dictionaries and task tree', () => {
 
     // V2 daily plan: draft -> confirm -> persisted per date, replace & delete work
     const planDate = localDateString()
-    const planTask = createTask(db, { title: 'plan target', typeCode: 'code_impl', priorityCode: 'p2' })
+    const planTask = createTask(db, { title: 'plan target', typeCode: 'code_impl', priorityCode: 'p2', parentId: task.id })
     // 另一个**顶层**任务：同一父子链不能同时入计划（下面单独断言），所以计划里的第二条
     // 必须是独立的一支，而不是 planTask 的子任务。
     const sibling = createTask(db, { title: 'plan sibling', typeCode: 'code_impl', priorityCode: 'p2' })
