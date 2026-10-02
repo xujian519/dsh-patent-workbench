@@ -65,7 +65,7 @@ dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 | 项 | 要求 | 拿不到时 |
 |---|---|---|
 | **面板本体**（官方槽位 + `layout.selectPanel`） | **DSH `0.1.5-rc.1+`** | **面板整块不启动**并打一条可读日志（刻意不降级） |
-| 服务端能力：任务/日历/知识库/点子、提醒、日报周报、`workbench_*` 工具 | `0.1.0-rc.6+` | — |
+| 服务端能力：任务/日历/知识库/点子、提醒、`workbench_*` 工具 | `0.1.0-rc.6+` | — |
 | 会话绑定 `sessions.retain()` | `0.1.7-rc.2+` | 旧宿主自动回落 `sessions.binding()` |
 | Skill 选择器 | 宿主 `skills` 注册表 | 选择器隐藏 |
 | 微信提醒 | 可选插件 `@xmanrui/dsh-im` | 静默降级为页内提醒 + 系统通知 |
@@ -180,7 +180,7 @@ dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 | | Requirement | If missing |
 |---|---|---|
 | **Panel** (official slots + `layout.selectPanel`) | **DSH `0.1.5-rc.1+`** | Panel **refuses to start** and logs a readable reason (deliberately not degraded) |
-| Server-side features (tasks, reminders, reports, `workbench_*` tools) | `0.1.0-rc.6+` | — |
+| Server-side features (tasks, reminders, `workbench_*` tools) | `0.1.0-rc.6+` | — |
 | Session binding via `sessions.retain()` | `0.1.7-rc.2+` | Falls back to `sessions.binding()` on older hosts |
 | WeChat reminders | optional `@xmanrui/dsh-im` | Falls back to in-panel + system notifications |
 

@@ -507,7 +507,7 @@ test('draft defer/resume/abandon API: 暂存不弹窗、可唤回、驳回留痕
 test('draft defer API: 所有草稿类型都可暂存，且暂存留痕走通用事件码', async () => {
   await withServer(async ({ request, db }) => {
     // v1.14.0：暂存白名单推广为「默认全部可暂存」，非验收类不再被拒。
-    const created = await request('POST', '/api/workbench/drafts', { kindCode: 'report', payload: { periodCode: 'day' } })
+    const created = await request('POST', '/api/workbench/drafts', { kindCode: 'knowledge', payload: {} })
     const res = await request('POST', `/api/workbench/drafts/${created.body.draft.id}/defer`)
     assert.equal(res.status, 200)
     assert.equal(res.body.draft.deferredAt !== null, true)

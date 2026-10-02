@@ -63,8 +63,6 @@ export interface DailyPlanView {
   readable?: boolean
   diagnostics?: string[]
 }
-export interface TaskReportView { id: string; periodCode: 'day' | 'week'; periodStart: string; title: string; summaryMd: string; stats: Record<string, unknown>; sessionId: string | null; createdAt: string; updatedAt: string }
-
 // 提醒相关类型来自共享契约（前后端单一事实来源），此处不再重复定义。
 export interface KnowledgeEntry { id: string; kindCode: string; title: string; contentMd: string; tags: string[]; sourceTaskId: string | null; sourceSessionId: string | null; sourceReviewId: string | null; fileLink: string | null; createdAt: string; updatedAt: string }
 export interface Idea { id: string; title: string; contentMd: string; kindCode: string; tags: string[]; sourceSessionId: string | null; createdAt: string; updatedAt: string }

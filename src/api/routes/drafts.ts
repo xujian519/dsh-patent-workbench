@@ -4,7 +4,7 @@
  */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
-import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmIdeaClusterDraft, confirmIdeaTaskDraft, confirmKnowledgeDraft, confirmReportDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, updateDraft, updateTaskWithCompletion } from '../../db/repo.js'
+import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmIdeaClusterDraft, confirmIdeaTaskDraft, confirmKnowledgeDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, updateDraft, updateTaskWithCompletion } from '../../db/repo.js'
 import { DRAFTS_PREFIX, isLoopbackRequest, pathSegments, publicTask, readJsonBody, writeJson } from './helpers.js'
 import { writeReviewToTeamMemory, teamMemoryAvailable, type TeamMemoryService } from '../../review-memory.js'
 
@@ -18,7 +18,7 @@ function taskIdOf(draft: { payload: Record<string, unknown> }): string | undefin
  * 让后续（尤其是提交草稿的那个）会话知道自己的产出被暂存/驳回过、暂存了几次。
  *
  * 文案通用化：v1.12.0 只给验收类写留痕，措辞也写死"验收"。现在所有草稿类型都能暂存，
- * 再用"验收"就会误导（比如一份日报草稿的留痕写着"验收暂存"）。
+ * 再用"验收"就会误导（比如一份知识草稿的留痕写着"验收暂存"）。
  * `eventCode` 仍按是否验收类分流，便于界面上区分图标与措辞。
  */
 function recordDraftFeedback(
@@ -150,9 +150,6 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
             }
             if (draft.kindCode === 'daily_plan') {
               return writeJson(res, 200, { ok: true, plan: confirmDailyPlanDraft(db, id) })
-            }
-            if (draft.kindCode === 'report') {
-              return writeJson(res, 200, { ok: true, report: confirmReportDraft(db, id) })
             }
             if (draft.kindCode === 'knowledge') {
               return writeJson(res, 200, { ok: true, knowledge: confirmKnowledgeDraft(db, id) })

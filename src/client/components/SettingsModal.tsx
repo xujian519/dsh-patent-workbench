@@ -36,7 +36,6 @@ export type DictKind = 'type' | 'status' | 'priority' | 'knowledge_kind' | 'idea
 const DRAFT_NOTIFY_OPTIONS: Array<{ code: string; label: string }> = [
   { code: 'completion', label: '完成验收申请' },
   { code: 'review', label: '复盘草稿' },
-  { code: 'report', label: '日报/周报草稿' },
   { code: 'knowledge', label: '知识条目草稿' },
   { code: 'idea_cluster', label: '点子王提案' },
   { code: 'idea_tasks', label: '点子落地提案' },

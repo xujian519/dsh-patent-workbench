@@ -86,7 +86,7 @@ import {
 import type {
   Bootstrap, DailyPlanItemView, DailyPlanView, Dict, DshSessionListState, DshSessionSummary, Idea, IdeaClusterView,
   KnowledgeEntry, ModelDirectoryRuntime, ModelDirectoryState, ModelProviderGroup, PromptContentPart, QuickModelSelection,
-  SessionDriver, Task, TaskDetail, TaskReportView, WorkbenchRuntime,
+  SessionDriver, Task, TaskDetail, WorkbenchRuntime,
 } from './viewTypes.js'
 import {
   buildQuickIntakePrompt, isQuickImageDraft, MAX_QUICK_DOCUMENTS, MAX_QUICK_IMAGES,
@@ -454,9 +454,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [dictForm, setDictForm] = useState<{ name: string; code: string; color: string; sortOrder: number } | null>(null)
   const [dictEditCode, setDictEditCode] = useState<string | null>(null)
   const [dictError, setDictError] = useState<string | null>(null)
-  const [reportSubTab, setReportSubTab] = useState<'day' | 'week'>('day')
-  const [currentReport, setCurrentReport] = useState<TaskReportView | null>(null)
-  const [reportSession, setReportSession] = useState<{ sessionId: string } | null>(null)
   const [pickedPlan, setPickedPlan] = useState<DailyPlanView | null>(null)
   const [pickedPlanSession, setPickedPlanSession] = useState<{ sessionId: string } | null>(null)
   const [planRefreshKey, setPlanRefreshKey] = useState(0)
@@ -506,7 +503,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   // 「归入文件夹」菜单的开合与摆放归 `IdeaCardGrid` 自己管（纯 UI 选择，页面不需要参与）
   const [folderForm, setFolderForm] = useState<{ mode: 'create' | 'rename'; id: string | null; title: string; summaryMd: string } | null>(null)
   const [ideaRefreshKey, setIdeaRefreshKey] = useState(0)
-  const [reportRefreshKey, setReportRefreshKey] = useState(0)
   const [todayPlanSession, setTodayPlanSession] = useState<{ sessionId: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [promptModal, setPromptModal] = useState<{ title: string; value: string } | null>(null)
@@ -1039,7 +1035,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     breakdown: 'AI 拆解',
     execute: 'AI 执行',
     review: 'AI 复盘',
-    report: 'AI 日报 / 周报',
     idea_association: 'AI 点子关联',
     idea_brainstorm: 'AI 点子头脑风暴',
     knowledge_doc: 'AI 总结本地文档',
@@ -1074,7 +1069,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * 图片/文档附件，以及"用户选了目录、还勾了建任务资料夹"这一种组合 ——
    * 资料夹名由 `startAISession` 用**预留的任务 ID** 现算（调用方拿不到那个 ID）。
    */
-  const startAISession = async (mode: 'clarify' | 'consult' | 'breakdown' | 'execute' | 'review' | 'plan' | 'report' | 'idea_association' | 'idea_brainstorm' | 'knowledge_doc', task: Task | null, text: string, previousSessions: Array<Record<string, unknown>> = [], docContext?: { fileLink: string; content: string; name?: string; truncated?: boolean }, workspaceOverride?: string, clarifyOptions: { attachments?: readonly QuickAttachmentDraft[]; followFolder?: boolean; persona?: PersonaSelection } = {}): Promise<void> => {
+  const startAISession = async (mode: 'clarify' | 'consult' | 'breakdown' | 'execute' | 'review' | 'plan' | 'idea_association' | 'idea_brainstorm' | 'knowledge_doc', task: Task | null, text: string, previousSessions: Array<Record<string, unknown>> = [], docContext?: { fileLink: string; content: string; name?: string; truncated?: boolean }, workspaceOverride?: string, clarifyOptions: { attachments?: readonly QuickAttachmentDraft[]; followFolder?: boolean; persona?: PersonaSelection } = {}): Promise<void> => {
     const attachments = clarifyOptions.attachments ?? []
     if (mode === 'clarify' && text.trim() === '' && attachments.length === 0) return
     /**
@@ -1389,15 +1384,9 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
        * （列表只在选择器里读过），而 `personaSelectionLabel` 在没有列表时会给出
        * "（已不在角色库里）"这种**会误导人的**文案 —— 宁可用 id，也不要一句假话。
        */
-      const baseTitle = mode === 'idea_association' ? '点子关联' : mode === 'idea_brainstorm' ? '点子头脑风暴' : mode === 'knowledge_doc' ? `知识总结：${docContext?.name ?? '本地文档'}` : mode === 'report' ? `${text.startsWith('week:') ? '周报' : '日报'}：${text.split(':')[1] ?? ''}` : mode === 'plan' ? `AI 计划：${planAnchor.slice(5)}` : mode === 'clarify' ? `澄清：${clarifyText === '' ? '附件任务' : clarifyText.slice(0, 24)}` : mode === 'consult' ? `协助：${task?.title.slice(0, 24)}` : mode === 'breakdown' ? `拆解：${task?.title.slice(0, 24)}` : mode === 'review' ? `复盘：${task?.title.slice(0, 24)}` : `执行：${task?.title.slice(0, 24)}`
+      const baseTitle = mode === 'idea_association' ? '点子关联' : mode === 'idea_brainstorm' ? '点子头脑风暴' : mode === 'knowledge_doc' ? `知识总结：${docContext?.name ?? '本地文档'}` : mode === 'plan' ? `AI 计划：${planAnchor.slice(5)}` : mode === 'clarify' ? `澄清：${clarifyText === '' ? '附件任务' : clarifyText.slice(0, 24)}` : mode === 'consult' ? `协助：${task?.title.slice(0, 24)}` : mode === 'breakdown' ? `拆解：${task?.title.slice(0, 24)}` : mode === 'review' ? `复盘：${task?.title.slice(0, 24)}` : `执行：${task?.title.slice(0, 24)}`
       const sessionTitle = personaId === '' ? baseTitle : `${baseTitle} · 角色 ${personaId}`
       await sessionRef.session.rename(sessionTitle).catch(() => undefined)
-      let reportContextText = ''
-      if (mode === 'report') {
-        const [periodCode, periodStart] = text.split(':')
-        const contextRes = await api<{ context: Record<string, unknown> }>(`/api/workbench/reports/context?period_code=${encodeURIComponent(periodCode)}&period_start=${encodeURIComponent(periodStart)}`)
-        reportContextText = JSON.stringify(contextRes.context, null, 2)
-      }
       /**
        * 当日候选：**唯一实现**在 `shared/dailyPlanPolicy.ts#planCandidates()`（经
        * `client/capacity.ts#todayPlanCandidates` 接线，见下面的 `planCandidateInfo` memo）。
@@ -1447,8 +1436,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         ? ideaPrompt
         : mode === 'knowledge_doc'
         ? docPrompt
-        : mode === 'report'
-        ? `你是“个人工作台”的日报/周报助手。请根据下面 JSON 数据生成一份 Markdown 报告，然后调用 workbench_submit_report。\n\n报告周期：${text.split(':')[0]}（period_start=${text.split(':')[1] ?? ''}）\n数据：\n${reportContextText}\n\n要求：\n- 结构：今日/本周概览 → 已完成 → 进行中/风险 → 明日/下周建议\n- 只依据给定数据，不要编造；数据不足时如实说明\n- title 简洁；summary_md 用 Markdown；stats 可附 {completed, created} 等数字\n- 只提交草稿，不要修改任务，不要执行任务。`
         : mode === 'plan'
         ? planPrompt
         : mode === 'clarify'
@@ -1520,10 +1507,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       if (mode === 'plan') {
         await api('/api/workbench/ai-sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scopeCode: 'daily_plan', anchor: planAnchor, sessionId: id, workspace: workspaceId }) })
       }
-      if (mode === 'report') {
-        const [periodCode, periodStart] = text.split(':')
-        await api('/api/workbench/ai-sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scopeCode: periodCode === 'week' ? 'week_report' : 'day_report', anchor: periodStart, sessionId: id, workspace: workspaceId }) })
-      }
       if (mode === 'idea_association' || mode === 'idea_brainstorm') {
         await api('/api/workbench/ai-sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scopeCode: mode, anchor: text, sessionId: id, workspace: workspaceId }) })
       }
@@ -1544,21 +1527,19 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   }
 
   /**
-   * 复用型会话：计划/报告/点子关联/点子头脑风暴 —— 每个 scope+anchor 只有一个会话。
+   * 复用型会话：计划/点子关联/点子头脑风暴 —— 每个 scope+anchor 只有一个会话。
    *
    * 命中返回 `{kind:'reuse', sessionId}`，**没命中返回 `{kind:'new'}`**（"该走新建流程"，
    * 而不是抛错）；`notice` 只在"因为换了角色而不复用"时非空（要显式告知用户）。
    *
-   * ## 三条判据都在这里（原先是内联在 `startAISession` 里的一大段）
+   * ## 两条判据都在这里（原先是内联在 `startAISession` 里的一大段）
    *
    * 1. **登记行**（`ai_session_registry` 表）：登记行 ≠ "会话还在" —— 用户把那个对话归档以后，
    *    宿主只把 id 收进归档集、连文件都不删，`sessions.open()` 照样"成功"，
    *    随后宿主清掉选中，用户看到的是"点了没反应"。所以登记行必须过
    *    `aiSessionUsable`；判据不成立时**落回新建流程**（登记接口是 upsert，会覆盖陈旧那行）。
    *    计划还额外要求"确有当日计划或待确认草稿"，否则同样当没命中。
-   * 2. **报告行自己的 sessionId**：报告落库后再点同一天，登记那条路已被判据拦住，
-   *    这里若不判就会裸切一个已归档 / 已删除的会话（用户实测：点了没反应）。
-   * 3. **角色选择**（AX-R08，v1.15.9 新增）：会话还能用**不等于**可以沿用 ——
+   * 2. **角色选择**（AX-R08，v1.15.9 新增）：会话还能用**不等于**可以沿用 ——
    *    如果用户这次明确选了一个与既有绑定不同的角色，必须新建会话（旧会话绑定不变）。
    *    判据是纯函数 `decidePersonaReuse()`（三态 × 有无绑定，表驱动单测）；
    *    这里只负责"取既有绑定 → 问判据 → 照做"。**旧实现在这里无条件早退**，
@@ -1569,18 +1550,17 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * 也就不会产生整段重排的噪声 diff。参数显式传入，不靠闭包猜作用域。
    */
   const reuseAiSessionId = async (
-    mode: 'clarify' | 'consult' | 'breakdown' | 'execute' | 'review' | 'plan' | 'report' | 'idea_association' | 'idea_brainstorm' | 'knowledge_doc',
+    mode: 'clarify' | 'consult' | 'breakdown' | 'execute' | 'review' | 'plan' | 'idea_association' | 'idea_brainstorm' | 'knowledge_doc',
     text: string,
     planAnchor: string,
     persona: PersonaSelection,
   ): Promise<{ kind: 'reuse'; sessionId: string } | { kind: 'new'; notice: string }> => {
     const fresh = { kind: 'new' as const, notice: '' }
-    if (mode !== 'plan' && mode !== 'report' && mode !== 'idea_association' && mode !== 'idea_brainstorm') return fresh
+    if (mode !== 'plan' && mode !== 'idea_association' && mode !== 'idea_brainstorm') return fresh
     const [scopeCode, anchor] = mode === 'plan'
       ? ['daily_plan', planAnchor]
       : mode === 'idea_association' ? ['idea_association', text]
-        : mode === 'idea_brainstorm' ? ['idea_brainstorm', text]
-          : text.startsWith('week:') ? ['week_report', text.slice(5)] : ['day_report', text.slice(4)]
+        : ['idea_brainstorm', text]
     let candidate = ''
     const existing = await api<{ session: { sessionId: string } | null }>(`/api/workbench/ai-sessions?scope_code=${scopeCode}&anchor=${anchor}`)
     if (existing.session !== null && aiSessionUsable(runtime, existing.session.sessionId)) {
@@ -1593,12 +1573,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         shouldReuse = hasPlan || hasPendingPlanDraft
       }
       if (shouldReuse) candidate = existing.session.sessionId
-    }
-    if (candidate === '' && mode === 'report') {
-      // 旧版本生成的报告可能还没有登记会话：直接复用报告里的 session_id。
-      const periodCode = text.startsWith('week:') ? 'week' : 'day'
-      const rep = await api<{ report: { sessionId?: string | null } | null }>(`/api/workbench/reports/${periodCode}/${anchor}`)
-      if (typeof rep.report?.sessionId === 'string' && rep.report.sessionId !== '' && aiSessionUsable(runtime, rep.report.sessionId)) candidate = rep.report.sessionId
     }
     if (candidate === '') return fresh
     /**
@@ -2410,33 +2384,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [cursor, setCursor] = useState<Date>(startOfWeek(now))
   const [calMode, setCalMode] = useState<'week' | 'month'>('week')
   const [dayTab, setDayTab] = useState<DayTab>('plan')
-  /**
-   * 报告锚点跟着**当前面板选中的那一天**走（批次2 D15）：
-   * 今日视图看今天的报告，日历视图看选中那天的报告 —— 与树的锚点是同一个来源。
-   */
-  const reportAnchor = reportSubTab === 'week'
-    ? localDateString(startOfWeek(view === 'today' ? now : picked))
-    : localDateString(view === 'today' ? now : picked)
-  const reportScope = reportSubTab === 'week' ? 'week_report' : 'day_report'
   const todayAnchor = localDateString(new Date())
-  const thisWeekAnchor = localDateString(startOfWeek(new Date()))
-  const reportIsFuture = reportSubTab === 'week' ? reportAnchor > thisWeekAnchor : reportAnchor > todayAnchor
-
-  useEffect(() => {
-    /**
-     * 报告的加载跟着**面板选中的那一天**走（批次2 D15）：报告页签现在今日/日历都有，
-     * 所以闸门从「必须是日历视图」改成「必须是报告页签」——仍然不许未来日期拉报告（只做复盘）。
-     */
-    if (view !== 'today' && view !== 'calendar') { setCurrentReport(null); setReportSession(null); return }
-    if (dayTab !== 'report' || reportIsFuture) {
-      setCurrentReport(null); setReportSession(null)
-      return
-    }
-    void Promise.all([
-      api<{ report: TaskReportView | null }>(`/api/workbench/reports/${reportSubTab}/${reportAnchor}`),
-      api<{ session: { sessionId: string } | null }>(`/api/workbench/ai-sessions?scope_code=${reportScope}&anchor=${reportAnchor}`),
-    ]).then(([rep, sess]) => { setCurrentReport(rep.report); setReportSession(sess.session) }).catch(() => { setCurrentReport(null); setReportSession(null) })
-  }, [view, dayTab, reportSubTab, reportAnchor, reportIsFuture, reportRefreshKey])
 
   useEffect(() => {
     void api<{ session: { sessionId: string } | null }>(`/api/workbench/ai-sessions?scope_code=daily_plan&anchor=${todayAnchor}`)
@@ -2568,20 +2516,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
     },
     onSavePlan: (items: Array<{ taskId: string; note: string; minutes?: number }>) => savePlan(dayPanel.day, items),
-    report: {
-      subTab: reportSubTab,
-      onSubTabChange: setReportSubTab,
-      isFuture: reportIsFuture,
-      current: currentReport,
-      sessionActive: reportSession !== null,
-      onGenerate: () => void startAISession('report', null, `${reportSubTab}:${reportAnchor}`),
-      onDelete: () => {
-        if (currentReport === null) return
-        void api(`/api/workbench/reports/${currentReport.periodCode}/${currentReport.periodStart}`, { method: 'DELETE' })
-          .then(() => { setCurrentReport(null); setReportSession(null); void refresh() })
-          .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      },
-    },
   }
 
   /** 同上：`?.list.getSnapshot()` 只保护外层，低版本宿主缺 `list` 时会抛 —— 一并加固。 */
@@ -3093,7 +3027,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
          * 才被覆盖。这里同步清掉，同一帧就消失。
          */
         onSettled={() => setPendingDraft(null)}
-        onDone={() => { setPendingDraft(null); setPlanRefreshKey((v) => v + 1); setReportRefreshKey((v) => v + 1); setKnowledgeRefreshKey((v) => v + 1); setIdeaRefreshKey((v) => v + 1); void refresh() }}
+        onDone={() => { setPendingDraft(null); setPlanRefreshKey((v) => v + 1); setKnowledgeRefreshKey((v) => v + 1); setIdeaRefreshKey((v) => v + 1); void refresh() }}
         /**
          * 右上角 X / Esc / 点遮罩 = **收起这条横幅**（不是放弃草稿）。
          *

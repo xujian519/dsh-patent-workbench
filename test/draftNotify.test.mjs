@@ -89,8 +89,8 @@ test('暂存：completion 草稿仍是 pending，只是带上 deferredAt 与计�
 
 test('暂存：**所有**草稿类型都可暂存（白名单已改为默认全开 + 黑名单）', async () => {
   await withDb(async (db) => {
-    // v1.12.0 只放开了验收类；推广后 9 种类型全部可暂存。
-    const kinds = ['completion', 'review', 'task', 'subtask_plan', 'daily_plan', 'report', 'knowledge', 'idea_cluster', 'idea_tasks']
+    // v1.12.0 只放开了验收类；推广后 8 种类型全部可暂存。
+    const kinds = ['completion', 'review', 'task', 'subtask_plan', 'daily_plan', 'knowledge', 'idea_cluster', 'idea_tasks']
     for (const kind of kinds) {
       assert.equal(isDeferrableDraftKind(kind), true, `${kind} 应可暂存`)
     }
@@ -99,17 +99,17 @@ test('暂存：**所有**草稿类型都可暂存（白名单已改为默认全�
 
     // 非验收类草稿真的能暂存（旧实现在这里返回 undefined）
     const task = createTask(db, { title: 't', typeCode: 'code_impl', priorityCode: 'p1' })
-    const report = createDraft(db, { kindCode: 'report', payload: { periodCode: 'day' } })
-    const deferredReport = deferDraft(db, report.id, AT)
-    assert.equal(deferredReport.statusCode, 'pending')
-    assert.equal(deferredReport.deferredAt, AT)
-    assert.equal(deferredReport.deferCount, 1)
+    const planDraft = createDraft(db, { kindCode: 'daily_plan', payload: { planDate: '2026-09-20', items: [] } })
+    const deferredPlan = deferDraft(db, planDraft.id, AT)
+    assert.equal(deferredPlan.statusCode, 'pending')
+    assert.equal(deferredPlan.deferredAt, AT)
+    assert.equal(deferredPlan.deferCount, 1)
 
     const knowledge = createDraft(db, { kindCode: 'knowledge', payload: { title: 'k' } })
     assert.equal(deferDraft(db, knowledge.id, AT).deferredAt, AT)
 
     // 非 pending 的草稿仍不可暂存
-    const abandoned = createDraft(db, { kindCode: 'report', payload: { periodCode: 'day' } })
+    const abandoned = createDraft(db, { kindCode: 'knowledge', payload: { title: 'k2' } })
     abandonDraft(db, abandoned.id, AT)
     assert.equal(deferDraft(db, abandoned.id, AT), undefined)
 
@@ -157,7 +157,6 @@ test('暂存：唤回后重新进入自动弹窗队列', async () => {
 test('通知优先级：验收/复盘 p1，其余 p2', () => {
   assert.equal(draftNotifyPriority('completion'), 'p1')
   assert.equal(draftNotifyPriority('review'), 'p1')
-  assert.equal(draftNotifyPriority('report'), 'p2')
   assert.equal(draftNotifyPriority('knowledge'), 'p2')
 })
 
@@ -171,7 +170,7 @@ test('通知正文：任务标题 + 截断摘要 + 一句操作提示（保持�
   assert.equal(lines[2], '打开工作台：验收通过 / 暂存（先验证）/ 驳回')
   assert.equal(body.length < 120, true, `正文应短于 120 字符，实际 ${body.length}`)
   // 不带任务标题时退回草稿自带的 title
-  assert.equal(draftNotifyBody({ kindCode: 'report', payload: { title: '日报草稿', summary: '今天做了 A、B' } }).split('\n')[0], '日报草稿')
+  assert.equal(draftNotifyBody({ kindCode: 'knowledge', payload: { title: '知识草稿', summary: '今天做了 A、B' } }).split('\n')[0], '知识草稿')
 })
 
 test('默认只开验收与复盘两类通知', () => {
@@ -190,11 +189,11 @@ test('待通知草稿：跳过已暂存、已通知与未开启的类型', async
     deferDraft(db, deferred.id, AT)
     const notified = completionDraft(db, task.id)
     markDraftNotified(db, notified.id, AT)
-    const report = createDraft(db, { kindCode: 'report', payload: {} })
+    const knowledge = createDraft(db, { kindCode: 'knowledge', payload: {} })
     const ids = listNotifiableDrafts(db, ['completion', 'review']).map((d) => d.id)
     assert.deepEqual(ids, [fresh.id])
     assert.equal(listNotifiableDrafts(db, []).length, 0)
-    assert.equal(listNotifiableDrafts(db, ['report']).map((d) => d.id).includes(report.id), true)
+    assert.equal(listNotifiableDrafts(db, ['knowledge']).map((d) => d.id).includes(knowledge.id), true)
   })
 })
 

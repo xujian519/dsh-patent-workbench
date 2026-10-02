@@ -11,7 +11,7 @@
  * | `persona` | 会话 id | 同一个会话 id | 版本化 JSON（见 `shared/persona.ts`） |
  *
  * - `anchor = sessionId` 让"按会话查绑定"就是一次主键查询；
- * - scope 不同 → **结构上不可能覆盖** `daily_plan` / `day_report` 的登记
+ * - scope 不同 → **结构上不可能覆盖** `daily_plan` 的登记
  *   （同一 scope+anchor 只保留一条，跨 scope 是两行）；
  * - 写入一律走 `registerAiSession`（注册表的唯一写入口），本模块不自己写 SQL ——
  *   否则"注册表怎么 upsert"就有了第二份实现。

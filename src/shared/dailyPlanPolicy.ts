@@ -529,7 +529,7 @@ export function dayPanelTreeSources(input: DayPanelSourceInput): DayPanelSourceR
  *
  * 前三个是"任务视图"，`done` 按 `completedAt` 落在该日，`report` 是报告卡。
  */
-export type DayPanelTabCode = 'plan' | 'overdue' | 'unscheduled' | 'done' | 'report'
+export type DayPanelTabCode = 'plan' | 'overdue' | 'unscheduled' | 'done'
 
 /** 「只对今天/未来有意义」的两个页签（过去日期不显示它们，见 ADR0001 口径补充）。 */
 export function isDayPanelExtraTab(tab: DayPanelTabCode): boolean {

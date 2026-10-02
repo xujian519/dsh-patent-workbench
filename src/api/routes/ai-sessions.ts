@@ -24,7 +24,7 @@ export function makeAiSessionRoutes(db: DatabaseSync): WebRoute[] {
           if (scopeCode === null || scopeCode === '') return writeJson(res, 400, { error: 'scope_code is required' })
           if (anchor === null || anchor === '') return writeJson(res, 400, { error: 'anchor is required' })
           requireCode(db, 'ai_session_scope', scopeCode, 'scope_code')
-          if (['daily_plan', 'day_report', 'week_report'].includes(scopeCode) && !PERIOD_DATE_RE.test(anchor)) return writeJson(res, 400, { error: 'anchor must be YYYY-MM-DD' })
+          if (scopeCode === 'daily_plan' && !PERIOD_DATE_RE.test(anchor)) return writeJson(res, 400, { error: 'anchor must be YYYY-MM-DD' })
           return writeJson(res, 200, { ok: true, session: getAiSession(db, scopeCode, anchor) ?? null })
         }
         if (method === 'POST') {
@@ -35,7 +35,7 @@ export function makeAiSessionRoutes(db: DatabaseSync): WebRoute[] {
           const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined
           if (scopeCode === undefined || anchor === undefined || anchor === '' || sessionId === undefined || sessionId.trim() === '') return writeJson(res, 400, { error: 'scopeCode, anchor and sessionId are required' })
           requireCode(db, 'ai_session_scope', scopeCode, 'scope_code')
-          if (['daily_plan', 'day_report', 'week_report'].includes(scopeCode) && !PERIOD_DATE_RE.test(anchor)) return writeJson(res, 400, { error: 'anchor must be YYYY-MM-DD' })
+          if (scopeCode === 'daily_plan' && !PERIOD_DATE_RE.test(anchor)) return writeJson(res, 400, { error: 'anchor must be YYYY-MM-DD' })
           return writeJson(res, 201, { ok: true, session: registerAiSession(db, {
             scopeCode,
             anchor,

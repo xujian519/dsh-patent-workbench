@@ -26,7 +26,6 @@ import { makePlanRoutes } from './routes/plans.js'
 import { makePersonaRoutes, type PersonaRouteOptions } from './routes/personas.js'
 import { makeQuickAttachmentRoutes } from './routes/quick-attachments.js'
 import { makeReminderRoutes, type ReminderRouteDeps } from './routes/reminders.js'
-import { makeReportRoutes } from './routes/reports.js'
 import { makeTaskRoutes } from './routes/tasks.js'
 import type { TeamMemoryService } from '../review-memory.js'
 import { teamMemoryAvailable } from '../review-memory.js'
@@ -379,7 +378,6 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
     ...makeKnowledgeRoutes(db),
     ...makeMatterRoutes(db, { patentDeadline: deps.patentDeadline }),
     ...makeAiSessionRoutes(db),
-    ...makeReportRoutes(db),
     ...makePlanRoutes(db),
     // ------------------------------------------------------------------ health
     {

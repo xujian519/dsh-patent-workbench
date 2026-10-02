@@ -159,7 +159,7 @@ test('过去日期不显示「逾期」/「未排期」；今天与未来显示'
   assert.equal(dayPanelExtraTabsAvailable('2026-10-03', '2026-10-02'), true, '未来（"到那天为止"的投影）')
   assert.equal(isDayPanelExtraTab('overdue'), true)
   assert.equal(isDayPanelExtraTab('unscheduled'), true)
-  for (const tab of ['plan', 'done', 'report']) assert.equal(isDayPanelExtraTab(tab), false, tab)
+  for (const tab of ['plan', 'done']) assert.equal(isDayPanelExtraTab(tab), false, tab)
 })
 
 test('resolveDayPanelTab：不可用时两个新页签都落到「计划」，其余页签原样保留', () => {
@@ -167,7 +167,6 @@ test('resolveDayPanelTab：不可用时两个新页签都落到「计划」，�
   assert.equal(resolveDayPanelTab('unscheduled', false), 'plan')
   assert.equal(resolveDayPanelTab('plan', false), 'plan')
   assert.equal(resolveDayPanelTab('done', false), 'done', '「已完成」在过去日期依然存在（按当日完成记录）')
-  assert.equal(resolveDayPanelTab('report', false), 'report')
   assert.equal(resolveDayPanelTab('overdue', true), 'overdue')
   assert.equal(resolveDayPanelTab('unscheduled', true), 'unscheduled')
 })
@@ -230,14 +229,14 @@ function panelProps(over = {}) {
 
 const render = (over) => renderToStaticMarkup(createElement(DayPanel, panelProps(over)))
 
-test('渲染：五个页签都在，且计数来自成员（不是上下文行）', () => {
+test('渲染：四个页签都在，且计数来自成员（不是上下文行）', () => {
   const html = render({
     planTree: [],
     overdueTree: node(task({ id: 'o1', title: '逾期甲' })),
     unscheduledTree: node(task({ id: 'u1', title: '未排期甲' })),
     doneTree: node(task({ id: 'd1', title: '完成甲', statusCode: 'done', completedAt: iso(DAY_START + 3600_000) })),
   })
-  for (const label of ['计划', '逾期', '未排期', '已完成', '报告']) {
+  for (const label of ['计划', '逾期', '未排期', '已完成']) {
     assert.ok(html.includes(`>${label}<`), `页签「${label}」必须渲染出来：${html.slice(0, 400)}`)
   }
   assert.ok(html.includes('data-day-tabs'), '页签容器要在')
@@ -251,7 +250,7 @@ test('渲染：过去日期藏掉「逾期」/「未排期」，且页签落在�
   assert.equal(html.includes('data-day-tree="plan"'), true, 'state 停在「逾期」时要兜底渲染「计划」，不能是空白')
   assert.equal(html.includes('>逾期<'), false, '「逾期」页签按钮也要藏掉')
   assert.equal(html.includes('>未排期<'), false)
-  assert.ok(html.includes('>已完成<') && html.includes('>报告<'), '其余页签照常')
+  assert.ok(html.includes('>已完成<'), '其余页签照常')
 })
 
 test('渲染：逾期页签有成员时显示任务行，空时把判据说清楚', () => {

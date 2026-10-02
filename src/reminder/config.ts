@@ -35,7 +35,7 @@ export interface ReminderPolicy {
 }
 
 /** 可推送的草稿类型（与 task_drafts.kind_code 对齐）。 */
-export const NOTIFIABLE_DRAFT_KINDS = ['completion', 'review', 'report', 'knowledge', 'idea_cluster', 'idea_tasks', 'subtask_plan', 'task'] as const
+export const NOTIFIABLE_DRAFT_KINDS = ['completion', 'review', 'knowledge', 'idea_cluster', 'idea_tasks', 'subtask_plan', 'task'] as const
 
 export const DEFAULT_REMINDER_POLICY: ReminderPolicy = {
   enabled: false,

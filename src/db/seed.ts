@@ -55,7 +55,6 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
   { kind: 'draft_kind', code: 'completion', name: '执行完成验收', sortOrder: 30, config: {} },
   { kind: 'draft_kind', code: 'review', name: '复盘确认', sortOrder: 40, config: {} },
   { kind: 'draft_kind', code: 'daily_plan', name: '今日计划', sortOrder: 50, config: {} },
-  { kind: 'draft_kind', code: 'report', name: '日报/周报', sortOrder: 60, config: {} },
   { kind: 'draft_kind', code: 'knowledge', name: '知识条目', sortOrder: 70, config: {} },
   { kind: 'draft_kind', code: 'idea_cluster', name: '点子王提案', sortOrder: 80, config: {} },
   { kind: 'draft_kind', code: 'idea_tasks', name: '点子落地任务', sortOrder: 90, config: {} },
@@ -84,8 +83,6 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
 
   // V2 复用型 AI 会话范围
   { kind: 'ai_session_scope', code: 'daily_plan', name: '今日计划会话', sortOrder: 10, config: {} },
-  { kind: 'ai_session_scope', code: 'day_report', name: '日报会话', sortOrder: 20, config: {} },
-  { kind: 'ai_session_scope', code: 'week_report', name: '周报会话', sortOrder: 30, config: {} },
   { kind: 'ai_session_scope', code: 'idea_association', name: '点子关联会话', sortOrder: 40, config: {} },
   { kind: 'ai_session_scope', code: 'idea_brainstorm', name: '点子头脑风暴会话', sortOrder: 50, config: {} },
   { kind: 'draft_status', code: 'pending', name: '待确认', sortOrder: 10, config: {} },

@@ -111,7 +111,7 @@ export interface TaskSessionView {
 // 草稿
 // ---------------------------------------------------------------------------
 
-export type DraftKind = 'task' | 'subtask_plan' | 'daily_plan' | 'report' | 'knowledge' | 'idea_cluster' | 'idea_tasks' | 'completion'
+export type DraftKind = 'task' | 'subtask_plan' | 'daily_plan' | 'knowledge' | 'idea_cluster' | 'idea_tasks' | 'completion'
 
 export interface DraftView {
   id: string

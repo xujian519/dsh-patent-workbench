@@ -1,5 +1,5 @@
 /**
- * **日期面板**：承载「某一天」全部内容的唯一界面（计划 / 逾期 / 未排期 / 已完成 / 报告）。
+ * **日期面板**：承载「某一天」全部内容的唯一界面（计划 / 逾期 / 未排期 / 已完成）。
  *
  * ## 为什么存在（ADR0001 口径冻结，批次2 D15）
  *
@@ -14,19 +14,17 @@
  *
  * ## 边界
  *
- * - 不读全局：页签状态、计划、树、报告都由 props 进来；
+ * - 不读全局：页签状态、计划、树都由 props 进来；
  * - 不做候选过滤、不拼请求：写入一律通过回调交给父级；
  * - 「逾期」/「未排期」是否可见由 `extraTabsAvailable` 决定（过去日期不显示，见 ADR0001 口径补充），
  *   兜底落点用 `resolveDayPanelTab()`（与装配层同一份判定，不许各写一遍）。
  */
 import type { ReactNode } from 'react'
 import { Icon } from './Icon.js'
-import { MarkdownText } from './MarkdownText.js'
 import { PlanPanel } from './PlanPanel.js'
 import { TaskTreeRows, countTaskTree, type PendingMap } from './TaskList.js'
-import type { DailyPlanView, Dict, Task, TaskReportView } from '../viewTypes.js'
+import type { DailyPlanView, Dict, Task } from '../viewTypes.js'
 import { countTaskTreeBy, type TaskTreeNode } from '../taskFilterSort.js'
-import { localDateString, startOfWeek } from '../format.js'
 import { isDayPanelExtraTab, resolveDayPanelTab, type DayPanelTabCode } from '../../shared/dailyPlanPolicy.js'
 
 /** 面板的页签（**类型定义在共享层**：装配层与组件引用同一份，不许各写一份字面量联合）。 */
@@ -91,17 +89,6 @@ export interface DayPanelProps {
   onProgressChange?: (taskId: string, percent: number) => Promise<void>
   onClearPlan: () => void
   onSavePlan?: (items: Array<{ taskId: string; note: string; minutes?: number }>) => Promise<void>
-  report: {
-    subTab: 'day' | 'week'
-    onSubTabChange: (tab: 'day' | 'week') => void
-    /** 未来日期：报告只做复盘，不排期。 */
-    isFuture: boolean
-    current: TaskReportView | null
-    /** 是否已有该周期的报告会话（决定按钮文案：继续编辑 / 生成）。 */
-    sessionActive: boolean
-    onGenerate: () => void
-    onDelete: () => void
-  }
   /** 计划页签下、"计划里还没有内容"时的空态动作（今日给「快速录入 / 新建任务」，其它日期给「AI 智能排序」）。 */
   emptyPlanAction?: ReactNode
 }
@@ -113,11 +100,10 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
     doneContextIds, overdueContextIds, unscheduledContextIds,
     expanded, onToggleExpanded, sourceLabelOf, tasks, dicts, selectedId, pending, childrenOf,
     busy, onOpen, onSort, onComplete, onDefer, onEffortChange, onMinutesChange, onProgressChange,
-    onClearPlan, onSavePlan, report, emptyPlanAction,
+    onClearPlan, onSavePlan, emptyPlanAction,
     onScheduleToday, scheduledIds, schedulingTaskId,
   } = props
 
-  const reportAnchor = report.subTab === 'week' ? localDateString(startOfWeek(new Date(day))) : day
   const doneCount = countTaskTreeBy(doneTree, (task: Task) => task.completedAt !== null)
   /**
    * 当前真正生效的页签：过去日期上「逾期」/「未排期」不存在，兜底到「计划」。
@@ -133,7 +119,6 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
     { code: 'overdue', label: '逾期', icon: 'bell', count: countMembers(overdueTree, overdueContextIds) },
     { code: 'unscheduled', label: '未排期', icon: 'calendar', count: countMembers(unscheduledTree, unscheduledContextIds) },
     { code: 'done', label: '已完成', icon: 'check', count: doneCount },
-    { code: 'report', label: '报告', icon: 'report', count: 0 },
   ]
   const visibleTabs = tabDefs.filter((def) => (isDayPanelExtraTab(def.code) ? extraTabsAvailable : true))
 
@@ -154,11 +139,11 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
 
   return (
     <>
-      {/* 任务页签（计划/逾期/未排期）+ 已完成 + 报告 —— 今日与日历共用同一份（ADR0001） */}
+      {/* 任务页签（计划/逾期/未排期）+ 已完成 —— 今日与日历共用同一份（ADR0001） */}
       <div className="wb-segmented wb-sub-segmented" data-day-tabs>
         {visibleTabs.map((def) => (
           <button key={def.code} className={`wb-seg ${activeTab === def.code ? 'on' : ''}`} onClick={() => onTabChange(def.code)}>
-            <Icon name={def.icon} />{def.label}{def.code !== 'report' && <span className="count">{def.count}</span>}
+            <Icon name={def.icon} />{def.label}<span className="count">{def.count}</span>
           </button>
         ))}
       </div>
@@ -200,46 +185,7 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
         </>
       )}
 
-      {activeTab === 'report' ? (
-        <div className="wb-card">
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div className="wb-segmented wb-sub-segmented">
-              <button className={`wb-seg ${report.subTab === 'day' ? 'on' : ''}`} onClick={() => report.onSubTabChange('day')}>日报（{day}）</button>
-              <button className={`wb-seg ${report.subTab === 'week' ? 'on' : ''}`} onClick={() => report.onSubTabChange('week')}>周报（{localDateString(startOfWeek(new Date(day)))} 起）</button>
-            </div>
-            <div style={{ flex: 1 }} />
-          </div>
-          {report.isFuture ? (
-            <div className="wb-empty">
-              未来日期属于工作安排，报告只做复盘。<br />如需安排未来工作，请在「计划」页签给任务设置截止时间；AI 未来排期将在下版支持。
-            </div>
-          ) : report.current !== null ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                <h4 style={{ flex: 1, margin: 0 }}>{report.current.title}</h4>
-                <button className="wb-btn" onClick={report.onDelete}>删除</button>
-              </div>
-              <div style={{ marginTop: 6 }}><MarkdownText text={report.current.summaryMd} /></div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                <button className="wb-btn primary" disabled={busy} onClick={report.onGenerate}>
-                  {report.sessionActive || report.current.sessionId !== null ? '继续编辑报告' : 'AI 生成报告'}
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="wb-empty" style={{ marginTop: 8 }}>
-              {report.subTab === 'week' ? '本周' : '当天'}还没有报告。
-              <div style={{ marginTop: 10 }}>
-                <button className="wb-btn primary lg" disabled={busy} onClick={report.onGenerate}>
-                  {report.sessionActive ? '继续编辑报告' : `AI 生成${report.subTab === 'week' ? '周报' : '日报'}（${reportAnchor}）`}
-                </button>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginTop: 8 }}>同一周期只有一个报告会话，重复点击会回到原会话继续修改。</div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="wb-list" data-day-tree={activeTab}>
+      <div className="wb-list" data-day-tree={activeTab}>
           <TaskTreeRows
             roots={roots}
             depth={0}
@@ -261,8 +207,7 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
               {planEmptyNode(activeTab, day, emptyPlanAction)}
             </div>
           )}
-        </div>
-      )}
+      </div>
     </>
   )
 }

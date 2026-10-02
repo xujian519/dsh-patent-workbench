@@ -83,11 +83,11 @@ test('AX-R07 顺序：角色块在技能块**之前**（先说明身份，再要
 // AX-R07：10 个 mode 的同一选择路径
 // ---------------------------------------------------------------------------
 
-test('AX-R07 十个 mode 共用同一角色选择路径：9 个走提示词弹窗 + 澄清走快速录入', () => {
+test('AX-R07 九个 mode 共用同一角色选择路径：8 个走提示词弹窗 + 澄清走快速录入', () => {
   const code = stripComments(indexSource)
-  // mode 联合类型仍是这 10 个（没有被改动）
-  const union = /'clarify' \| 'consult' \| 'breakdown' \| 'execute' \| 'review' \| 'plan' \| 'report' \| 'idea_association' \| 'idea_brainstorm' \| 'knowledge_doc'/
-  assert.match(code, union, 'startAISession 的 mode 联合必须仍是 10 个')
+  // mode 联合类型仍是这 9 个（没有被改动）
+  const union = /'clarify' \| 'consult' \| 'breakdown' \| 'execute' \| 'review' \| 'plan' \| 'idea_association' \| 'idea_brainstorm' \| 'knowledge_doc'/
+  assert.match(code, union, 'startAISession 的 mode 联合必须仍是 9 个')
   assert.equal((code.match(new RegExp(union.source, 'g')) ?? []).length >= 2, true, 'reuseAiSessionId 与 startAISession 共用同一联合')
   // 角色来源只有两处（提示词弹窗 + 快速录入），不是十个 mode 各判一遍
   assert.match(code, /const personaChoice = promptInput\.persona \?\? INHERIT_PERSONA/)

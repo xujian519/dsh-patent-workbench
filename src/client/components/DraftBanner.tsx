@@ -598,30 +598,6 @@ function describeDraft(draft: DraftView, kindName: (kind: string, code: string) 
     }
   }
 
-  if (draft.kindCode === 'report') {
-    const period = payload.periodCode === 'week' ? '周报' : '日报'
-    const stats = typeof payload.stats === 'object' && payload.stats !== null ? payload.stats as Record<string, unknown> : undefined
-    return {
-      title: <>📄 报告草稿待确认（{period} {String(payload.periodStart ?? '')}）</>,
-      body: (
-        <>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>{String(payload.title ?? '')}</div>
-          {stats !== undefined && (
-            <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 6 }}>
-              统计：{Object.entries(stats).filter(([, v]) => typeof v === 'number' || typeof v === 'string').map(([k, v]) => `${k}=${String(v)}`).join(' · ') || '（无）'}
-            </div>
-          )}
-          <MarkdownText text={String(payload.summaryMd ?? '')} />
-        </>
-      ),
-      confirmLabel: '确认保存报告',
-      abandonLabel: '放弃',
-      sessionLabel: '回到报告会话',
-      sessionId: sessionOf(),
-      deferLabel: DEFER_LABEL,
-    }
-  }
-
   if (draft.kindCode === 'daily_plan') {
     const items = Array.isArray(payload.items) ? payload.items as Array<{ title?: string; note?: string; order?: number }> : []
     const summary = String(payload.summary ?? '')

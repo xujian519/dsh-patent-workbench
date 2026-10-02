@@ -7,8 +7,7 @@ import { openWorkbenchDb } from '../lib/db/database.js'
 import { seedDictionaries } from '../lib/db/seed.js'
 import {
   createTask, updateTask, getTask, listTasks, listArchivedTasks, listChildren,
-  createDraft, confirmTaskDraft, confirmDailyPlanDraft, confirmReportDraft, getDailyPlan, updateDailyPlan, deleteDailyPlan,
-  getTaskReport, listTaskReports, deleteTaskReport,
+  createDraft, confirmTaskDraft, confirmDailyPlanDraft, getDailyPlan, updateDailyPlan, deleteDailyPlan,
   getAiSession, registerAiSession, listReminders, ensureRecurringInstances,
   createKnowledge, updateKnowledge, listKnowledge, getKnowledge, deleteKnowledge, confirmKnowledgeDraft,
   createIdea, listIdeas, createIdeaCluster, getIdeaCluster, confirmIdeaClusterDraft, confirmIdeaTaskDraft,
@@ -238,23 +237,11 @@ test('db migrations, dictionaries and task tree', () => {
     assert.equal(deleteDailyPlan(db, planDate), true)
     assert.equal(getDailyPlan(db, planDate), undefined)
 
-    // V2 reports: draft -> confirm -> persisted per period, replace & list & delete work
-    const reportDraft = createDraft(db, { kindCode: 'report', sessionId: 's-report', payload: { periodCode: 'day', periodStart: planDate, title: '日报', summaryMd: '# 完成 1 项', stats: { completed: 1 } } })
-    const report = confirmReportDraft(db, reportDraft.id)
-    assert.equal(report.periodCode, 'day')
-    assert.equal(getTaskReport(db, 'day', planDate).summaryMd, '# 完成 1 项')
-    const reportDraft2 = createDraft(db, { kindCode: 'report', sessionId: 's-report-2', payload: { periodCode: 'day', periodStart: planDate, title: '日报 v2', summaryMd: '# 完成 2 项' } })
-    confirmReportDraft(db, reportDraft2.id)
-    assert.equal(getTaskReport(db, 'day', planDate).title, '日报 v2')
-    assert.equal(listTaskReports(db, { periodCode: 'day' }).length, 1)
-    assert.equal(deleteTaskReport(db, 'day', planDate), true)
-    assert.equal(getTaskReport(db, 'day', planDate), undefined)
-
     // V2 AI session registry: one session per scope+anchor, repeated register refreshes instead of duplicating
-    registerAiSession(db, { scopeCode: 'day_report', anchor: planDate, sessionId: 'sess-day-report', workspace: 'ws-1' })
-    assert.equal(getAiSession(db, 'day_report', planDate).sessionId, 'sess-day-report')
-    registerAiSession(db, { scopeCode: 'day_report', anchor: planDate, sessionId: 'sess-day-report-2' })
-    assert.equal(getAiSession(db, 'day_report', planDate).sessionId, 'sess-day-report-2')
+    registerAiSession(db, { scopeCode: 'daily_plan', anchor: planDate, sessionId: 'sess-daily-plan', workspace: 'ws-1' })
+    assert.equal(getAiSession(db, 'daily_plan', planDate).sessionId, 'sess-daily-plan')
+    registerAiSession(db, { scopeCode: 'daily_plan', anchor: planDate, sessionId: 'sess-daily-plan-2' })
+    assert.equal(getAiSession(db, 'daily_plan', planDate).sessionId, 'sess-daily-plan-2')
 
     // V2.4 recurring tasks: daily template lazily generates instances, idempotent per day
     const recurring = createTask(db, { title: 'daily standup', typeCode: 'team_mgmt', priorityCode: 'p2', dueAt: '2026-08-16T09:30:00+08:00', recurrenceCode: 'daily', recurrenceRule: { interval: 1, startDate: '2026-08-16', weekdays: [], monthDay: 16 } })

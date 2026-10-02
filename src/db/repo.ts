@@ -218,12 +218,6 @@ export type {
   DailyPlanItem, DailyPlanRow, DailyPlanInput, ManualPlanItemInput, PlanTaskView, AddPlanItemResult, UpdatePlanItemResult,
 } from './repo/plans.js'
 
-// 日报 / 周报域已抽到 repo/reports.ts
-export {
-  saveTaskReport, getTaskReport, listTaskReports, deleteTaskReport, confirmReportDraft, getPendingReportDraft,
-} from './repo/reports.js'
-export type { ReportPeriodCode, TaskReportInput, TaskReportRow } from './repo/reports.js'
-
 // AI 会话注册表已抽到 repo/ai-sessions.ts
 export { getAiSession, registerAiSession } from './repo/ai-sessions.js'
 export type { AiSessionRegistryRow } from './repo/ai-sessions.js'
