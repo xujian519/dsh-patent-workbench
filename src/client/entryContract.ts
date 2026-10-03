@@ -41,7 +41,7 @@ export const OFFICIAL_OVERLAY_SLOT = 'shell.overlay'
  * 入口**文案**：既是侧栏面板行的 `label`（宿主渲染成 aria-label / tooltip），
  * 也是会话标题栏按钮的 title 来源。改它要同步 `test/panelState.test.mjs` 之外的相关断言。
  */
-export const ENTRY_TITLE = '打开工作台（任务 / 日历 / 知识库）'
+export const ENTRY_TITLE = '专利工作台'
 
 /**
  * `--wb-*` 令牌层：**每一项都带回退值，且回退值跟随明暗**。

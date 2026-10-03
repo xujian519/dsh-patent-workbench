@@ -3936,7 +3936,7 @@ function WorkbenchHeaderEntry({ workbench }: { workbench: WorkbenchSlotApi }): J
     <button
       type="button"
       className="wb-header-entry"
-      title={active ? '收起工作台' : '打开工作台（任务 / 日历 / 知识库）'}
+      title={active ? '收起工作台' : ENTRY_TITLE}
       aria-pressed={active}
       {...(active ? { 'data-active': '' } : {})}
       onClick={() => workbench.toggle()}

@@ -1,6 +1,6 @@
 {
   "name": "dsh-patent-workbench",
-  "version": "1.16.2",
+  "version": "1.16.3",
   "description": "DSH 专利工作台：案卷 / 官文登记 / 期限看板 + 日历 + 层级任务 + 知识库（本案卷优先召回）+ AI 澄清/拆解/执行/复盘 + 桌面提醒",
   "repository": {
     "type": "git",
