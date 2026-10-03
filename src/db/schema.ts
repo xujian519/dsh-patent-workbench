@@ -2,9 +2,22 @@
  * dsh-patent-workbench DB schema（对应 docs/DSH个人工作台/01_数据模型.md）
  * 迁移只前向；所有“枚举”都走 dictionaries 表。
  */
+import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 22
+export const SCHEMA_VERSION = 23
+
+/** 迁移 23 用的 uuid（与 `repo/task-primitives.ts#appendEvent` 同一套生成方式）。 */
+function randomUUIDForMigration(): string {
+  return randomUUID()
+}
+
+/**
+ * bridge 遗留任务的**标记串**（迁移 23 写进 `description`，也用于幂等判断）。
+ *
+ * 导出它是为了让测试引用同一个字符串 —— 判据里手抄一份标记串，改字时会漏掉一处。
+ */
+export const BRIDGE_RETIRE_MARKER = '【已由案卷接管 · 保留供追溯】'
 
 export interface Migration {
   version: number
@@ -841,6 +854,85 @@ export const MIGRATIONS: Migration[] = [
       ]
       const retire = db.prepare('UPDATE dictionaries SET active = 0, updated_at = ? WHERE kind = ? AND code = ?')
       for (const [kind, code] of retired) retire.run(at, kind, code)
+    },
+  },
+  {
+    version: 23,
+    name: 'retire-bridge-tasks',
+    /**
+     * 为什么标 destructive：它**改写用户任务的描述文本**（把说明追加到 description 上）。
+     * 严格说这步是可逆的（`archived` 能取消、说明是追加不是覆盖），但"改写了用户写下的东西"
+     * 这件事值得留一个回滚点 —— 标记的作用就是让 `openWorkbenchDb` 先整库备份。
+     */
+    destructive: true,
+    up(db) {
+      /**
+       * 阶段 6 · bridge 收口（决策 D1）：把 bridge 当年建的任务树**归档并标注**。
+       *
+       * ## 背景
+       *
+       * 2026-09-03 的集成用"**案件 = 根任务（`source='patent'`）+ L1–L5 = 子任务**"表达案卷
+       *（工具 `workbench_link_patent_case`，在 DSH Patent 侧）。迁移 20 之后案卷是
+       * `matters` 里的一等实体，于是同一件事有了**两本账** —— 正是设计文档风险表里
+       * "双账本"那一行。本迁移把旧账**归档**（不是删除）：用户随时能在「已归档」里恢复，
+       * 而今日/日历/任务列表不再被它干扰。
+       *
+       * ## 三条刻意的判断
+       *
+       * 1. **连子树一起归档**（用递归 CTE 从 `source='patent'` 的节点向下走）：
+       *    用户可能在 bridge 建的阶段子任务下面自己加过子任务，只归档根会留下
+       *    "父已归档、子还在"的孤儿节点（前端只能把它平铺到根下，看起来像凭空多出一条任务）。
+       * 2. **只归档，不删除、不改状态/父子关系**：`archived` 是一个可撤销的开关；
+       *    删任务或改 `status` 会毁掉追溯链（"这个案子当时到哪一步了"只有这些行能回答）。
+       * 3. **`patent_*` 类型字典保持 active**：这 12 条任务（以及任何用过 bridge 的库）
+       *    的 `type_code` 指向它们，停用会让归档任务在界面上显示成英文码。
+       *    它们的语义没消失（"这是 bridge 建的专利案件任务"），只是这种建模方式退休了。
+       *
+       * ## 标注写在 description（追加，不覆盖）
+       *
+       * 用户看得到的地方只有任务描述 —— 把"为什么归档、现在该去哪看"写在那里，
+       * 比只改一个 `archived` 位有用得多（半年后翻到这条任务，得能自己看懂）。
+       * 幂等键就是这行标记：重复跑不会把说明叠两层。
+       */
+      const marker = BRIDGE_RETIRE_MARKER
+      const note = [
+        `${marker}`,
+        '本任务由 DSH Patent 的 bridge 工具（workbench_link_patent_case）建立：当时用「案件 = 根任务 / L1–L5 = 子任务」表达案卷。',
+        '现在案卷是工作台的一等实体（顶栏「案卷」视图），本任务与其子任务已归档，不再出现在今日 / 日历 / 任务列表里。',
+        '案件事件以案卷目录下的 `_matter-log.md` 为唯一事实源，可在案卷详情里用「同步事件日志」投影到时间线。',
+        '这些行保留供追溯；需要时可到任务列表的「已归档」里取消归档恢复。',
+      ].join('\n')
+      const at = new Date().toISOString()
+      const rows = db.prepare(`
+        WITH RECURSIVE seed(id) AS (
+          SELECT id FROM tasks WHERE source = 'patent'
+        ), subtree(id) AS (
+          SELECT id FROM seed
+          UNION
+          SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id
+        )
+        SELECT t.id, t.description, t.archived FROM tasks t WHERE t.id IN (SELECT id FROM subtree)
+      `).all() as unknown as Array<{ id: string; description: string | null; archived: number }>
+      const update = db.prepare('UPDATE tasks SET archived = 1, description = ?, updated_at = ? WHERE id = ?')
+      const insertEvent = db.prepare(`
+        INSERT INTO task_events (id, task_id, event_code, before_json, after_json, actor, note, at)
+        VALUES (?, ?, 'updated', ?, ?, 'system', ?, ?)
+      `)
+      for (const row of rows) {
+        const before = row.description ?? ''
+        // 幂等：已经标注过的不再处理（重复跑一次也不会把说明叠两层）
+        if (before.includes(marker)) continue
+        const after = before === '' ? note : `${before}\n\n---\n${note}`
+        update.run(after, at, row.id)
+        insertEvent.run(
+          randomUUIDForMigration(),
+          row.id,
+          JSON.stringify({ archived: row.archived, description: before === '' ? null : before }),
+          JSON.stringify({ archived: 1, description: after }),
+          `${marker}bridge 结构（案件 = 根任务 + L1–L5 子任务）已由案卷（matters）接管：归档并保留供追溯`,
+          at,
+        )
+      }
     },
   },
 ]

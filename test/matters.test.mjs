@@ -30,7 +30,7 @@ function baseMatter(overrides = {}) {
 test('migration 20: 案卷四表 + 领域字典 + knowledge.matter_id', () => {
   const db = freshDb()
   try {
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '22')
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '23')
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name)
     for (const table of ['matters', 'matter_notices', 'matter_deadlines', 'matter_events']) {

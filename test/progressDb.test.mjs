@@ -53,13 +53,13 @@ function openLegacyDb(upTo = 18) {
 
 const AT = '2026-09-30T00:00:00.000Z'
 
-function insertLegacyTask(db, { id, title, statusCode = 'todo', estimatedMinutes = null, archived = 0 }) {
+function insertLegacyTask(db, { id, title, statusCode = 'todo', estimatedMinutes = null, archived = 0, source = 'manual', parentId = null, description = null, typeCode = 'code_impl' }) {
   db.prepare(`
     INSERT INTO tasks (id, parent_id, title, description, type_code, status_code, priority_code, ai_policy_code,
       due_at, all_day, estimated_minutes, source, workspace_path, archived, extra,
       created_at, updated_at, completed_at, cancelled_at)
-    VALUES (?, NULL, ?, '', 'code_impl', ?, 'p1', 'consult', NULL, 0, ?, 'manual', NULL, ?, '{}', ?, ?, NULL, NULL)
-  `).run(id, title, statusCode, estimatedMinutes, archived, AT, AT)
+    VALUES (?, ?, ?, ?, ?, ?, 'p1', 'consult', NULL, 0, ?, ?, NULL, ?, '{}', ?, ?, NULL, NULL)
+  `).run(id, parentId, title, description ?? '', typeCode, statusCode, estimatedMinutes, source, archived, AT, AT)
 }
 
 function insertLegacyPlan(db, planDate, itemsJson, sourceCode = 'ai') {
@@ -84,7 +84,7 @@ test('迁移 19：旧任务（含 done）一律 progress=0，原字段不变，�
 
     migrate(db)
 
-    assert.equal(SCHEMA_VERSION, 22)
+    assert.equal(SCHEMA_VERSION, 23)
     for (const id of ['t-todo', 't-doing', 't-done']) {
       const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
       assert.equal(row.progress_percent, 0, `${id} 的旧进度必须是 0（不反推）`)
@@ -396,7 +396,7 @@ test('迁移 21：daily_capacity_include_overdue 改名成 plan_include_overdue�
     assert.equal(meta.get('plan_include_overdue'), '1', '用户的选择必须被搬到新键上（不是回落到缺省 false）')
     assert.equal(meta.has('daily_capacity_include_overdue'), false, '旧键必须消失（否则两个键各有各的口径）')
     assert.equal(meta.has('daily_capacity_minutes'), false, '容量读数已不存在，这个键没有任何读取方')
-    assert.equal(meta.get('schema_version'), '22', 'migrate 一律跑到最新版（迁移 21 之后还有 22）')
+    assert.equal(meta.get('schema_version'), '23', 'migrate 一律跑到最新版（迁移 21 之后还有 22 / 23）')
 
     // 幂等：再跑一次不报错、内容不变
     const snapshot = JSON.stringify(db.prepare('SELECT key, value FROM meta ORDER BY key').all())
@@ -415,7 +415,7 @@ test('迁移 21：两个键同时存在时也不因 UNIQUE 冲突而炸（OR REP
     migrate(db)
     const meta = new Map(db.prepare('SELECT key, value FROM meta').all().map((row) => [row.key, row.value]))
     assert.equal(meta.get('plan_include_overdue'), '1', '旧键带值搬过来（用户在原开关上做过的选择优先）')
-    assert.equal(meta.get('schema_version'), '22', 'migrate 一律跑到最新版（迁移 21 之后还有 22）')
+    assert.equal(meta.get('schema_version'), '23', 'migrate 一律跑到最新版（迁移 21 之后还有 22 / 23）')
   } finally {
     db.close()
   }
@@ -479,11 +479,11 @@ test('迁移 22：四张废表 + tasks 的 recurrence 四列与两个索引全�
       assert.equal(db.prepare('SELECT active FROM dictionaries WHERE kind = ? AND code = ?').get(kind, code).active, 1,
         `${kind}:${code} 仍在用（日报计划），必须保持 active=1`)
     }
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '22')
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '23')
 
     // 幂等：再跑一次不报错（DROP 都带 IF EXISTS / 列有存在性判断）
     migrate(db)
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '22')
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '23')
   } finally {
     db.close()
   }
@@ -504,17 +504,20 @@ test('破坏性迁移前自动整库备份：openWorkbenchDb 先写一份停在�
     const first = openWorkbenchDb({ dbPath })
     // 先写入一批真实数据：备份里必须**有**它们，否则下面那条 WAL 反向验证是空跑
     seedDictionaries(first)
-    // 模拟"用户的库停在 21，插件已升到 22"（迁移 22 是破坏性的）
+    /**
+     * 模拟"用户的库停在 21，插件已升到最新版"。22 与 23 **都是**破坏性迁移
+     *（22 DROP 表/列，23 改写任务描述），所以这一次备份要覆盖到最上面那个待跑的版本号。
+     */
     first.prepare("UPDATE meta SET value = '21' WHERE key = 'schema_version'").run()
     first.close()
 
     const second = openWorkbenchDb({ dbPath })
-    assert.equal(second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '22', '迁移照常跑完')
+    assert.equal(second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '23', '迁移照常跑完')
     second.close()
 
     const backups = readdirSync(join(dir, 'backups'))
     assert.equal(backups.length, 1, `该且只该备份一次（实测 ${JSON.stringify(backups)}）`)
-    assert.match(backups[0], /^workbench-\d{8}-\d{6}-pre-schema21-to-22\.db$/, '文件名要能自证"哪次迁移、从哪版到哪版"')
+    assert.match(backups[0], /^workbench-\d{8}-\d{6}-pre-schema21-to-23\.db$/, '文件名要能自证"哪次迁移、从哪版到哪版"（到**最上面**那个待跑的破坏性版本）')
 
     const restored = new DatabaseSync(join(dir, 'backups', backups[0]))
     try {
@@ -552,18 +555,83 @@ test('迁移 22 配套：seedDictionaries 不再种 recurrence 出厂行（新�
   }
 })
 
-test('openWorkbenchDb 全新库即 schema 22，且旧客户端省略 progressPercent 仍可读写', () => {
+test('openWorkbenchDb 全新库即 schema 23，且旧客户端省略 progressPercent 仍可读写', () => {
   const db = openWorkbenchDb({ dbPath: ':memory:' })
   try {
     seedDictionaries(db)
     const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
-    assert.equal(Number(version.value), 22)
+    assert.equal(Number(version.value), 23)
     const task = createTask(db, { title: '任务', typeCode: 'code_impl', priorityCode: 'p1' })
     // 老调用点（不带 progressPercent 的 patch）照常工作，进度保持原值
     setTaskProgress(db, task.id, 40)
     const updated = updateTask(db, task.id, { title: '改了标题' })
     assert.equal(updated.progressPercent, 40, 'title 变更不得顺手抹掉进度')
     assert.equal(updated.title, '改了标题')
+  } finally {
+    db.close()
+  }
+})
+
+/**
+ * 迁移 23（阶段 6 · bridge 收口）：把 bridge 遗留的任务树归档并标注。
+ *
+ * 造的是**真实形态**：两个 `source='patent'` 根（bridge 建的"案件"）+ 它们的 L1–L5 子任务，
+ * 外加一条**用户自己**挂在阶段子任务下的普通任务（只归档根会留下"父已归档、子还在"的孤儿）。
+ */
+test('迁移 23：bridge 任务树整体归档 + 追加标注 + 留 system 事件；非 bridge 任务一个字节不动', () => {
+  const db = openLegacyDb(22)
+  try {
+    insertLegacyTask(db, { id: 'case-a', title: 'CN2026-0001', source: 'patent', typeCode: 'patent_case', statusCode: 'doing' })
+    insertLegacyTask(db, { id: 'case-a-l1', title: 'L1 交底书理解', source: 'patent', typeCode: 'patent_stage_l1', parentId: 'case-a', statusCode: 'done' })
+    insertLegacyTask(db, { id: 'case-a-l2', title: 'L2 现有技术检索', source: 'patent', typeCode: 'patent_stage_l2', parentId: 'case-a', statusCode: 'todo' })
+    // ⚠️ 用户自己加的（source 是 manual）：只归档 `source='patent'` 会在它身上留下孤儿
+    insertLegacyTask(db, { id: 'user-sub', title: '补一份检索记录', source: 'manual', parentId: 'case-a-l2', statusCode: 'todo' })
+    insertLegacyTask(db, { id: 'plain', title: '普通任务', source: 'manual', statusCode: 'todo', description: '我的原文' })
+
+    migrate(db)
+
+    const rows = new Map(db.prepare("SELECT id, archived, description, status_code FROM tasks").all().map((row) => [row.id, row]))
+    for (const id of ['case-a', 'case-a-l1', 'case-a-l2', 'user-sub']) {
+      assert.equal(rows.get(id).archived, 1, `${id} 必须归档（含用户自建子任务，否则会变成孤儿）`)
+    }
+    assert.equal(rows.get('case-a-l2').status_code, 'todo', '只归档，不改状态（追溯链靠它）')
+    assert.match(rows.get('case-a').description, /已由案卷接管/, '根任务要带标注')
+    assert.match(rows.get('user-sub').description, /已由案卷接管/, '用户自建子任务也要带标注（它同样被归档了）')
+    assert.equal(rows.get('plain').archived, 0, '非 bridge 任务不许被动')
+    assert.equal(rows.get('plain').description, '我的原文', '非 bridge 任务的描述一个字节不动')
+
+    const events = db.prepare("SELECT task_id, actor, note FROM task_events WHERE actor = 'system'").all()
+    assert.equal(events.length, 4, '每个被归档的任务留一条 system 事件（4 条）')
+    assert.ok(events.every((row) => /已由案卷接管/.test(row.note)), '事件备注要说清为什么')
+
+    // patent_* 字典**不许**被停用：这 4 条任务的 type_code 指着它
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM dictionaries WHERE kind='type' AND code LIKE 'patent%'").get().n, 0,
+      'legacy 库里本来没有这些字典项 —— 但这句要提醒：迁移 23 不许去动字典（下面用真实字典再验一次）')
+
+    // 幂等：再跑一次不叠标注、不重复写事件
+    const before = db.prepare('SELECT id, description FROM tasks ORDER BY id').all()
+    migrate(db)
+    assert.deepEqual(db.prepare('SELECT id, description FROM tasks ORDER BY id').all(), before, '二次迁移不许改任何描述')
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM task_events WHERE actor = 'system'").get().n, 4, '事件也不许重复写')
+  } finally {
+    db.close()
+  }
+})
+
+test('迁移 23：patent_* 类型字典保持可用（停用会让归档任务显示成英文码）', () => {
+  const db = openLegacyDb(22)
+  try {
+    // 造出 bridge 当年种下的那两行字典（active=1）
+    const insert = db.prepare(`INSERT OR IGNORE INTO dictionaries (kind, code, name, config, builtin, active, sort_order, created_at, updated_at)
+      VALUES ('type', ?, ?, '{}', 0, 1, 5, ?, ?)`)
+    insert.run('patent_case', '专利案件', AT, AT)
+    insert.run('patent_stage_l1', 'L1 交底书理解', AT, AT)
+    insertLegacyTask(db, { id: 'case-b', title: 'CN2026-0002', source: 'patent', typeCode: 'patent_case' })
+
+    migrate(db)
+
+    assert.equal(db.prepare("SELECT active FROM dictionaries WHERE kind='type' AND code='patent_case'").get().active, 1, '字典必须仍然可用')
+    assert.equal(db.prepare('SELECT archived FROM tasks WHERE id = ?').get('case-b').archived, 1)
   } finally {
     db.close()
   }
