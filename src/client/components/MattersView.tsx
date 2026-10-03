@@ -65,11 +65,56 @@ export interface MatterDeadlineView {
   dueDateRaw: string
   basis: string | null
   status: string | null
+  /** 计算输入快照（可复算/可申诉）。`calendarCaveat` 在时说明**日历未覆盖该日期**。 */
+  computedFrom?: Record<string, unknown>
+}
+
+/**
+ * 期限看板的一行（`GET /matter-deadlines/upcoming`）——跨案卷，已带 `overdue`。
+ *
+ * `overdue` 由**服务端**给出（`due_date < 今天`）：日期比较的时区口径只该有一处实现，
+ * 界面自己 `new Date()` 比一遍就会出现"服务端说没过期、界面标红"。
+ */
+export interface UpcomingDeadlineView {
+  id: string
+  matterId: string
+  caseNumber: string
+  matterTitle: string
+  label: string
+  dueDate: string
+  status: string | null
+  overdue: boolean
 }
 
 /** 码 → 中文名；查不到原样返回 code（与 `matterTimeline.labelOf` 同一约定）。 */
 export function dictLabel(dicts: readonly Dict[], kind: string, code: string): string {
   return dicts.find((dict) => dict.kind === kind && dict.code === code)?.name ?? code
+}
+
+/**
+ * 期限状态的显示名。
+ *
+ * 为什么**不**做成字典：这四个值是**闭集**（写入口只有 `repo/matters.ts#setMatterDeadlineStatus`
+ * 的 `allowed` 列表；引擎交回来的行不带状态，由仓储按 `pending` 落库），不是用户该配置的东西 ——
+ * 做成字典会让"设置页能改名"与"按值判断"两套口径打架。
+ * 闭集只写在唯一一处，查不到原样显示码（不猜、不留空）；`test/matterView.test.mjs` 有一条
+ * 跨文件判据钉住"客户端这张表 == 仓储的 allowed 列表"。
+ *
+ * ⚠️ 设计文档 §6 的 SQL 注释里还列过一个 `calendar-uncovered` —— **没有任何代码产出它**，
+ * 所以这里不放这个标签（放上去等于告诉用户"系统会这么说"，而它永远不会说）。
+ * "日历未覆盖"是 `computedFrom.calendarCaveat`（**每条期限各自的**输入快照字段），
+ * 由下面那行 `calendarCaveat` 提示如实显示。
+ */
+const DEADLINE_STATUS_LABELS: Record<string, string> = {
+  pending: '待处理',
+  done: '已完成',
+  waived: '已免除',
+  overdue: '已过期',
+}
+
+export function deadlineStatusLabel(status: string | null): string {
+  if (status === null || status === '') return DEADLINE_STATUS_LABELS.pending
+  return DEADLINE_STATUS_LABELS[status] ?? status
 }
 
 /** 阶段徽标（字典名 + 码，用户能对着《专利审查指南》里的案卷生命周期念出来）。 */
@@ -135,6 +180,61 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   )
 }
 
+/**
+ * 期限看板（跨案卷的"近 N 天到期"）——放在「今日」视图里。
+ *
+ * 为什么放今日而不是另开一个顶级页签：**期限是"今天要办的事"的一部分**。
+ * 用户在今日视图的工作流是"看今天该做什么"，而"三天后要交答复"正属于这个判断；
+ * 另开一页会变成"要记得去看"的另一处（决策 D5-3 的推荐口径）。
+ */
+export function UpcomingDeadlines({ deadlines, days, engineAvailable, onRecomputeAll, busy }: {
+  deadlines: readonly UpcomingDeadlineView[]
+  days: number
+  /** 引擎是否可用（软探测结果）；不可用时明确说明"为什么这里没有期限"。 */
+  engineAvailable: boolean
+  onRecomputeAll: () => void
+  busy: boolean
+}): JSX.Element {
+  return (
+    <div className="wb-card wb-dl-board" data-deadline-board>
+      <div className="wb-matter-head">
+        <h3 className="wb-matter-title">
+          期限 <span className="wb-matter-count">近 {days} 天 {deadlines.length} 条（含已过期）</span>
+        </h3>
+        <button className="wb-btn" disabled={busy || !engineAvailable} onClick={onRecomputeAll} data-deadline-recompute>
+          <Icon name="refresh" />重算全部
+        </button>
+      </div>
+      {!engineAvailable && (
+        /**
+         * 引擎缺失时**必须说出来**（决策 3 / D2 的降级口径）：否则用户看到空看板
+         * 会以为"我没有期限"，而不是"这台机器上没装期限引擎"。
+         */
+        <div className="wb-field-note" data-deadline-degraded>
+          未探测到期限引擎（DSH Patent 的 patentDeadline 服务），所以下面没有自动算出的期限。
+          登记官文不会自动产生期限 —— 这是**明确降级**，不是算不出来。装好引擎后可点「重算全部」。
+        </div>
+      )}
+      {deadlines.length === 0
+        ? <div className="wb-empty">{engineAvailable ? '近 ' + days + ' 天内没有待办期限。' : '（引擎不可用，无法列出自动期限）'}</div>
+        : (
+          <div className="wb-dl-list">
+            {deadlines.map((deadline) => (
+              <div key={deadline.id} className={`wb-dl-row ${deadline.overdue ? 'overdue' : ''}`} data-deadline-row={deadline.id}>
+                <span className="wb-dl-date">{deadline.dueDate}</span>
+                <span className="wb-dl-main">
+                  <span className="wb-dl-label">{deadline.label}</span>
+                  <span className="wb-dl-meta">{deadline.caseNumber} · {deadline.matterTitle}</span>
+                </span>
+                {deadline.overdue ? <span className="wb-dl-flag">已过期</span> : null}
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  )
+}
+
 /** 时间线一条：类型徽标 + 日期 + 标题（+ 补充说明）。 */
 function TimelineRow({ entry }: { entry: MatterTimelineEntry }): JSX.Element {
   return (
@@ -155,14 +255,21 @@ function TimelineRow({ entry }: { entry: MatterTimelineEntry }): JSX.Element {
  * ⚠️ **没有**任何"期限只剩 N 天"式的推断 —— 那是 `patent-deadline` 的职责（决策 3 / D2），
  * 界面只显示引擎算出来的 `due_date`。5C 会把重算按钮与期限看板加在这里。
  */
-export function MatterDetail({ matter, dicts, timeline, notices, onEdit, onAddNotice, onDeleteNotice, busy }: {
+export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engineAvailable, recomputeNote, onEdit, onAddNotice, onDeleteNotice, onRecompute, onSetDeadlineStatus, busy }: {
   matter: MatterView
   dicts: readonly Dict[]
   timeline: MatterTimeline
   notices: readonly MatterNoticeView[]
+  deadlines: readonly MatterDeadlineView[]
+  /** 引擎可用性（软探测）；不可用时说明降级原因，不给"看起来像没期限"的空看板。 */
+  engineAvailable: boolean
+  /** 上次重算的结果说明（含引擎给的 `pending` 与日历覆盖提示）。 */
+  recomputeNote: string
   onEdit: () => void
   onAddNotice: () => void
   onDeleteNotice: (noticeId: string) => void
+  onRecompute: () => void
+  onSetDeadlineStatus: (deadlineId: string, status: string) => void
   busy: boolean
 }): JSX.Element {
   return (
@@ -212,6 +319,55 @@ export function MatterDetail({ matter, dicts, timeline, notices, onEdit, onAddNo
                   {notice.designatedMonths === null ? null : <span>指定 {notice.designatedMonths} 个月</span>}
                   {notice.fileLink === null || notice.fileLink === '' ? null : <span className="wb-matter-notice-file">{notice.fileLink}</span>}
                   <button className="wb-btn" disabled={busy} onClick={() => onDeleteNotice(notice.id)} title="删除这条官文登记"><Icon name="trash" /></button>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+
+      <div className="wb-card">
+        <div className="wb-matter-head">
+          <h3 className="wb-matter-title">期限 <span className="wb-matter-count">{deadlines.length}</span></h3>
+          {/**
+            * 重算按钮：**只调引擎**，不在界面算任何期限（决策 3：计算权威在 patent-deadline）。
+            * 引擎缺失时按钮禁用并说明原因 —— 不让用户点一个必然 409 的按钮还不知为何。
+            */}
+          <button className="wb-btn" disabled={busy || !engineAvailable} onClick={onRecompute} data-matter-recompute>
+            <Icon name="refresh" />重算期限
+          </button>
+        </div>
+        {!engineAvailable && (
+          <div className="wb-field-note" data-matter-engine-missing>
+            未探测到期限引擎，所以这里只有手工/历史数据。登记官文**不会**自动产生期限 ——
+            这是明确降级（不是算不出来）。装好引擎后再点「重算期限」。
+          </div>
+        )}
+        {recomputeNote === '' ? null : <div className="wb-field-note" data-matter-recompute-note>{recomputeNote}</div>}
+        {deadlines.length === 0
+          ? <div className="wb-empty">还没有期限。登记官文后点「重算期限」由引擎算出。</div>
+          : (
+            <div className="wb-matter-notices">
+              {deadlines.map((deadline) => (
+                <div key={deadline.id} className="wb-matter-notice" data-matter-deadline={deadline.id}>
+                  <span className="wb-matter-notice-kind">{deadline.label}</span>
+                  <span className="wb-matter-notice-date">届满 {deadline.dueDate}</span>
+                  {/* 顺延口径：两个日期不同就都写出来，否则用户会以为算错 */}
+                  {deadline.dueDateRaw === deadline.dueDate ? null : <span>不顺延 {deadline.dueDateRaw}</span>}
+                  {deadline.basis === null || deadline.basis === '' ? null : <span>{deadline.basis}</span>}
+                  {/**
+                    * 「日历未覆盖」是**真实存在**的信号（引擎把 `calendarCaveat` 写进 `computedFrom`），
+                    * 必须显示出来：不显示的话用户会以为这个届满日是权威值，而它可能是按缺省规则顺延的。
+                    */}
+                  {typeof deadline.computedFrom?.calendarCaveat === 'string' && deadline.computedFrom.calendarCaveat !== ''
+                    ? <span className="wb-dl-flag" data-deadline-caveat>日历未覆盖：{deadline.computedFrom.calendarCaveat}</span>
+                    : null}
+                  <span className="wb-matter-notice-mode">{deadlineStatusLabel(deadline.status)}</span>
+                  <button className="wb-btn" disabled={busy} onClick={() => onSetDeadlineStatus(deadline.id, deadline.status === 'done' ? 'pending' : 'done')}>
+                    {deadline.status === 'done' ? '标记未完成' : '标记完成'}
+                  </button>
+                  <button className="wb-btn" disabled={busy} onClick={() => onSetDeadlineStatus(deadline.id, deadline.status === 'waived' ? 'pending' : 'waived')}>
+                    {deadline.status === 'waived' ? '取消免除' : '免除'}
+                  </button>
                 </div>
               ))}
             </div>

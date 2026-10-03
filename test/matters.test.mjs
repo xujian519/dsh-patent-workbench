@@ -539,3 +539,64 @@ test('routes: 知识条目归入案卷（PATCH matterId）—— 合法 200、�
     assert.equal((await detached.json()).knowledge.matterId, null)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 阶段 5 · 5C：跨案卷「近 N 天到期」聚合端点
+// ---------------------------------------------------------------------------
+
+test('routes: /matter-deadlines/upcoming —— 窗口内、排除已完成/免除与已结案、已过期也要进来', async () => {
+  const db = freshDb()
+  const server = startServer(db)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+  const base = `http://127.0.0.1:${port}/api/workbench/matter-deadlines/upcoming`
+  try {
+    const open = createMatter(db, baseMatter({ caseNumber: 'UP-1' }))
+    const closed = createMatter(db, baseMatter({ caseNumber: 'UP-CLOSED' }))
+    // 结案只能走 PATCH（`MatterInput` 没有 closedAt —— 建档时不能顺手把一个案子标成结案）
+    updateMatter(db, closed.id, { closedAt: '2026-09-01' })
+    const day = (offset) => {
+      const date = new Date()
+      date.setDate(date.getDate() + offset)
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    }
+    /**
+     * ⚠️ `replaceMatterDeadlines` 是**整表替换**（这是它的语义：重算就是"这份报告说了什么就是什么"），
+     * 所以同一案卷的多条要**一次传进去** —— 分多次调用会互相覆盖，测试会得到"只剩最后一条"的假现场。
+     */
+    const rows = (offsetMap) => offsetMap.map(([key, offset, status]) => ({
+      deadlineKey: key, label: key, dueDate: day(offset), dueDateRaw: day(offset), basis: '细则', status,
+    }))
+    replaceMatterDeadlines(db, open.id, rows([
+      ['d3', 3, 'pending'],
+      ['d10', 10, 'pending'],   // 窗口外（默认 7 天）
+      ['past', -2, 'pending'],  // 已过期 → 必须进
+      ['done', 1, 'done'],      // 已完成 → 不进
+      ['waived', 2, 'waived'],  // 已免除 → 不进
+    ]))
+    // 已结案 → 整卷不进
+    replaceMatterDeadlines(db, closed.id, rows([['closed', 1, 'pending']]))
+
+    const res = await fetch(`${base}?days=7`)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.deepEqual(body.deadlines.map((item) => item.label), ['past', 'd3'], '升序（最急的在前）+ 过期保留')
+    assert.equal(body.deadlines[0].overdue, true, '过期标记由服务端算（时区口径只在一处）')
+    assert.equal(body.deadlines[1].overdue, false)
+    assert.equal(body.deadlines[0].caseNumber, 'UP-1', '带出案号，看板要能指回案卷')
+
+    // 窗口可调：days=14 时 d10 也进来
+    const wider = await (await fetch(`${base}?days=14`)).json()
+    assert.deepEqual(wider.deadlines.map((item) => item.label), ['past', 'd3', 'd10'])
+
+    // 非法 days 回落到缺省 7（不是 0、也不是无限）
+    const bad = await (await fetch(`${base}?days=abc`)).json()
+    assert.equal(bad.days, 7)
+
+    // 只读：非 GET 一律 405（不给"顺手改期限"的入口）
+    assert.equal((await fetch(base, { method: 'POST' })).status, 405)
+  } finally {
+    server.close()
+    db.close()
+  }
+})

@@ -823,6 +823,20 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-matter-tl-undated { margin-top: 10px; border-top: 1px dashed var(--wb-line); padding-top: 8px; }
 .wb-matter-tl-undated-head { font-size: 11.5px; color: var(--wb-ink-3); margin-bottom: 4px; }
 
+/* 期限看板（阶段 5 · 5C）：今日视图的跨案卷"近 N 天到期" + 案卷详情里的期限区共用行样式 */
+.wb-dl-board { margin-bottom: 12px; }
+.wb-dl-list { display: flex; flex-direction: column; }
+.wb-dl-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--wb-line) 50%, transparent); font-size: 12px; }
+.wb-dl-row:last-child { border-bottom: none; }
+/* 已过期用警示色 + 左侧竖条：一眼能在列表里挑出来 */
+.wb-dl-row.overdue { border-left: 2px solid var(--wb-warn, #d9a03f); padding-left: 8px; }
+.wb-dl-date { flex: none; width: 84px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
+.wb-dl-row.overdue .wb-dl-date { color: var(--wb-warn, #d9a03f); }
+.wb-dl-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wb-dl-label { color: var(--wb-ink-1); }
+.wb-dl-meta { color: var(--wb-ink-3); font-size: 11.5px; }
+.wb-dl-flag { flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--wb-warn, #d9a03f); color: var(--wb-warn, #d9a03f); }
+
 /* 卡片 / 列表 / 计划：统一边框强度与阴影，行分割线改发丝 */
 [data-dsh-personal-workbench-view] .wb-card {
   border: 1px solid var(--wb-line); border-radius: var(--wb-r-2); background: var(--wb-surface);

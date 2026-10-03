@@ -75,6 +75,8 @@ export interface Bootstrap {
    * `undefined`（旧服务端 / bootstrap 还没回来）= **按不可用处理**，宁可不显示。
    */
   memoryAvailable?: boolean
+  /** 期限引擎是否可用（软探测；阶段 5 · 5C）。缺省按不可用处理 —— 宁可不显示，也不假装算得出。 */
+  deadlineEngineAvailable?: boolean
 }
 export interface TaskDetail { task: Task; children: Task[]; sessions: Array<Record<string, unknown>>; reminders: Array<{ id: string; taskId: string; offsetMinutes: number; methodCode: string; firedAt: string | null; skippedAt?: string | null; acknowledgedAt?: string | null }>; events: Array<Record<string, unknown>>; reviews: Array<Record<string, unknown>>;
   /**

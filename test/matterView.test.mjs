@@ -21,7 +21,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MatterDetail, MatterList } from '../lib/client/components/MattersView.js'
+import { MatterDetail, MatterList, UpcomingDeadlines, deadlineStatusLabel } from '../lib/client/components/MattersView.js'
 import { buildMatterTimeline } from '../lib/client/matterTimeline.js'
 
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
@@ -153,7 +153,8 @@ test('SSR：详情渲染字段区 + 官文 + 时间线；字段缺失显示 —�
   const html = renderToStaticMarkup(createElement(MatterDetail, {
     matter: matter(), dicts: DICTS, timeline: timeline(),
     notices: [{ id: 'n1', noticeKind: 'office_action_first', dispatchDate: '2026-10-05', deliveryMode: 'electronic', deliveryDate: null, designatedMonths: 4, fileLink: null, note: null }],
-    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, busy: false,
+    deadlines: [], engineAvailable: true, recomputeNote: '',
+    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
   }))
   assert.match(html, /data-matter-detail="2026-UM-002"/)
   assert.match(html, /申请日/)
@@ -175,9 +176,126 @@ test('SSR：时间线里没有日期的条目要单独列出来并说明（不�
   })
   const html = renderToStaticMarkup(createElement(MatterDetail, {
     matter: matter(), dicts: DICTS, timeline: withUndated, notices: [],
-    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, busy: false,
+    deadlines: [], engineAvailable: true, recomputeNote: '',
+    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
   }))
   assert.match(html, /data-matter-undated/)
   assert.match(html, /没有可用日期/)
   assert.match(html, /导入时缺日期/)
+})
+
+// ---------------------------------------------------------------------------
+// 阶段 5 · 5C：期限看板（跨案卷 + 案卷详情）
+// ---------------------------------------------------------------------------
+
+/**
+ * 取出带某个 data 属性的 `<button>` 标签全文。
+ *
+ * ⚠️ 为什么不直接写 `/data-x[^>]*disabled/`：SSR 的属性顺序**跟 JSX 里的书写顺序一致**，
+ * `disabled` 通常在 `data-*` 之前，于是这个"看起来合理"的正则永远匹配不上（本轮实测踩到）。
+ * 先抓标签、再在标签内找属性，顺序怎么变都对。
+ */
+const buttonTag = (html, attr) => new RegExp(`<button[^>]*${attr}[^>]*>`).exec(html)?.[0] ?? ''
+
+const deadlineRow = (over = {}) => ({
+  id: 'dl1', label: '答复第一次审查意见', dueDate: '2026-10-20', dueDateRaw: '2026-10-15',
+  basis: '专利法实施细则', status: 'pending', ...over,
+})
+
+test('5C：期限状态标签是闭集 —— 客户端这张表必须与仓储的 allowed 列表逐字一致', () => {
+  /**
+   * 跨文件判据：写入口只有一个（`repo/matters.ts#setMatterDeadlineStatus` 的 `allowed`），
+   * 显示名只有一处（客户端的 `DEADLINE_STATUS_LABELS`）。两边各加一个值而另一边不知道，
+   * 表现就是界面上冒出一个英文码（或更糟：一个没人能改的状态）。
+   */
+  const allowed = /const allowed = \[([^\]]+)\]/.exec(repoSource)
+  assert.ok(allowed, '找不到仓储的 allowed 列表 —— 判据失去了对照物')
+  const backendStatuses = allowed[1].split(',').map((part) => part.trim().replace(/['"]/g, '')).filter((part) => part !== '').sort()
+  const labelSource = /const DEADLINE_STATUS_LABELS: Record<string, string> = \{([^}]*)\}/.exec(viewSource)
+  assert.ok(labelSource, '找不到客户端的 DEADLINE_STATUS_LABELS')
+  const clientStatuses = [...labelSource[1].matchAll(/(\w+):/g)].map((match) => match[1]).sort()
+  assert.deepEqual(clientStatuses, backendStatuses, '两边必须一一对应（多一个就是幽灵标签，少一个就是英文码露给用户）')
+  /**
+   * 幽灵值不许出现：设计文档里那个 `calendar-uncovered` 没有任何代码产出它。
+   * ⚠️ 扫之前必须**去注释**（本轮实测踩到）：文件里正有一段注释在解释"为什么不放它"，
+   * 直接扫源码会把那段解释本身当成违规。
+   */
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, '')
+  assert.doesNotMatch(stripComments(viewSource), /calendar-uncovered/, 'calendar-uncovered 是文档里的幽灵值，不许做成标签')
+  assert.equal(deadlineStatusLabel('pending'), '待处理')
+  assert.equal(deadlineStatusLabel(null), '待处理', 'null 按待处理显示')
+  assert.equal(deadlineStatusLabel('brand_new'), 'brand_new', '查不到原样显示码')
+})
+
+test('SSR：今日期限看板 —— 引擎缺失时明确说明降级，空看板必须能自证原因', () => {
+  const degraded = renderToStaticMarkup(createElement(UpcomingDeadlines, {
+    deadlines: [], days: 7, engineAvailable: false, onRecomputeAll: () => {}, busy: false,
+  }))
+  assert.match(degraded, /data-deadline-degraded/, '引擎不可用时必须有一段说明')
+  assert.match(degraded, /未探测到期限引擎/)
+  assert.match(degraded, /明确降级/)
+  // 引擎不可用时重算按钮要**禁用**（不给用户点一个必然 409 的按钮）
+  assert.match(buttonTag(degraded, 'data-deadline-recompute'), /disabled/, '引擎不可用时重算按钮要禁用')
+
+  const empty = renderToStaticMarkup(createElement(UpcomingDeadlines, {
+    deadlines: [], days: 7, engineAvailable: true, onRecomputeAll: () => {}, busy: false,
+  }))
+  assert.doesNotMatch(empty, /data-deadline-degraded/)
+  assert.match(empty, /近 7 天内没有待办期限/)
+})
+
+test('SSR：期限看板渲染行（案号 + 标签 + 已过期标记），过期由服务端给的 overdue 决定', () => {
+  const html = renderToStaticMarkup(createElement(UpcomingDeadlines, {
+    deadlines: [
+      { id: 'a', matterId: 'm1', caseNumber: '2026-UM-002', matterTitle: '某装置', label: '答复一通', dueDate: '2026-09-28', status: 'pending', overdue: true },
+      { id: 'b', matterId: 'm2', caseNumber: '2026-INV-001', matterTitle: '某方法', label: '缴年费', dueDate: '2026-10-02', status: 'pending', overdue: false },
+    ],
+    days: 7, engineAvailable: true, onRecomputeAll: () => {}, busy: false,
+  }))
+  assert.match(html, /2026-UM-002/)
+  assert.match(html, /答复一通/)
+  assert.match(html, /已过期/)
+  assert.match(html, /2026-INV-001/)
+  // 只有过期那条带 overdue 样式
+  assert.equal((html.match(/wb-dl-row overdue/g) ?? []).length, 1)
+})
+
+test('SSR：案卷详情的期限区 —— 重算说明、顺延口径双日期、状态按钮、日历未覆盖提示', () => {
+  const html = renderToStaticMarkup(createElement(MatterDetail, {
+    matter: matter(), dicts: DICTS, timeline: timeline(), notices: [],
+    deadlines: [
+      deadlineRow(),
+      deadlineRow({ id: 'dl2', label: '缴年费', status: 'done', computedFrom: { calendarCaveat: '2027 年节假日表未覆盖' } }),
+    ],
+    engineAvailable: true, recomputeNote: '重算完成：2 条真日期期限；顺延口径：apply',
+    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
+  }))
+  assert.match(html, /data-matter-recompute-note/)
+  assert.match(html, /顺延口径：apply/)
+  assert.match(html, /届满 2026-10-20/)
+  assert.match(html, /不顺延 2026-10-15/, '顺延口径不同的两个日期都要写出来')
+  assert.match(html, /待处理/)
+  assert.match(html, /已完成/)
+  assert.match(html, /data-deadline-caveat/, '日历未覆盖必须显示（否则用户以为届满日是权威值）')
+  assert.match(html, /未覆盖/)
+
+  // 引擎不可用：说明降级 + 重算按钮禁用
+  const degraded = renderToStaticMarkup(createElement(MatterDetail, {
+    matter: matter(), dicts: DICTS, timeline: timeline(), notices: [], deadlines: [],
+    engineAvailable: false, recomputeNote: '',
+    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
+  }))
+  assert.match(degraded, /data-matter-engine-missing/)
+  assert.match(buttonTag(degraded, 'data-matter-recompute'), /disabled/, '引擎不可用时重算按钮要禁用')
+})
+
+test('5C：前端全部走服务端 —— 重算/状态/看板都打端点，界面不算任何期限', () => {
+  assert.match(clientSource, /\/deadlines\/recompute`/, '重算必须调引擎端点')
+  assert.match(clientSource, /\/deadlines\/\$\{deadlineId\}`/, '状态改动走 PATCH 端点')
+  assert.match(clientSource, /matter-deadlines\/upcoming\?days=/, '看板读聚合端点（不是遍历案卷 N+1 次）')
+  // 界面不许自己拿今天比日期（时区口径只该在服务端算一次）
+  assert.doesNotMatch(clientSource, /dueDate\s*<\s*localDateString/, '不许在客户端自己算"是否过期"')
+  // 引擎可用性来自服务端软探测，而不是客户端猜
+  assert.match(read('src/api/routes.ts'), /deadlineEngineAvailable: deps\.patentDeadline\?\.\(\) !== undefined/, 'bootstrap 要暴露引擎可用性')
+  assert.match(clientSource, /bootstrap\?\.deadlineEngineAvailable === true/, '客户端读服务端的探测结果')
 })

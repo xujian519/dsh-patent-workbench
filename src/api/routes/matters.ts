@@ -49,6 +49,65 @@ function badRequest(res: ServerResponse, error: unknown): void {
   writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
 }
 
+/**
+ * `GET /api/workbench/matter-deadlines/upcoming?days=7`：跨案卷的"近 N 天到期"。
+ *
+ * ## 为什么要有这个聚合端点（而不是让界面遍历案卷）
+ *
+ * "近 7 天到期"是**跨案卷**的问题，而 `GET /matters/:id/deadlines` 是单卷的。
+ * 让客户端先拉案卷列表再逐个拉期限 = N+1 次请求，且**排序会散在客户端**
+ * （"哪条最急"这个判定绝不能两处各算一遍）。聚合与排序都放在 SQL 这一层：
+ * 一个查询、一份顺序，界面只负责画。
+ *
+ * 只返回**未结案、未完成**的期限：
+ * - `status` 是 `done` / `waived` 的不进看板（用户已经处理过，再出现就是噪声）；
+ * - 已结案（`closed_at` 非空）的案卷整体不进（案子都结了，它的期限不再是"要办的事"）。
+ * 今天之前的（已过期）**要进来** —— "昨天就该交的东西"比"后天要交的"更该被看见。
+ */
+function upcomingDeadlineRoute(db: DatabaseSync): WebRoute {
+  return {
+    kind: 'exact',
+    path: '/api/workbench/matter-deadlines/upcoming',
+    handler(req, res) {
+      if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+      if ((req.method ?? 'GET') !== 'GET') return writeJson(res, 405, { error: 'method not allowed' })
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const rawDays = Number(url.searchParams.get('days') ?? '7')
+      const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(365, Math.round(rawDays)) : 7
+      /**
+       * 窗口右端按**本地日**算（与仓库别处的日界口径一致：定宽 `YYYY-MM-DD`，
+       * 词典序 == 日期序）。左端不设限 —— 过期未处理的必须看得见。
+       */
+      const until = new Date()
+      until.setDate(until.getDate() + days)
+      const untilDate = localDateString(until)
+      const rows = db.prepare(`
+        SELECT d.id, d.matter_id, d.label, d.due_date, d.due_date_raw, d.status, d.basis, m.case_number, m.title
+        FROM matter_deadlines d
+        JOIN matters m ON m.id = d.matter_id
+        WHERE m.closed_at IS NULL
+          AND (d.status IS NULL OR d.status NOT IN ('done', 'waived'))
+          AND d.due_date <= ?
+        ORDER BY d.due_date ASC, m.case_number ASC, d.label ASC
+      `).all(untilDate) as unknown as Array<Record<string, unknown>>
+      const items = rows.map((row) => ({
+        id: row.id as string,
+        matterId: row.matter_id as string,
+        caseNumber: row.case_number as string,
+        matterTitle: row.title as string,
+        label: row.label as string,
+        dueDate: row.due_date as string,
+        dueDateRaw: row.due_date_raw as string,
+        status: (row.status ?? null) as string | null,
+        basis: (row.basis ?? null) as string | null,
+        /** `due_date < 今天` → 已过期（服务端算，界面不自己比日期 —— 时区只在一处算）。 */
+        overdue: (row.due_date as string) < localDateString(),
+      }))
+      return writeJson(res, 200, { ok: true, days, until: untilDate, today: localDateString(), deadlines: items })
+    },
+  }
+}
+
 export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): WebRoute[] {
   const engineId = deps.engineId ?? '@deepseek-ai/dsh-patent-deadline'
   return [
@@ -272,5 +331,7 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
         return writeJson(res, 405, { error: 'method not allowed' })
       },
     },
+    // 跨案卷的"近 N 天到期"（今日视图用）—— 与单卷 CRUD 分开成独立路径，避免与 :id 抢段
+    upcomingDeadlineRoute(db),
   ]
 }

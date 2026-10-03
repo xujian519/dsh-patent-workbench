@@ -77,7 +77,7 @@ import {
   DEFAULT_SORT_DIR, buildListPage, normalizePageSize, normalizeSortDir, normalizeSortKey, toContentItem,
 } from './listPresentation.js'
 import { PlanPanel } from './components/PlanPanel.js'
-import { MatterDetail, MatterList, type MatterDeadlineView, type MatterNoticeView, type MatterView } from './components/MattersView.js'
+import { MatterDetail, MatterList, UpcomingDeadlines, type MatterDeadlineView, type MatterNoticeView, type MatterView, type UpcomingDeadlineView } from './components/MattersView.js'
 import { buildMatterTimeline, type MatterTimelineEvent } from './matterTimeline.js'
 import {
   clientFileLinkToPath, draftKindLabel, eventIcon, eventLabel, fmtTime, localDateString,
@@ -470,6 +470,13 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [matterEditId, setMatterEditId] = useState<string | null>(null)
   /** 官文登记表单草稿（null = 弹窗关闭）。 */
   const [noticeDraft, setNoticeDraft] = useState<Record<string, string> | null>(null)
+  /** 最近一次重算的结果说明（含引擎给的 pending 条数与顺延口径）。 */
+  const [matterRecomputeNote, setMatterRecomputeNote] = useState('')
+  /** 近 N 天到期的期限（跨案卷，今日视图的看板）。 */
+  const [upcomingDeadlines, setUpcomingDeadlines] = useState<UpcomingDeadlineView[]>([])
+  const [upcomingDays, setUpcomingDays] = useState(7)
+  /** 看板刷新键（重算 / 改状态后 +1，与知识库同一套"显式刷新"做法）。 */
+  const [matterDeadlineKey, setMatterDeadlineKey] = useState(0)
   /**
    * 知识库列表的筛选/排序/分页状态。
    *
@@ -768,6 +775,60 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     } finally { setBusy(false) }
   }
 
+  /**
+   * 重算期限（只在案卷详情里，调引擎）。
+   *
+   * 引擎缺失（409）不是"错误"而是一种**明确状态**：把服务端那句可操作的中文原因原样显示
+   *（它写着"请在 profile 根域注册…"），并在按钮旁说明降级 —— 不留一个静默的空列表。
+   * `pending`（有期限种类但还没届满日）**不进真日期列**，只在说明里报条数。
+   */
+  const recomputeMatterDeadlines = async (matterId: string): Promise<void> => {
+    setBusy(true)
+    try {
+      const res = await api<{
+        deadlines: MatterDeadlineView[]
+        pending?: Array<{ label?: string; reason?: string }>
+        restDayRule?: string
+      }>(`/api/workbench/matters/${matterId}/deadlines/recompute`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+      })
+      if (matterId === selectedMatterId) setMatterDeadlines(res.deadlines)
+      const pendingCount = Array.isArray(res.pending) ? res.pending.length : 0
+      setMatterRecomputeNote([
+        `重算完成：${res.deadlines.length} 条真日期期限` + (pendingCount === 0 ? '' : `，${pendingCount} 条待定（未算出届满日，不进日期列）`),
+        res.restDayRule === undefined ? '' : `顺延口径：${res.restDayRule}`,
+      ].filter((part) => part !== '').join('；'))
+      setMatterDeadlineKey((value) => value + 1)
+      setNotice('期限已按引擎结果重算（你已确认的「完成/免除」会保留）')
+    } catch (e) {
+      // 409 = 引擎不可用：把这句可操作的中文原因留下（别只说"失败了"）
+      setMatterRecomputeNote(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  const setMatterDeadlineStatus = async (deadlineId: string, status: string): Promise<void> => {
+    if (selectedMatterId === null) return
+    setBusy(true)
+    try {
+      await api(`/api/workbench/matters/${selectedMatterId}/deadlines/${deadlineId}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status }),
+      })
+      await loadMatterDetail(selectedMatterId)
+      setMatterDeadlineKey((value) => value + 1)
+      setNotice(status === 'done' ? '已标记完成' : status === 'waived' ? '已标记免除' : '已恢复为待处理')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  /** 跨案卷「近 N 天到期」（今日视图看板）。 */
+  const loadUpcomingDeadlines = useCallback(async (days: number) => {
+    const res = await api<{ days: number; deadlines: UpcomingDeadlineView[] }>(`/api/workbench/matter-deadlines/upcoming?days=${days}`)
+    setUpcomingDays(res.days)
+    setUpcomingDeadlines(res.deadlines)
+  }, [])
+
   const deleteNotice = async (noticeId: string): Promise<void> => {
     if (selectedMatterId === null || !window.confirm('删除这条官文登记？已算出的期限不会自动跟着删，可重算。')) return
     setBusy(true)
@@ -818,6 +879,10 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     if (view !== 'matters' || selectedMatterId === null) return
     void loadMatterDetail(selectedMatterId).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [view, selectedMatterId, loadMatterDetail])
+  useEffect(() => {
+    if (view !== 'today') return
+    void loadUpcomingDeadlines(7).catch(() => undefined)
+  }, [view, loadUpcomingDeadlines, matterDeadlineKey])
   useEffect(() => { void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))) }, [refresh])
   useEffect(() => { void api<{ settings: WorkbenchSettings }>('/api/workbench/settings').then((r) => setSettings(withSettingsFallback(r.settings))).catch(() => undefined) }, [])
 
@@ -3170,6 +3235,24 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               </div>
 
               {/**
+                * 期限看板（阶段 5 · 5C）：跨案卷的"近 7 天到期"，放在今日视图的日期面板之前。
+                *
+                * 为什么放这：期限是"今天要办的事"里**最难自己想起来**的那类（答复期限、年费），
+                * 而日期面板只看任务。另开一个顶级页签会变成"要记得去看"的另一处（决策 D5-3 的推荐口径）。
+                * 引擎不可用时这张卡会明确说明原因 —— 空看板必须能自证是"真的没有"还是"没装引擎"。
+                */}
+              <UpcomingDeadlines
+                deadlines={upcomingDeadlines}
+                days={upcomingDays}
+                engineAvailable={bootstrap?.deadlineEngineAvailable === true}
+                onRecomputeAll={() => { void (async () => {
+                  for (const matter of matters) await recomputeMatterDeadlines(matter.id)
+                  await loadUpcomingDeadlines(upcomingDays).catch(() => undefined)
+                })() }}
+                busy={busy}
+              />
+
+              {/**
                 * 今日 = 日期面板的 **today 实例**（ADR0001 口径冻结 / D15）。
                 * 上面那张统计卡是今日视图独有的，面板本身与日历共用一份。
                 */}
@@ -3310,6 +3393,11 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                     onEdit={() => openMatterForm(selectedMatter)}
                     onAddNotice={openNoticeForm}
                     onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
+                    deadlines={matterDeadlines}
+                    engineAvailable={bootstrap?.deadlineEngineAvailable === true}
+                    recomputeNote={matterRecomputeNote}
+                    onRecompute={() => void recomputeMatterDeadlines(selectedMatter.id)}
+                    onSetDeadlineStatus={(deadlineId, status) => void setMatterDeadlineStatus(deadlineId, status)}
                     busy={busy}
                   />
                 )}

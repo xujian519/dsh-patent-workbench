@@ -337,6 +337,14 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
            * 判据在 `teamMemoryAvailable()`（看 `~/.dsh/memory` 是否存在，或环境变量显式声明）。
            */
           memoryAvailable: teamMemoryAvailable(),
+          /**
+           * 期限引擎（DSH Patent 的 `patentDeadline` 服务）是否可用（阶段 5 · 5C）。
+           *
+           * 与 `memoryAvailable` 同一条理由：界面必须能**提前**知道"这台机器上有没有"，
+           * 否则用户看到的是一张空期限看板，会以为"我没有期限"，而不是"没装引擎"。
+           * 探测本身在 `index.ts` 里（`probeService(ctx, 'patentDeadline')`），这里只把它读出来。
+           */
+          deadlineEngineAvailable: deps.patentDeadline?.() !== undefined,
         })
       },
     },
