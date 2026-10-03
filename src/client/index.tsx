@@ -2964,7 +2964,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
 
               {/**
                 * 日历选中某天 = **同一个** 日期面板（ADR0001 / D15）。
-                * 页签（计划/已完成/报告）、计划面板、任务树、报告卡都来自它 ——
+                * 页签（计划/逾期/未排期/已完成）、计划面板、任务树都来自它 ——
                 * 原来的两份装配（口径还不一致）已经删掉。
                 */}
               <DayPanel

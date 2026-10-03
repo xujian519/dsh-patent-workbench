@@ -19,7 +19,7 @@ export const ALL = 'all'
 export interface TabItem {
   code: string
   name: string
-  /** 有颜色就画一个小圆点（知识类型/点子类型现在出厂就带 color）。 */
+  /** 有颜色就画一个小圆点（知识类型出厂就带 color）。 */
   color?: string
   count: number
 }

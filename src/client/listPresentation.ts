@@ -1,5 +1,5 @@
 /**
- * 知识库 / 点子卡片列表的展示判定（**唯一权威源**）。
+ * 知识库列表（卡片 / 行）的展示判定（**唯一权威源**）。
  *
  * ## 为什么单独一个文件
  *
@@ -24,11 +24,11 @@
  * 类型
  * ------------------------------------------------------------------ */
 
-/** 列表条目需要的最小形状（知识库条目与点子都满足）。 */
+/** 列表条目需要的最小形状。 */
 export interface PresentableItem {
   id: string
   title: string
-  /** 关键词命中范围之一（知识库正文 / 点子内容）。 */
+  /** 关键词命中范围之一（知识库正文）。 */
   body: string
   /** 关键词命中范围之一（标签）。 */
   tags: readonly string[]
@@ -39,7 +39,7 @@ export interface PresentableItem {
 }
 
 /**
- * 知识库条目与点子**共用**的展示形状：两者字段一致（`contentMd` → `body`），
+ * 知识库条目的展示形状（`contentMd` → `body`），
  * 所以不再各写一个适配函数 —— 同一个语义两处实现正是本项目最大的 bug 类别。
  */
 export interface ContentItem extends PresentableItem {
@@ -393,7 +393,7 @@ export function buildListPage<T extends PresentableItem>(input: BuildInput<T>): 
 }
 
 /**
- * 知识库条目 / 点子 → 展示条目的**唯一**适配点。
+ * 知识库条目 → 展示条目的**唯一**适配点。
  * 两者的字段形状一致（`contentMd` → `body`），所以只有一个函数，不留两份。
  */
 export function toContentItem(source: { id: string; title: string; contentMd: string; tags: readonly string[]; kindCode: string; createdAt: string; updatedAt: string }): ContentItem {

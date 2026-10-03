@@ -141,7 +141,7 @@ export function TagFilter({ tagCounts, selected, onChange, limit = VISIBLE_TAG_L
           </button>
         )}
       </div>
-      {/* portal 到 body：工具栏在滚动容器里，浮层留在里面会被裁掉（与点子菜单同一套做法） */}
+      {/* portal 到 body：工具栏在滚动容器里，浮层留在里面会被裁掉（与工作台其它浮层同一套做法） */}
       {menu !== null && (typeof document === 'undefined' ? menu : createPortal(menu, document.body))}
     </>
   )

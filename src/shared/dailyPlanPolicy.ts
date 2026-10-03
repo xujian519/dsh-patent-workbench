@@ -527,7 +527,7 @@ export function dayPanelTreeSources(input: DayPanelSourceInput): DayPanelSourceR
 /**
  * 日期面板的页签（**唯一类型定义处**：装配层与组件都引用它，不许各写一份字面量联合）。
  *
- * 前三个是"任务视图"，`done` 按 `completedAt` 落在该日，`report` 是报告卡。
+ * 前三个是"任务视图"，`done` 按 `completedAt` 落在该日（报告页签与报告卡已删）。
  */
 export type DayPanelTabCode = 'plan' | 'overdue' | 'unscheduled' | 'done'
 

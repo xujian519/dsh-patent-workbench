@@ -17,7 +17,7 @@
  * 所有 `/api/workbench/*` 响应都带 `cache-control: no-store` 与
  * `x-content-type-options: nosniff`：
  *
- * - `no-store`：这些接口返回的是任务/知识/点子等**用户私有数据**，不能被浏览器或中间层缓存；
+ * - `no-store`：这些接口返回的是任务/知识/案卷等**用户私有数据**，不能被浏览器或中间层缓存；
  * - `nosniff`：禁止浏览器按内容猜 MIME（返回体是 `application/json`，不猜就不会被当成可执行内容）。
  *
  * `referrer-policy: no-referrer` 是原有头，保留。
