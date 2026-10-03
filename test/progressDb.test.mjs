@@ -53,9 +53,9 @@ const AT = '2026-09-30T00:00:00.000Z'
 function insertLegacyTask(db, { id, title, statusCode = 'todo', estimatedMinutes = null, archived = 0 }) {
   db.prepare(`
     INSERT INTO tasks (id, parent_id, title, description, type_code, status_code, priority_code, ai_policy_code,
-      due_at, all_day, estimated_minutes, source, workspace_path, archived, extra, recurrence_code, recurrence_rule,
-      recurrence_master_id, recurrence_last_generated, created_at, updated_at, completed_at, cancelled_at)
-    VALUES (?, NULL, ?, '', 'code_impl', ?, 'p1', 'consult', NULL, 0, ?, 'manual', NULL, ?, '{}', NULL, '{}', NULL, NULL, ?, ?, NULL, NULL)
+      due_at, all_day, estimated_minutes, source, workspace_path, archived, extra,
+      created_at, updated_at, completed_at, cancelled_at)
+    VALUES (?, NULL, ?, '', 'code_impl', ?, 'p1', 'consult', NULL, 0, ?, 'manual', NULL, ?, '{}', ?, ?, NULL, NULL)
   `).run(id, title, statusCode, estimatedMinutes, archived, AT, AT)
 }
 

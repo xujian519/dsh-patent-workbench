@@ -283,7 +283,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [selected, setSelected] = useState<TaskDetail | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null)
-  const [editDraft, setEditDraft] = useState<{ title: string; description: string; typeCode: string; priorityCode: string; statusCode: string; aiPolicyCode: string; dueLocal: string; workspacePath: string; recurrenceCode: string; parentId: string; estimatedMinutes: string; allDay: boolean } | null>(null)
+  const [editDraft, setEditDraft] = useState<{ title: string; description: string; typeCode: string; priorityCode: string; statusCode: string; aiPolicyCode: string; dueLocal: string; workspacePath: string; parentId: string; estimatedMinutes: string; allDay: boolean } | null>(null)
   const [detailTab, setDetailTab] = useState<'desc' | 'children' | 'sessions' | 'records'>('desc')
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const [sessionPickerRole, setSessionPickerRole] = useState('consult')
@@ -1833,12 +1833,10 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         // 失败返回 400 中文原因（下面的 catch 会把它显示成 toast），不是 500。
         parentId: editDraft.parentId === '' ? null : editDraft.parentId,
         // 「预计耗时」与「全天任务」（v1.15.1）：前者参与当日候选的排序与展示，
-        // 后者只影响展示与重复锚点（不改变任何判定）。
+        // 后者只影响展示（不改变任何判定）。
         estimatedMinutes,
         allDay: editDraft.allDay,
       }
-      // 自动生成的实例不允许改重复规则，编辑保存时也不提交该字段，从源头避免 400。
-      if (selected.task.recurrenceMasterId === null) payload.recurrenceCode = editDraft.recurrenceCode
       await patchTask(selected.task.id, payload)
       /**
        * 乐观更新：`patchTask` 成功后**立刻**把这一条在本地 tasks 里改掉，
@@ -1864,8 +1862,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     if (title === '') return
     const due = String(form.get('due') ?? '')
     const dueAt = due === '' ? null : new Date(due).toISOString()
-    const recurrenceCode = String(form.get('recurrence') ?? 'none')
-    const recurrenceAnchor = dueAt !== null ? new Date(dueAt) : new Date()
     /**
      * 耗时与全天（v1.15.1）：与编辑弹窗**同一规则**——留空 = null（走默认耗时）、
      * 非法值当作没填（服务端还会再夹一次，但这里不把脏值发出去）。
@@ -1876,7 +1872,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     const estimatedMinutes = estimatedParsed !== null && Number.isFinite(estimatedParsed) && estimatedParsed >= 1
       ? Math.min(MAX_ESTIMATE_MINUTES, Math.round(estimatedParsed))
       : null
-    await api('/api/workbench/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, description: String(form.get('description') ?? ''), typeCode: String(form.get('type') ?? ''), priorityCode: String(form.get('priority') ?? ''), statusCode: String(form.get('status') ?? 'todo'), workspacePath: String(form.get('workspacePath') ?? '').trim() || null, dueAt, estimatedMinutes, allDay: form.get('allDay') !== null, recurrenceCode: recurrenceCode === 'none' ? null : recurrenceCode, recurrenceRule: recurrenceCode === 'none' ? undefined : { interval: 1, startDate: localDateString(recurrenceAnchor), weekdays: [recurrenceAnchor.getDay()], monthDay: recurrenceAnchor.getDate() } }) })
+    await api('/api/workbench/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, description: String(form.get('description') ?? ''), typeCode: String(form.get('type') ?? ''), priorityCode: String(form.get('priority') ?? ''), statusCode: String(form.get('status') ?? 'todo'), workspacePath: String(form.get('workspacePath') ?? '').trim() || null, dueAt, estimatedMinutes, allDay: form.get('allDay') !== null }) })
     setShowForm(false); await refresh()
   }
   // 今日/日历/列表三棵树：默认全部收起
@@ -1985,17 +1981,14 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    *    （两处各算一遍正是本项目最大的 bug 类别）；
    * 2. `startAISession` 是事件处理器，渲染期算出来的快照直接可用，不必再存一份 state。
    *
-   * 口径：候选只吃"全量任务 + 该日计划 + 逾期开关"。重复任务的**模板行**被排除
-   * （模板不是今天要做的事；实例由 createTask 生成时不带 recurrenceCode，照常可排）。
+   * 口径：候选只吃"全量任务 + 该日计划 + 逾期开关"。
    */
   const planCandidateInfo = useMemo(() => {
     const todayKey = planDayKey(now)
     const pinnedKey = pickedAnchor
     const planOf = (date: string): DailyPlanView | null => (date === todayKey ? todayPlan : (date === pinnedKey ? pickedPlan : null))
     const candidatesFor = (date: string) => todayPlanCandidates({
-      // 排除重复任务的**模板**行（模板不是今天要做的事；实例由 createTask 生成时
-      // 不带 recurrenceCode，因此照常可排）。
-      tasks: tasks.filter((t) => t.recurrenceCode === null || t.recurrenceCode === 'none'),
+      tasks,
       plan: planOf(date),
       includeOverdue: settings.planIncludeOverdue,
       defaultEstimateMinutes: settings.defaultEstimateMinutes,
@@ -2033,7 +2026,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
 
   /** 今日手动"添加任务"的候选行（**同一份** `planCandidates` 输出，不另写过滤）。 */
   const todayPlanCandidateRows = useMemo(() => todayPlanCandidates({
-    tasks: tasks.filter((t) => t.recurrenceCode === null || t.recurrenceCode === 'none'),
+    tasks,
     plan: todayPlan,
     includeOverdue: settings.planIncludeOverdue,
     defaultEstimateMinutes: settings.defaultEstimateMinutes,
@@ -2051,7 +2044,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
 
   /** 日历选中日手动"添加任务"的候选行（同上，同一份候选函数）。 */
   const pickedPlanCandidateRows = useMemo(() => todayPlanCandidates({
-    tasks: tasks.filter((t) => t.recurrenceCode === null || t.recurrenceCode === 'none'),
+    tasks,
     plan: pickedPlan,
     includeOverdue: settings.planIncludeOverdue,
     defaultEstimateMinutes: settings.defaultEstimateMinutes,
@@ -3181,7 +3174,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                             onClick={archiveSelectedTask}
                           ><Icon name="archive" />归档</button>
                         )}
-                        {!selected.task.archived && <button className="wb-btn" onClick={() => setEditDraft({ title: selected.task.title, description: selected.task.description, typeCode: selected.task.typeCode, priorityCode: selected.task.priorityCode, statusCode: selected.task.statusCode, aiPolicyCode: selected.task.aiPolicyCode, dueLocal: toLocalInput(selected.task.dueAt), workspacePath: selected.task.workspacePath ?? '', recurrenceCode: selected.task.recurrenceCode ?? 'none', parentId: selected.task.parentId ?? '', estimatedMinutes: selected.task.estimatedMinutes === null ? '' : String(selected.task.estimatedMinutes), allDay: selected.task.allDay })}><Icon name="edit" />编辑</button>}
+                        {!selected.task.archived && <button className="wb-btn" onClick={() => setEditDraft({ title: selected.task.title, description: selected.task.description, typeCode: selected.task.typeCode, priorityCode: selected.task.priorityCode, statusCode: selected.task.statusCode, aiPolicyCode: selected.task.aiPolicyCode, dueLocal: toLocalInput(selected.task.dueAt), workspacePath: selected.task.workspacePath ?? '', parentId: selected.task.parentId ?? '', estimatedMinutes: selected.task.estimatedMinutes === null ? '' : String(selected.task.estimatedMinutes), allDay: selected.task.allDay })}><Icon name="edit" />编辑</button>}
                       </div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '8px 0' }}>
                         <Badge dict={dictOf('type')} code={selected.task.typeCode} />
@@ -3206,10 +3199,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                       {/* 预计耗时（v1.15.1）：参与当日候选排序，所以未填时必须说清"按默认算"。 */}
                       <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>预计耗时：{selected.task.estimatedMinutes === null ? `默认 ${settings.defaultEstimateMinutes} 分钟（未单独设置）` : `${selected.task.estimatedMinutes} 分钟`}{selected.task.allDay ? ' · 全天' : ''}</div>
                       <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>AI 工作区：{selected.task.effectiveWorkspacePath ?? (settings.defaultWorkspace || '默认工作区未设置')}{selected.task.workspacePath === null && selected.task.effectiveWorkspacePath !== null ? '（继承父任务）' : ''}</div>
-                      <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>
-                        重复：{dicts.find((d) => d.kind === 'recurrence' && d.code === (selected.task.recurrenceCode ?? 'none'))?.name ?? '不重复'}
-                        {selected.task.recurrenceMasterId !== null ? '（自动生成的实例）' : selected.task.recurrenceCode !== null && selected.task.recurrenceCode !== 'none' ? `（模板，已生成到 ${selected.task.recurrenceLastGenerated ?? '—'}）` : ''}
-                      </div>
                     </>
                   )}
                 </div>
@@ -3243,12 +3232,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                         <button className="wb-btn primary" onClick={() => { void api(`/api/workbench/tasks/${selected.task.id}/restore`, { method: 'POST' }).then(() => { setNotice('任务已恢复'); setArchivedMode(false); void refresh() }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))) }}><Icon name="refresh" />恢复任务</button>
                       ) : (
                         <>
-                          {selected.task.recurrenceMasterId !== null
-                            ? <span style={{ fontSize: 12, color: '#999', alignSelf: 'center' }}>这是重复任务自动生成的实例，可直接执行/验收。</span>
-                            : selected.task.recurrenceCode !== null && selected.task.recurrenceCode !== 'none'
-                              ? <span style={{ fontSize: 12, color: '#999', alignSelf: 'center' }}>重复任务模板：实例会自动生成到“子任务”中，归档模板即停止重复。</span>
-                              : selected.task.statusCode === 'done' || selected.task.statusCode === 'cancelled'
-                                ? <button className="wb-btn" disabled={busy} onClick={() => {
+                          {selected.task.statusCode === 'done' || selected.task.statusCode === 'cancelled'
+                            ? <button className="wb-btn" disabled={busy} onClick={() => {
                                     const existing = selected.sessions.find((x) => x.role_code === 'review')
                                     if (existing !== undefined && typeof existing.session_id === 'string' && existing.session_id !== '' && aiSessionUsable(runtime, existing.session_id)) {
                                       openSessionInPanel(existing.session_id)
@@ -3711,7 +3696,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
             <label>优先级<select name="priority" defaultValue="p2">{dictOf('priority').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
             <label>状态<select name="status" defaultValue="todo">{dictOf('status').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
             <label>截止时间<input name="due" type="datetime-local" /></label>
-            <label>重复<select name="recurrence" defaultValue="none">{dictOf('recurrence').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
             {/* 与编辑弹窗同一套字段与文案：同一字段两个入口两套说法 = 迟早打架 */}
             <label>耗时（分钟）<input name="estimatedMinutes" type="number" min={1} max={1440} step={5} placeholder={`留空 = 默认 ${settings.defaultEstimateMinutes} 分钟`} /></label>
             <label style={{ alignSelf: 'end' }}>
@@ -3719,7 +3703,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 <input name="allDay" type="checkbox" />
                 全天任务
               </span>
-              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示与重复锚点，不改变候选排序</span>
+              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示，不改变候选排序</span>
             </label>
             {/**
               * 批次2 #2：与快速录入、编辑任务**同一个组件**（两种选法：已有工作区下拉 + 浏览文件夹）。
@@ -3768,9 +3752,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
             <label>优先级<select value={editDraft.priorityCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, priorityCode: e.target.value })}>{dictOf('priority').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
             <label>状态<select value={editDraft.statusCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, statusCode: e.target.value })}>{dictOf('status').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
             <label>AI 策略<select value={editDraft.aiPolicyCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, aiPolicyCode: e.target.value })}>{dictOf('ai_policy').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            {selected.task.recurrenceMasterId === null
-              ? <label>重复<select value={editDraft.recurrenceCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, recurrenceCode: e.target.value })}>{dictOf('recurrence').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-              : <div style={{ fontSize: 12, color: '#999', alignSelf: 'center' }}>重复：由模板任务管理</div>}
             <label>截止时间<input type="datetime-local" value={editDraft.dueLocal} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, dueLocal: e.target.value })} /></label>
             {/* ---------------- 预计耗时 / 全天任务（v1.15.1） ---------------- */}
             <label>耗时（分钟）<input type="number" min={1} max={1440} step={5} value={editDraft.estimatedMinutes} placeholder={`留空 = 默认 ${settings.defaultEstimateMinutes} 分钟`} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, estimatedMinutes: e.target.value })} /></label>
@@ -3779,7 +3760,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 <input type="checkbox" checked={editDraft.allDay} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, allDay: e.target.checked })} />
                 全天任务
               </span>
-              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示与重复锚点，不改变候选排序</span>
+              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示，不改变候选排序</span>
             </label>
             <p className="wb-hint" style={{ gridColumn: '1 / -1', margin: '0 0 4px' }}>
               {`耗时参与当日候选排序；留空 = 按默认 ${settings.defaultEstimateMinutes} 分钟计入。`}

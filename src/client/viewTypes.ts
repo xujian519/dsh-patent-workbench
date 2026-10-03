@@ -28,10 +28,6 @@ export interface Task {
   progressPercent?: number
   archived: boolean
   extra: Record<string, unknown>
-  recurrenceCode: string | null
-  recurrenceRule: Record<string, unknown>
-  recurrenceMasterId: string | null
-  recurrenceLastGenerated: string | null
   createdAt: string
   updatedAt: string
   completedAt: string | null

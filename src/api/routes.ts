@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import {
-  ensureRecurringInstances, fireReminder, getDailyPlan, getTask, listDictionaries, listDueReminders, listTasks,
+  fireReminder, getDailyPlan, getTask, listDictionaries, listDueReminders, listTasks,
   localDateString, readMeta, repairParentCompletion, writeMeta,
 } from '../db/repo.js'
 import { makeAiSessionRoutes } from './routes/ai-sessions.js'
@@ -277,7 +277,6 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
         if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
         const now = new Date()
         const { start, end } = todayRange(now)
-        ensureRecurringInstances(db, localDateString(now))
         const tasks = listTasks(db)
         const plan = getDailyPlan(db, localDateString(now))
         /**

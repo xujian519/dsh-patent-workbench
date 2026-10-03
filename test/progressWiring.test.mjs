@@ -47,8 +47,7 @@ const mkTask = (over = {}) => ({
   id: 't1', parentId: null, title: '任务', description: '', typeCode: 'feature_opt', statusCode: 'doing',
   priorityCode: 'p1', aiPolicyCode: 'consult', dueAt: null, effectiveDueAt: null, allDay: false,
   estimatedMinutes: null, source: 'manual', workspacePath: null, effectiveWorkspacePath: null,
-  progressPercent: 45, archived: false, extra: {}, recurrenceCode: null, recurrenceRule: {},
-  recurrenceMasterId: null, recurrenceLastGenerated: null, createdAt: '', updatedAt: '', completedAt: null, cancelledAt: null,
+  progressPercent: 45, archived: false, extra: {}, createdAt: '', updatedAt: '', completedAt: null, cancelledAt: null,
   ...over,
 })
 

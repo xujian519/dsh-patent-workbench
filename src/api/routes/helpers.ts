@@ -134,21 +134,8 @@ export function publicTask(task: NonNullable<ReturnType<typeof getTask>>): Recor
   return { ...task, allDay: task.allDay === 1 }
 }
 
-export function defaultRecurrenceRule(code: string, anchor?: string | null): Record<string, unknown> {
-  const base = anchor !== undefined && anchor !== null ? new Date(anchor) : new Date()
-  const date = Number.isNaN(base.getTime()) ? new Date() : base
-  return {
-    interval: 1,
-    startDate: localDateString(date),
-    weekdays: [date.getDay()],
-    monthDay: date.getDate(),
-  }
-}
-
 export function taskInputFromBody(body: Record<string, unknown>): TaskInput {
   const str = (key: string): string | undefined => typeof body[key] === 'string' ? body[key] as string : undefined
-  const recurrenceCode = str('recurrenceCode')
-  const recurrenceRule = typeof body.recurrenceRule === 'object' && body.recurrenceRule !== null ? body.recurrenceRule as Record<string, unknown> : undefined
   return {
     title: str('title') ?? '',
     description: str('description'),
@@ -163,7 +150,5 @@ export function taskInputFromBody(body: Record<string, unknown>): TaskInput {
     parentId: body.parentId === null ? null : str('parentId'),
     workspacePath: body.workspacePath === null ? null : str('workspacePath'),
     extra: typeof body.extra === 'object' && body.extra !== null ? body.extra as Record<string, unknown> : undefined,
-    recurrenceCode: recurrenceCode ?? null,
-    recurrenceRule: recurrenceCode !== undefined && recurrenceCode !== 'none' ? recurrenceRule ?? defaultRecurrenceRule(recurrenceCode, str('dueAt')) : recurrenceRule,
   }
 }

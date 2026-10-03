@@ -63,9 +63,6 @@ export interface TaskInput {
   progressPercent?: number
   extra?: Record<string, unknown>
   children?: Array<Partial<TaskInput>>
-  recurrenceCode?: string | null
-  recurrenceRule?: Record<string, unknown>
-  recurrenceMasterId?: string | null
 }
 
 export interface TaskPatch {
@@ -91,8 +88,6 @@ export interface TaskPatch {
   /** 改父任务：undefined = 不变；null = 移到顶层；字符串 = 挂到该父任务下（仓储层会做存在/归档/防环校验）。 */
   parentId?: string | null
   extra?: Record<string, unknown>
-  recurrenceCode?: string | null
-  recurrenceRule?: Record<string, unknown>
 }
 
 export interface TaskRow {
@@ -117,10 +112,6 @@ export interface TaskRow {
   progressPercent: number
   archived: number
   extra: Record<string, unknown>
-  recurrenceCode: string | null
-  recurrenceRule: Record<string, unknown>
-  recurrenceMasterId: string | null
-  recurrenceLastGenerated: string | null
   createdAt: string
   updatedAt: string
   completedAt: string | null
@@ -221,9 +212,6 @@ export type {
 // AI 会话注册表已抽到 repo/ai-sessions.ts
 export { getAiSession, registerAiSession } from './repo/ai-sessions.js'
 export type { AiSessionRegistryRow } from './repo/ai-sessions.js'
-
-// 重复任务域已抽到 repo/recurring.ts
-export { ensureRecurringInstances, RECURRENCE_BACKFILL_LIMIT } from './repo/recurring.js'
 
 // 知识库域已抽到 repo/knowledge.ts；此处再导出保持对外 API 不变
 export {

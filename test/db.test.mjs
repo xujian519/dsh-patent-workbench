@@ -8,7 +8,7 @@ import { seedDictionaries } from '../lib/db/seed.js'
 import {
   createTask, updateTask, getTask, listTasks, listArchivedTasks, listChildren,
   createDraft, confirmTaskDraft, confirmDailyPlanDraft, getDailyPlan, updateDailyPlan, deleteDailyPlan,
-  getAiSession, registerAiSession, listReminders, ensureRecurringInstances,
+  getAiSession, registerAiSession, listReminders,
   createKnowledge, updateKnowledge, listKnowledge, getKnowledge, deleteKnowledge, confirmKnowledgeDraft,
   getDraftBySession, listTaskSessions, linkTaskSession, localDateString,
   completeTaskCascade, repairParentCompletion, addTaskMemory, getTaskMemoryContext, listTaskMemories,
@@ -242,14 +242,31 @@ test('db migrations, dictionaries and task tree', () => {
     registerAiSession(db, { scopeCode: 'daily_plan', anchor: planDate, sessionId: 'sess-daily-plan-2' })
     assert.equal(getAiSession(db, 'daily_plan', planDate).sessionId, 'sess-daily-plan-2')
 
-    // V2.4 recurring tasks: daily template lazily generates instances, idempotent per day
-    const recurring = createTask(db, { title: 'daily standup', typeCode: 'team_mgmt', priorityCode: 'p2', dueAt: '2026-08-16T09:30:00+08:00', recurrenceCode: 'daily', recurrenceRule: { interval: 1, startDate: '2026-08-16', weekdays: [], monthDay: 16 } })
-    assert.equal(ensureRecurringInstances(db, '2026-08-16'), 1)
-    assert.equal(listChildren(db, recurring.id).length, 1)
-    assert.equal(ensureRecurringInstances(db, '2026-08-17'), 1)
-    assert.equal(listChildren(db, recurring.id).length, 2)
-    assert.equal(ensureRecurringInstances(db, '2026-08-17'), 0)
-    assert.equal(getTask(db, recurring.id).recurrenceLastGenerated, '2026-08-17')
+    /**
+     * 阶段 4 · D 片：重复任务域已整体删除（决策 4）。
+     *
+     * 这条钉住的是"**没人再写那四列**"——列本身要到 E 片（迁移 22）才 DROP，
+     * 所以现在唯一能防"悄悄写回来"的就是这条：旧客户端/旧工具若还传 recurrenceCode，
+     * 服务端当未知字段忽略，库里必须保持建表缺省（而不是被写进半截数据）。
+     */
+    const legacyRecurring = createTask(db, {
+      title: '按旧参数建（recurrenceCode 应被忽略）', typeCode: 'code_impl', priorityCode: 'p2',
+      recurrenceCode: 'daily', recurrenceRule: { interval: 1, startDate: '2026-08-16' }, recurrenceMasterId: 'ghost',
+    })
+    // ⚠️ `node:sqlite` 返回的行是 **null 原型对象**，`assert.deepEqual` 与对象字面量不等
+    //（本轮实测踩到：报错信息里那句 `[Object: null prototype]` 就是它）—— 先展开成普通对象。
+    const recurrenceColumns = () => ({ ...db.prepare('SELECT recurrence_code, recurrence_rule, recurrence_master_id, recurrence_last_generated FROM tasks WHERE id = ?').get(legacyRecurring.id) })
+    assert.deepEqual(recurrenceColumns(),
+      { recurrence_code: null, recurrence_rule: '{}', recurrence_master_id: null, recurrence_last_generated: null },
+      'createTask 不许再写 recurrence 四列')
+    const taskRowKeys = Object.keys(getTask(db, legacyRecurring.id))
+    for (const key of ['recurrenceCode', 'recurrenceRule', 'recurrenceMasterId', 'recurrenceLastGenerated']) {
+      assert.ok(!taskRowKeys.includes(key), `TaskRow 不该再有 ${key}`)
+    }
+    updateTask(db, legacyRecurring.id, { recurrenceCode: 'weekly', recurrenceRule: { interval: 2 } })
+    assert.deepEqual(recurrenceColumns(),
+      { recurrence_code: null, recurrence_rule: '{}', recurrence_master_id: null, recurrence_last_generated: null },
+      'updateTask 同样不许再写 recurrence 四列')
 
     // knowledge base: create / search / draft confirm / file_link / delete
     const k1 = createKnowledge(db, { title: 'edge-tts 方案', kindCode: 'lesson', contentMd: '# 结论\n免费可用', tags: ['TTS', '踩坑'], fileLink: 'D:\\docs\\edge-tts.md' })

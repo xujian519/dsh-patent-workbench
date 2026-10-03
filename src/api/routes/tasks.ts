@@ -5,12 +5,12 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import {
-  addReminder, addTaskMemory, archiveTask, completeTaskCascade, createTask, createTaskReview, ensureRecurringInstances,
+  addReminder, addTaskMemory, archiveTask, completeTaskCascade, createTask, createTaskReview,
   getDictionary, getTask, getTaskMemoryContext, getTaskRootId, getTaskPendingCompletion, linkTaskSession, listArchivedTasks, listChildren, listPendingCompletions, listReminders, listTaskEvents,
   listTaskMemories, listTaskReviews, listTaskSessions, listTasks, repairParentCompletion, restoreTask, updateTask, updateTaskWithCompletion,
 } from '../../db/repo.js'
 import { checkProgressInput } from '../../shared/taskProgress.js'
-import { TASKS_PREFIX, clampEstimateForStorage, defaultRecurrenceRule, isLoopbackRequest, pathSegments, publicTask, readJsonBody, requireCode, taskInputFromBody, todayRange, writeJson } from './helpers.js'
+import { TASKS_PREFIX, clampEstimateForStorage, isLoopbackRequest, pathSegments, publicTask, readJsonBody, requireCode, taskInputFromBody, todayRange, writeJson } from './helpers.js'
 
 export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
   return [
@@ -26,7 +26,6 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
 
         if (segments.length === 0) {
           if (method === 'GET') {
-            ensureRecurringInstances(db)
             const parentId = url.searchParams.get('parent_id') ?? undefined
             const archivedOnly = url.searchParams.get('archived') === 'true'
             const tasks = archivedOnly ? listArchivedTasks(db) : listTasks(db, { parentId })
@@ -41,7 +40,6 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
               requireCode(db, 'priority', input.priorityCode, 'priorityCode')
               if (input.statusCode !== undefined) requireCode(db, 'status', input.statusCode, 'statusCode')
               if (input.aiPolicyCode !== undefined) requireCode(db, 'ai_policy', input.aiPolicyCode, 'aiPolicyCode')
-              if (input.recurrenceCode !== undefined && input.recurrenceCode !== null && input.recurrenceCode !== 'none') requireCode(db, 'recurrence', input.recurrenceCode, 'recurrenceCode')
               const task = createTask(db, input)
               // 直接建任务时按「类型默认 → 优先级默认」补提醒：否则这里建出来的任务永不提醒。
               if (task.dueAt !== null) {
@@ -50,7 +48,6 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
                 const offset = typeof typeDefault === 'number' ? typeDefault : typeof priorityDefault === 'number' ? priorityDefault : undefined
                 if (typeof offset === 'number' && Number.isFinite(offset) && offset >= 0) addReminder(db, task.id, offset, 'browser')
               }
-              ensureRecurringInstances(db)
               return writeJson(res, 201, { ok: true, task: publicTask(task) })
             } catch (error) {
               return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -74,7 +71,6 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
           return writeJson(res, 200, { ok: true, pending: listPendingCompletions(db) })
         }
         if (method === 'GET' && action === undefined) {
-          ensureRecurringInstances(db)
           const task = getTask(db, id)
           if (task === undefined) return writeJson(res, 404, { error: 'task not found' })
           /**
@@ -101,21 +97,6 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
             if (typeof body.statusCode === 'string') { requireCode(db, 'status', body.statusCode, 'statusCode'); patch.statusCode = body.statusCode }
             if (typeof body.priorityCode === 'string') { requireCode(db, 'priority', body.priorityCode, 'priorityCode'); patch.priorityCode = body.priorityCode }
             if (typeof body.aiPolicyCode === 'string') { requireCode(db, 'ai_policy', body.aiPolicyCode, 'aiPolicyCode'); patch.aiPolicyCode = body.aiPolicyCode }
-            if (typeof body.recurrenceCode === 'string') {
-              if (body.recurrenceCode !== 'none') requireCode(db, 'recurrence', body.recurrenceCode, 'recurrenceCode')
-              const current = getTask(db, id)
-              if (current?.recurrenceMasterId !== null && current?.recurrenceMasterId !== undefined) {
-                return writeJson(res, 400, { error: 'recurrence can only be edited on the template task' })
-              }
-              patch.recurrenceCode = body.recurrenceCode
-              if (typeof body.recurrenceRule === 'object' && body.recurrenceRule !== null) {
-                patch.recurrenceRule = body.recurrenceRule as Record<string, unknown>
-              } else if (body.recurrenceCode === 'none') {
-                patch.recurrenceRule = {}
-              } else if (current?.recurrenceCode === null || current?.recurrenceCode === undefined || current.recurrenceCode === 'none') {
-                patch.recurrenceRule = defaultRecurrenceRule(body.recurrenceCode, current?.dueAt)
-              }
-            }
             if ('dueAt' in body) patch.dueAt = typeof body.dueAt === 'string' ? body.dueAt : null
             if (body.allDay === true || body.allDay === false) patch.allDay = body.allDay
             if ('estimatedMinutes' in body) patch.estimatedMinutes = clampEstimateForStorage(body.estimatedMinutes)
@@ -166,7 +147,6 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
                 if (typeof offset === 'number' && Number.isFinite(offset) && offset >= 0) addReminder(db, id, offset, 'browser')
               }
             }
-            if (patch.recurrenceCode !== undefined || patch.recurrenceRule !== undefined) ensureRecurringInstances(db)
             return writeJson(res, 200, { ok: true, task: publicTask(task) })
           } catch (error) {
             return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })

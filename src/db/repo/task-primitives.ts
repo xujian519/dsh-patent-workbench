@@ -26,10 +26,6 @@ export interface RawTaskRow {
   progress_percent: number
   archived: number
   extra: string
-  recurrence_code: string | null
-  recurrence_rule: string
-  recurrence_master_id: string | null
-  recurrence_last_generated: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -147,10 +143,6 @@ export function parseTask(row: RawTaskRow | undefined, db?: DatabaseSync): TaskR
       : effectiveWorkspacePathForTask(db, { id: row.id, parentId: row.parent_id, workspacePath: row.workspace_path }),
     archived: row.archived,
     extra: JSON.parse(row.extra) as Record<string, unknown>,
-    recurrenceCode: row.recurrence_code,
-    recurrenceRule: JSON.parse(row.recurrence_rule) as Record<string, unknown>,
-    recurrenceMasterId: row.recurrence_master_id,
-    recurrenceLastGenerated: row.recurrence_last_generated,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,

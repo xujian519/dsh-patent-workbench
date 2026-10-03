@@ -55,10 +55,6 @@ export interface PublicTask {
   progressPercent: number
   archived: number
   extra: Record<string, unknown>
-  recurrenceCode: string | null
-  recurrenceRule: Record<string, unknown>
-  recurrenceMasterId: string | null
-  recurrenceLastGenerated: string | null
   createdAt: string
   updatedAt: string
   completedAt: string | null
