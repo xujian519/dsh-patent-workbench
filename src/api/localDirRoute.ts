@@ -8,7 +8,8 @@ import { homedir } from 'node:os'
 import { dirname, join as pathJoin } from 'node:path'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { assertValidFileLink } from '../db/repo.js'
-import { isLoopbackRequest, readJsonBody, writeJson } from './http.js'
+import { badRequest, readJsonBody, requireLoopback, writeJson } from './http.js'
+import { toNativePath } from '../shared/hostPath.js'
 
 /**
  * 「根」视图的哨兵：客户端拿到它就知道"往上走 = 回到盘符/根列表"，而不是某个真实目录。
@@ -51,31 +52,6 @@ async function defaultExists(path: string): Promise<boolean> {
   }
 }
 
-function fileLinkToPath(link: string): string {
-  const trimmed = link.trim()
-  if (/^file:/i.test(trimmed)) {
-    const url = new URL(trimmed)
-    if (url.protocol !== 'file:') throw new Error('not a file URL')
-    let pathname = decodeURIComponent(url.pathname)
-    if (/^\/[A-Za-z]:[\\/]/.test(pathname)) pathname = pathname.slice(1)
-    return pathname
-  }
-  return trimmed
-}
-
-function toNativePath(link: string): string {
-  let path = fileLinkToPath(link)
-  if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(path)) {
-    const match = /^([A-Za-z]):[\\/]?(.*)$/.exec(path)
-    if (match !== null) {
-      const drive = match[1].toLowerCase()
-      const rest = (match[2] ?? '').replace(/\\/g, '/').replace(/^\/+/, '')
-      path = rest === '' ? `/mnt/${drive}` : `/mnt/${drive}/${rest}`
-    }
-  }
-  return path
-}
-
 async function listLocalDirectory(rawPath?: string): Promise<{
   path: string
   parent: string | null
@@ -85,7 +61,7 @@ async function listLocalDirectory(rawPath?: string): Promise<{
 }> {
   const roots = await listLocalRoots()
   // 空 path = 默认落在用户主目录（保留了原来的行为），而不是根列表
-  const dir = rawPath === undefined || rawPath.trim() === '' ? homedir() : toNativePath(assertValidFileLink(rawPath)!)
+  const dir = rawPath === undefined || rawPath.trim() === '' ? homedir() : toNativePath(assertValidFileLink(rawPath)!, process.platform)
   const info = await stat(dir)
   if (!info.isDirectory()) throw new Error('path is not a directory')
   const dirents = await readdir(dir, { withFileTypes: true })
@@ -133,7 +109,7 @@ export function makeLocalDirRoute(): WebRoute {
     kind: 'exact',
     path: '/api/workbench/knowledge/list-local-dir',
     handler: async (req, res) => {
-      if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+      if (!requireLoopback(req, res)) return
       const url = new URL(req.url ?? '/', 'http://localhost')
       const method = req.method ?? 'GET'
       const body = method === 'POST' ? await readJsonBody(req) : undefined
@@ -145,7 +121,7 @@ export function makeLocalDirRoute(): WebRoute {
         const listing = rawPath === ROOTS_PARENT ? await listRootsView() : await listLocalDirectory(rawPath)
         return writeJson(res, 200, { ok: true, ...listing })
       } catch (error) {
-        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+        return badRequest(res, error)
       }
     },
   }

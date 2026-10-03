@@ -17,8 +17,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:net'
-import { readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { browserCandidates, discoverBrowser } from '../scripts/verify/browser.mjs'
 import { Cdp, DEFAULT_CALL_TIMEOUT_MS, browserLaunchArgs, findFreePort, launchDebugBrowser } from '../scripts/verify/cdp.mjs'
@@ -233,4 +233,50 @@ test('AX-V02：浏览器路径由发现提供 —— cdp.mjs 里不许再有硬�
   assert.equal(source.includes('Program Files'), false, '硬编码 Edge/Chrome 路径必须已经搬去 browser.mjs 的候选发现')
   assert.equal(source.includes('9333'), false, 'CDP 端口不许再写死 9333')
   assert.ok(source.includes('DEFAULT_CALL_TIMEOUT_MS = 30000'), '30s 超时是命门，必须留在源码里')
+})
+
+/**
+ * M13：**任何起浏览器的脚本**都必须走 `browser.mjs` 的发现。
+ *
+ * 复现脚本原先各自抄了一份 `C:\Program Files (x86)\...\msedge.exe` 候选列表 —— 与
+ * `cdp.mjs` 当年一模一样的病：换机器/换平台就静默失能（在 macOS 上直接"未找到 Edge"退出），
+ * 而仓库里明明已经有跨平台发现函数。行为测试管不住"别处没有"，只能扫。
+ *
+ * 判据用"谁出现过 `--remote-debugging-port`"来圈定**起浏览器**的脚本 ——
+ * 比按文件名列举稳（新增脚本自动纳入）。
+ */
+test('AX-V02：所有起浏览器的复现脚本都用同一次浏览器发现（不许硬编码路径）', () => {
+  const dir = join(REPO, 'scripts', 'repro')
+  const launchers = []
+  const selfLaunched = []
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) { walk(full); continue }
+      if (!entry.name.endsWith('.mjs')) continue
+      const text = readFileSync(full, 'utf8')
+      /**
+       * 两种起浏览器的方式都算：
+       * 1. 自己 `spawn` 浏览器（命令行里必有 `--remote-debugging-port`）；
+       * 2. 走 `scripts/verify/cdp.mjs#launchDebugBrowser`（H4 的视图 harness 用这条）。
+       * 后者同样需要路径 —— 它要求调用方传 `browserPath`，所以调用方必须自己去发现。
+       */
+      const selfSpawn = text.includes('--remote-debugging-port')
+      const viaHelper = text.includes('launchDebugBrowser')
+      if (!selfSpawn && !viaHelper) continue
+      const record = { path: relative(REPO, full).replace(/\\/g, '/'), text }
+      launchers.push(record)
+      if (selfSpawn) selfLaunched.push(record)
+    }
+  }
+  walk(dir)
+  assert.ok(selfLaunched.length >= 5, `应当扫到多个自己起浏览器的脚本，实际 ${selfLaunched.length} 个`)
+  assert.ok(launchers.length > selfLaunched.length, '应当也扫到走 launchDebugBrowser 的 harness')
+  for (const { path, text } of launchers) {
+    assert.equal(text.includes('Program Files'), false, `${path} 里有硬编码的 Windows 浏览器路径`)
+    assert.match(text, /from '\.\.\/verify\/browser\.mjs'/, `${path} 必须从 scripts/verify/browser.mjs 引入浏览器发现`)
+    // 允许带参：`discoverBrowser({ overridePath })` 也是发现（不是硬编码）
+    assert.match(text, /discoverBrowser\(/, `${path} 必须真的调用 discoverBrowser()`)
+    assert.match(text, /spawn\(browser\w*\.path|browserPath: \w+\.path/, `${path} 起进程时必须用发现到的路径`)
+  }
 })

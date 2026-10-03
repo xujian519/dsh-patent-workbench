@@ -137,6 +137,8 @@ CREATE TABLE task_reviews (
   created_at   TEXT NOT NULL
 ) STRICT;
 
+-- ⚠️ 遗留（无任何读写方）：V1 设计里的 task_artifacts 从未被使用，功能由 task_memories 承接。
+-- 不从 V1_DDL 删除是为了避免"新库没有、老库有"的 schema 分叉；真要移除需一条 DROP TABLE 迁移。
 CREATE TABLE task_artifacts (
   id            TEXT PRIMARY KEY,
   task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -768,6 +770,8 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 21,
     name: 'drop-capacity-meta',
+    // 删掉用户设置 `daily_capacity_minutes` 不可逆，必须和迁移 22 一样触发迁移前自动备份。
+    destructive: true,
     up(db) {
       /**
        * 专利工作台阶段 4：容量功能删除（决策 4，见

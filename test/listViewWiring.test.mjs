@@ -10,13 +10,29 @@ import { readFileSync } from 'node:fs'
  */
 const indexSource = readFileSync('src/client/index.tsx', 'utf8')
 const knowledgeSource = readFileSync('src/client/components/KnowledgeList.tsx', 'utf8')
+/**
+ * H4-4：知识库的「筛选状态 + 列表派生」搬去了 `knowledgeView.ts`（**容器调用**的 hook，
+ * state 因此仍住在容器实例里），左栏 JSX 搬去了 `components/views/KnowledgeView.tsx`。
+ * 下面几条断言随之**迁移落点**（不是放宽）：判据的意图逐条保留，并各自补了一条
+ * "容器/视图里不许出现第二份"的反向断言。
+ */
+const knowledgeViewSource = readFileSync('src/client/knowledgeView.ts', 'utf8')
+const knowledgeViewComponent = readFileSync('src/client/components/views/KnowledgeView.tsx', 'utf8')
 const tabBarSource = readFileSync('src/client/components/TabBar.tsx', 'utf8')
 const taskListSource = readFileSync('src/client/components/TaskList.tsx', 'utf8')
 const settingsSource = readFileSync('src/client/components/SettingsModal.tsx', 'utf8')
+/**
+ * H4-6：左栏任务块（筛选 + 排序 + 任务树）搬去了 `components/views/TasksView.tsx`。
+ * 下面两条任务页的接线断言随之**迁移落点**（plan §5.4：迁移而不是删除），
+ * 判据的意图逐条保留，并各补一条"index.tsx 里不许再有第二处"的反向断言。
+ */
+const tasksViewSource = readFileSync('src/client/components/views/TasksView.tsx', 'utf8')
 
 test('接线：知识库列表由 listPresentation 判定，组件不再自己过滤/排序', () => {
-  assert.match(indexSource, /buildListPage\(\{/, '必须走唯一判定入口')
-  assert.match(indexSource, /items: knowledgeEntries\.map\(toContentItem\)/, '条目经统一适配')
+  assert.match(knowledgeViewSource, /buildListPage\(\{/, '必须走唯一判定入口（H4-4 起在 knowledgeView.ts）')
+  assert.match(knowledgeViewSource, /items: knowledgeEntries\.map\(toContentItem\)/, '条目经统一适配')
+  // 视图侧只画算好的 page：一旦它在渲染体里自己过滤/排序，判定就有第二份了
+  assert.doesNotMatch(knowledgeViewComponent, /buildListPage|toContentItem/, '视图不参与判定')
 })
 
 test('接线：知识库只拉一次全量，搜索/分页不在服务端做（否则每敲一个字打一次库）', () => {
@@ -27,26 +43,27 @@ test('接线：知识库只拉一次全量，搜索/分页不在服务端做（�
 })
 
 test('接线：知识库状态只有一个入口，落盘在 effect 里而不是 setState 更新函数里', () => {
-  assert.match(indexSource, /const updateKnowledgeFilters = useCallback/, '唯一入口')
-  assert.match(indexSource, /setKnowledgeFilters\(\(prev\) => \(\{ \.\.\.prev, \.\.\.patch \}\)\)/, '入口只改状态')
+  assert.match(knowledgeViewSource, /const updateKnowledgeFilters = useCallback/, '唯一入口')
+  assert.match(knowledgeViewSource, /setKnowledgeFilters\(\(prev\) => \(\{ \.\.\.prev, \.\.\.patch \}\)\)/, '入口只改状态')
+  assert.doesNotMatch(indexSource, /setKnowledgeFilters\(/, 'index.tsx 不该再有第二份筛选状态（唯一实现在 knowledgeView.ts）')
   /**
    * 允许两处 setKnowledgeFilters：唯一入口 + 下面那条"分类与字典对账"的 effect
    * （字典异步来，只能在对账后才能发现分类被删）。除这两处以外的任何出现都是"第二处实现"。
    */
-  const calls = indexSource.match(/setKnowledgeFilters\(/g) ?? []
+  const calls = knowledgeViewSource.match(/setKnowledgeFilters\(/g) ?? []
   assert.equal(calls.length, 2, `setKnowledgeFilters 只该出现在「唯一入口」与「对账 effect」里，实际 ${calls.length} 处`)
-  assert.match(indexSource, /if \(fixed !== null\) setKnowledgeFilters\(fixed\)/, '第二处必须是对账 effect')
+  assert.match(knowledgeViewSource, /if \(fixed !== null\) setKnowledgeFilters\(fixed\)/, '第二处必须是对账 effect')
   // 落盘必须在 effect 里：setState 的更新函数是渲染期计算，React 会重复调用它
-  const updater = indexSource.match(/const updateKnowledgeFilters = useCallback\([\s\S]*?\}, \[\]\)/)
+  const updater = knowledgeViewSource.match(/const updateKnowledgeFilters = useCallback\([\s\S]*?\}, \[\]\)/)
   assert.ok(updater !== null, '入口存在')
   assert.doesNotMatch(updater[0], /writeKnowledgeFilters/, '更新函数里不许写存储（会被重复执行）')
-  assert.match(indexSource, /useEffect\(\(\) => \{\s*\n\s*writeKnowledgeFilters\(knowledgeFilters\)/, '落盘写成 effect')
+  assert.match(knowledgeViewSource, /useEffect\(\(\) => \{\s*\n\s*writeKnowledgeFilters\(knowledgeFilters\)/, '落盘写成 effect')
 })
 
 test('接线：存下来的分类要与字典对账（删过的分类不能变成"空列表 + 无 Tab 高亮"）', () => {
   // 对账判定放在组件模块（可被 node --test 直接测）；index.tsx 只负责在拿到字典后调它
   assert.match(knowledgeSource, /export function reconcileKnowledgeKinds/, '对账函数在可测模块里')
-  assert.match(indexSource, /reconcileKnowledgeKinds\(knowledgeFilters, knowledgeDicts\.map/, '在字典可用后调用')
+  assert.match(knowledgeViewSource, /reconcileKnowledgeKinds\(knowledgeFilters, knowledgeDicts\.map/, '在字典可用后调用')
 })
 
 /** 去掉行注释与块注释，避免"注释里提到某个写法"被当成代码里的第二处实现。 */
@@ -57,7 +74,7 @@ function stripComments(source) {
 
 test('接线：分类语义只派生一处（不许再写 kinds[0] ?? all）', () => {
   assert.match(knowledgeSource, /export function selectedKind/, '派生点在组件模块里')
-  assert.match(indexSource, /tab: selectedKind\(knowledgeFilters\)/, '页面走 selectedKind')
+  assert.match(knowledgeViewSource, /tab: selectedKind\(knowledgeFilters\)/, '页面走 selectedKind')
   assert.match(knowledgeSource, /const current = selectedKind\(filters\)/, '对账函数也走 selectedKind')
   // 工具条已改用共用 TabBar（选中态由 `TabBar.isTabActive` 判），所以不再是 `current=` 那种写法
   assert.match(knowledgeSource, /<TabBar tabs=\{tabs\} selected=\{filters\.kinds\}/, '工具条把选中集合交给 TabBar')
@@ -69,14 +86,14 @@ test('接线：分类语义只派生一处（不许再写 kinds[0] ?? all）', (
 })
 
 test('接线：改筛选只能走 onChange，不许在 JSX 里直接改状态', () => {
-  const toolbar = indexSource.match(/<KnowledgeToolbar[\s\S]*?\/>/)
-  assert.ok(toolbar !== null, 'KnowledgeToolbar 已接线')
-  assert.match(toolbar[0], /onChange=\{updateKnowledgeFilters\}/, 'onChange 直连唯一入口')
+  const toolbar = knowledgeViewComponent.match(/<KnowledgeToolbar[\s\S]*?\/>/)
+  assert.ok(toolbar !== null, 'KnowledgeToolbar 已接线（H4-4 起在 components/views/KnowledgeView.tsx）')
+  assert.match(toolbar[0], /onChange=\{onChange\}/, 'onChange 直连容器给的唯一入口')
   assert.doesNotMatch(toolbar[0], /setKnowledgeFilters/, 'JSX 里不许再直接改状态')
 })
 
 test('接线：Tab / 排序 / 每页条数在刷新后保持（验收项）', () => {
-  const writer = indexSource.match(/function writeKnowledgeFilters[\s\S]*?\n\}/)
+  const writer = knowledgeViewSource.match(/function writeKnowledgeFilters[\s\S]*?\n\}/)
   assert.ok(writer !== null, 'writeKnowledgeFilters 存在')
   for (const key of ['kinds', 'tags', 'sortKey', 'sortDir', 'pageSize']) {
     assert.match(writer[0], new RegExp(`${key}:`), `持久化字段缺 ${key}`)
@@ -86,21 +103,25 @@ test('接线：Tab / 排序 / 每页条数在刷新后保持（验收项）', ()
 
 test('知识库与任务页共用同一个 Tab 组件（同一语义不写两遍）', () => {
   assert.match(knowledgeSource, /import \{ ALL, buildTabs, TabBar, toggleTab, type TabItem \} from '\.\/TabBar\.js'/, '知识库用共用组件')
-  assert.match(indexSource, /import \{ ALL, buildTabs, TabBar, toggleTab \} from '\.\/components\/TabBar\.js'/, '任务页用共用组件')
+  assert.match(tasksViewSource, /import \{ ALL, TabBar, type TabItem \} from '\.\.\/TabBar\.js'/, '任务页用共用组件（H4-6 起在 TasksView）')
   // 两处都必须是 TabBar，不许谁偷偷再写一份自己的 Tab
   assert.equal((knowledgeSource.match(/<TabBar/g) ?? []).length, 1)
-  assert.equal((indexSource.match(/<TabBar/g) ?? []).length, 1)
+  assert.equal((tasksViewSource.match(/<TabBar/g) ?? []).length, 1)
+  assert.equal((indexSource.match(/<TabBar/g) ?? []).length, 0, 'index.tsx 不再自己渲染 TabBar（任务页搬进 TasksView）')
   assert.doesNotMatch(knowledgeSource, /data-kind-tab/, '旧的自建 Tab 类名应已消失')
 })
 
 test('任务页：类型从多选下拉升为 Tab，且**其他下拉保留**', () => {
-  const listSection = indexSource.slice(indexSource.indexOf("view === 'list' &&"))
-  assert.match(listSection, /<TabBar/, '列表页有类型 Tab')
-  assert.doesNotMatch(listSection, /label="类型"/, '原来的「类型」多选下拉必须去掉')
-  assert.match(listSection, /label="状态"/, '状态下拉保留')
-  assert.match(listSection, /label="优先级"/, '优先级下拉保留')
-  // Tab 是单选 + Ctrl/Cmd 多选：走 toggleTab，不自己写选中逻辑
-  assert.match(listSection, /toggleTab\(/, '选中逻辑走共用纯函数')
+  // H4-6：这一段搬进了 `components/views/TasksView.tsx`，判据随落点迁移（意图不变）。
+  const viewCode = stripComments(tasksViewSource)
+  const viewSection = viewCode.slice(viewCode.indexOf('export function TasksView'))
+  assert.match(viewSection, /<TabBar/, '列表页有类型 Tab')
+  assert.doesNotMatch(viewSection, /label="类型"/, '原来的「类型」多选下拉必须去掉')
+  assert.match(viewSection, /label="状态"/, '状态下拉保留')
+  assert.match(viewSection, /label="优先级"/, '优先级下拉保留')
+  // Tab 是单选 + Ctrl/Cmd 多选：走 toggleTab，不自己写选中逻辑（H4-6 起判定留在容器）
+  assert.match(indexSource, /toggleTab\(/, '选中逻辑走共用纯函数')
+  assert.doesNotMatch(viewCode, /toggleTab\(/, '视图不许自己写选中逻辑，只发 onSelectType 意图')
 })
 
 test('任务页：类型 Tab 的条数由 countTasksByType 给出（排除类型维度自身）', () => {

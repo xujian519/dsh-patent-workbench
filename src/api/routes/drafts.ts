@@ -5,7 +5,7 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmKnowledgeDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, updateDraft, updateTaskWithCompletion } from '../../db/repo.js'
-import { DRAFTS_PREFIX, isLoopbackRequest, pathSegments, publicTask, readJsonBody, writeJson } from './helpers.js'
+import { DRAFTS_PREFIX, badRequest, methodNotAllowed, pathSegments, publicTask, readJsonBody, requireLoopback, writeJson } from './helpers.js'
 import { writeReviewToTeamMemory, teamMemoryAvailable, type TeamMemoryService } from '../../review-memory.js'
 
 /** 草稿关联的任务 id（验收 / 复盘 / 拆解类草稿会带；任务类草稿确认后才存在）。 */
@@ -53,7 +53,7 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
       kind: 'prefix',
       path: DRAFTS_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const segments = pathSegments(url, DRAFTS_PREFIX)
         const method = req.method ?? 'GET'
@@ -75,7 +75,7 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
             const payload = typeof body.payload === 'object' && body.payload !== null ? body.payload as Record<string, unknown> : {}
             return writeJson(res, 201, { ok: true, draft: createDraft(db, { kindCode, sessionId, payload }) })
           }
-          return writeJson(res, 405, { error: 'method not allowed' })
+          return methodNotAllowed(res)
         }
 
         const id = segments[0]
@@ -221,7 +221,7 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
             }
             return writeJson(res, 400, { error: `unknown draft kind ${draft.kindCode}` })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
         if (method === 'POST' && action === 'abandon') {

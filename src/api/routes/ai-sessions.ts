@@ -5,7 +5,7 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import { getAiSession, registerAiSession } from '../../db/repo.js'
-import { AI_SESSIONS_PREFIX, isLoopbackRequest, pathSegments, PERIOD_DATE_RE, readJsonBody, requireCode, writeJson } from './helpers.js'
+import { AI_SESSIONS_PREFIX, methodNotAllowed, pathSegments, PERIOD_DATE_RE, readJsonBody, requireCode, requireLoopback, writeJson } from './helpers.js'
 
 export function makeAiSessionRoutes(db: DatabaseSync): WebRoute[] {
   return [
@@ -13,7 +13,7 @@ export function makeAiSessionRoutes(db: DatabaseSync): WebRoute[] {
       kind: 'prefix',
       path: AI_SESSIONS_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const segments = pathSegments(url, AI_SESSIONS_PREFIX)
         const method = req.method ?? 'GET'
@@ -44,7 +44,7 @@ export function makeAiSessionRoutes(db: DatabaseSync): WebRoute[] {
             note: typeof body.note === 'string' ? body.note : null,
           }) })
         }
-        return writeJson(res, 405, { error: 'method not allowed' })
+        return methodNotAllowed(res)
       },
     },
   ]

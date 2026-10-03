@@ -17,13 +17,10 @@
  *
  * 现在这里只剩两类东西：
  *
- * 1. **官方槽位名与注册判据**（`OFFICIAL_*_SLOT` / `overlaySlotAvailable` /
- *    `officialRegistrationComplete` / `officialPanelRowRendered`）；
+ * 1. **官方槽位名与入口文案**（`OFFICIAL_*_SLOT` / `ENTRY_TITLE`）；
  * 2. **样式 token 层与面板容器 CSS**（`tokenLayerCss` / `toWorkbenchTokens` /
  *    `registeredTokenNames` / `panelContainerCss` / `entryCss`）。
  */
-
-import { ACTIVE_ATTR, OFFICIAL_ATTR } from './constants.js'
 
 /** 宿主侧栏面板行的槽位名（`kind=list`、`scope=root`）。 */
 export const OFFICIAL_PANEL_LIST_SLOT = 'sidebar.panellist'
@@ -39,62 +36,6 @@ export const OFFICIAL_MAIN_SLOT = 'main'
 
 /** 框架级浮层槽位：**始终存在**，适合"跨页面常驻"内容（面板 + 草稿弹框都挂这里）。 */
 export const OFFICIAL_OVERLAY_SLOT = 'shell.overlay'
-
-/**
- * 宿主是否声明了 `shell.overlay` 槽位。
- *
- * 判据只有一条：`slots.entriesOfSlot('shell.overlay')` **能执行且不抛错**。
- * 不去解释返回值的形状 —— 不同宿主版本返回数组 / Map / 其它结构都出现过，
- * 早期实现按 `Array.isArray(...)` 判定，结果在注册其实成功的情况下判假
- * （2026-09-15 真实事故：侧栏出现两行「工作台」入口）。
- */
-export function overlaySlotAvailable(slots: unknown): boolean {
-  const candidate = slots as { entriesOfSlot?: (name: string) => unknown } | undefined
-  if (candidate === undefined || candidate === null || typeof candidate.entriesOfSlot !== 'function') return false
-  try {
-    candidate.entriesOfSlot.call(slots, OFFICIAL_OVERLAY_SLOT)
-    return true
-  } catch { return false }
-}
-
-/**
- * 官方注册是否**已经完成**：侧栏面板行与 main 条目都能查到我们。
- *
- * ⚠️ 用的宿主接口是 `slots.entries(name)`（**不是** `entriesOfSlot`）——
- * 两者在宿主上是不同方法：`entriesOfSlot` 拿来确认"槽位存在"（见 `overlaySlotAvailable`），
- * `entries` 才是"已经注册进去的条目列表"。v1.14.53 重写这个模块时曾把两者搞混
- * （用 `entriesOfSlot` 去取条目），语义就变了 —— 恢复为原始实现。
- *
- * 只作诊断/自检：门控判据是 `capabilities.ts` 的能力自检 + 宿主 `activePanelId`。
- */
-export function officialRegistrationComplete(slots: unknown, panelId: string): boolean {
-  const candidate = slots as { entries?: (name: string) => Array<{ options?: { id?: unknown; key?: unknown } }> } | undefined
-  if (candidate === undefined || candidate === null || typeof candidate.entries !== 'function') return false
-  try {
-    const panels = candidate.entries.call(slots, OFFICIAL_PANEL_LIST_SLOT)
-    const mains = candidate.entries.call(slots, OFFICIAL_MAIN_SLOT)
-    const hasEntry = Array.isArray(panels) && panels.some((entry) => entry?.options?.id === panelId)
-    const hasMain = Array.isArray(mains) && mains.some((entry) => entry?.options?.key === panelId || entry?.options?.id === panelId)
-    return hasEntry && hasMain
-  } catch { return false }
-}
-
-/**
- * 宿主渲染的官方面板行是否**已经出现在 DOM 里**（诊断用）。
- *
- * 宿主 `PanelRow` 把注册时给的 `label` 同时写进 `textContent`、`aria-label` 与 tooltip
- * （实测 DOM：`<button class="…panelRow" aria-label="打开工作台（…）">`）。
- * 这里按 `aria-label` 认 —— 交接文档第 8 节第 3 条踩过"标签长短搞混"的坑：
- * 用短标签（「工作台」）去查永远查不到。
- *
- * @param root - 查询起点（通常是 `document`）。
- * @param label - 注册时给的 `label`（= `ENTRY_TITLE`）。
- */
-export function officialPanelRowRendered(root: ParentNode, label: string): boolean {
-  try {
-    return root.querySelector(`button[aria-label="${label.replace(/"/g, '\\"')}"]`) !== null
-  } catch { return false }
-}
 
 /**
  * 入口**文案**：既是侧栏面板行的 `label`（宿主渲染成 aria-label / tooltip），
@@ -199,6 +140,3 @@ export function panelContainerCss(attrs: { view: string; official: string; activ
     `html:not([${official}])[${active}] .wb-panel-host [${view}] { display: block; }`,
   ]
 }
-
-/** 自检用：`OFFICIAL_ATTR` / `ACTIVE_ATTR` 必须与 `constants.ts` 保持一致。 */
-export const PANEL_ATTRS = { official: OFFICIAL_ATTR, active: ACTIVE_ATTR } as const

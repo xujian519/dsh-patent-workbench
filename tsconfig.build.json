@@ -10,6 +10,7 @@
   },
   "include": [
     "src/index.ts",
+    "src/client/index.tsx",
     "src/api/http.ts",
     "src/api/routes/model-modalities.ts",
     "src/api/routes/quick-attachments.ts",

@@ -190,3 +190,19 @@ test('AX-R01 解析器是纯函数：不改输入、可重复调用', () => {
   assert.deepEqual(first, second)
   assert.equal(text, before)
 })
+
+test('AX-R01 简介正文里出现字段名不算坏文件（判定按行首，不按包含）', () => {
+  const text = '# 甲\n\n> 自定义专家 · 分类 `engineering` · 工作模式：**只读诊断**\n> 建议 emoji：`🧪`　建议简介（`description`，≤160 字符）：\n> 按分类逐条给出结论，并说明工作模式：先判再改。\n> 第二段也提到分类与工作模式两个词。\n\n正文\n'
+  const parsed = parsePersonaDocument(text)
+  assert.equal(parsed.ok, true, `正文里出现字段名不该被当成字段行：${JSON.stringify(parsed.diagnostics)}`)
+  assert.match(parsed.document.description, /按分类逐条给出结论/)
+  assert.match(parsed.document.description, /第二段也提到分类/)
+})
+
+test('AX-R01 英文别名 emoji 与其它标签同一套判定（三份清单已收敛为一份）', () => {
+  // 简介已经开始，再出现 `emoji：` 这种字段行必须被抓出来 —— 别名不能只被一半代码认。
+  const text = '# 甲\n\n> 建议简介：先写一句。\n> emoji：`🔍`\n\n正文\n'
+  const parsed = parsePersonaDocument(text)
+  assert.equal(parsed.ok, false, '简介之后又出现字段行（英文别名）必须报坏文件')
+  assert.match(JSON.stringify(parsed.diagnostics), /又出现了字段行/)
+})

@@ -6,37 +6,51 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, type DictionaryEntry } from '../repo.js'
+import { safeJsonParse } from './shared.js'
 
 
-export function listDictionaries(db: DatabaseSync, kind?: string): DictionaryEntry[] {
-  const rows = (kind === undefined
-    ? db.prepare('SELECT * FROM dictionaries ORDER BY kind, sort_order, code').all()
-    : db.prepare('SELECT * FROM dictionaries WHERE kind = ? ORDER BY sort_order, code').all(kind)) as unknown as Array<{
-      kind: string
-      code: string
-      name: string
-      config: string
-      builtin: number
-      active: number
-      sort_order: number
-      created_at: string
-      updated_at: string
-    }>
-  return rows.map((row) => ({
+type DictionaryRow = {
+  kind: string
+  code: string
+  name: string
+  config: string
+  builtin: number
+  active: number
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+function toDictionaryEntry(row: DictionaryRow): DictionaryEntry {
+  return {
     kind: row.kind,
     code: row.code,
     name: row.name,
-    config: JSON.parse(row.config) as Record<string, unknown>,
+    config: safeJsonParse<Record<string, unknown>>(row.config, {}),
     builtin: row.builtin,
     active: row.active,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  }))
+  }
 }
 
+export function listDictionaries(db: DatabaseSync, kind?: string): DictionaryEntry[] {
+  const rows = (kind === undefined
+    ? db.prepare('SELECT * FROM dictionaries ORDER BY kind, sort_order, code').all()
+    : db.prepare('SELECT * FROM dictionaries WHERE kind = ? ORDER BY sort_order, code').all(kind)) as unknown as DictionaryRow[]
+  return rows.map(toDictionaryEntry)
+}
+
+/**
+ * 单个字典项。**按主键直查**（`PRIMARY KEY (kind, code)`）。
+ *
+ * 原先实现是 `listDictionaries(kind).find(...)` —— 每次全表扫描 + 全量 JSON.parse，
+ * 而它在草稿确认的循环里被逐字段调用（一棵 N 个子任务的草稿 = O(N) 次整表扫描）。
+ */
 export function getDictionary(db: DatabaseSync, kind: string, code: string): DictionaryEntry | undefined {
-  return listDictionaries(db, kind).find((entry) => entry.code === code)
+  const row = db.prepare('SELECT * FROM dictionaries WHERE kind = ? AND code = ?').get(kind, code) as DictionaryRow | undefined
+  return row === undefined ? undefined : toDictionaryEntry(row)
 }
 
 /**

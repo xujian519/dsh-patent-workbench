@@ -40,6 +40,16 @@ const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const PKG_NAME = PKG.name
 
 /**
+ * curl 的**可执行名**与"丢弃输出"的 sink —— 两个平台不一样，不能写死。
+ *
+ * 原先这里逐字写 `curl.exe` + `-o NUL`（5 处）：门禁**只能在 Windows 上跑**，
+ * 换到 macOS/Linux 会以 `curl.exe: command not found` 的形式全阶段失败 ——
+ * 而发布门禁恰恰是最该在任何机器上都能执行的东西（"门禁要能被执行，而不是被记住"）。
+ */
+const CURL = process.platform === 'win32' ? 'curl.exe' : 'curl'
+const NULL_SINK = process.platform === 'win32' ? 'NUL' : '/dev/null'
+
+/**
  * 显式登记的**已知失败**。用例名必须完全相等。
  * 每加一条都要问自己：这是"与本次改动无关的历史问题"吗？有 issue 追踪吗？
  */
@@ -98,13 +108,13 @@ function run(command, { cwd = ROOT, env = {} } = {}) {
   return { code: result.status === null ? 1 : result.status, out: `${result.stdout ?? ''}${result.stderr ?? ''}` }
 }
 
-/** 直连 HTTP（**绕开 npm 本地缓存**）：用 curl.exe 拿 `{code, out}`。 */
+/** 直连 HTTP（**绕开 npm 本地缓存**）：用 curl 拿 `{code, out}`（可执行名见 `CURL`）。 */
 function curl(url, extra = []) {
-  return run(`curl.exe -sS --max-time 120 -o NUL -w "%{http_code}" ${extra.join(' ')} "${url}"`)
+  return run(`${CURL} -sS --max-time 120 -o ${NULL_SINK} -w "%{http_code}" ${extra.join(' ')} "${url}"`)
 }
 
 function curlJson(url, extra = []) {
-  return run(`curl.exe -sS --max-time 120 ${extra.join(' ')} "${url}"`)
+  return run(`${CURL} -sS --max-time 120 ${extra.join(' ')} "${url}"`)
 }
 
 const results = []
@@ -211,7 +221,7 @@ function gateArtifact() {
   if (tarballStatus === 200) {
     const tmp = join(ROOT, '_local-build', `preflight-${VERSION}.tgz`)
     mkdirSync(join(ROOT, '_local-build'), { recursive: true })
-    run(`curl.exe -sSL --max-time 300 -o "${tmp}" "${tarballUrl}"`)
+    run(`${CURL} -sSL --max-time 300 -o "${tmp}" "${tarballUrl}"`)
     const h = run(`node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha1').update(f.readFileSync(process.argv[1])).digest('hex'))" "${tmp}"`)
     sha1 = h.out.trim().split(/\r?\n/).pop() ?? null
   }
@@ -239,7 +249,7 @@ function gateArtifact() {
 function gateGitHubRelease() {
   banner('发布后 2/2 GitHub Release（走本机代理，公开端点不需要 token）')
   const proxy = process.env.DSH_GITHUB_PROXY ?? 'http://127.0.0.1:5782'
-  const r = run(`curl.exe -sS --max-time 60 -x ${proxy} -H "User-Agent: dsh-preflight" -H "Accept: application/vnd.github+json" https://api.github.com/repos/xujian519/dsh-patent-workbench/releases/latest`)
+  const r = run(`${CURL} -sS --max-time 60 -x ${proxy} -H "User-Agent: dsh-preflight" -H "Accept: application/vnd.github+json" https://api.github.com/repos/xujian519/dsh-patent-workbench/releases/latest`)
   let tag = null
   try { tag = JSON.parse(r.out).tag_name ?? null } catch { tag = null }
   const ok = tag === `v${VERSION}`

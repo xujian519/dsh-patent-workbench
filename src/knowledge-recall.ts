@@ -1203,16 +1203,31 @@ export function isUserAuthored(message: unknown): boolean {
  */
 export function currentTurnOf(agent: unknown): number {
   try {
-    const session = (agent as { session?: { snapshotEvents?: () => unknown[]; events?: unknown[] } } | undefined)?.session
-    const events = typeof session?.snapshotEvents === 'function'
-      ? session.snapshotEvents() ?? []
-      : session?.events ?? []
+    const events = snapshotEvents((agent as { session?: unknown } | undefined)?.session)
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index] as { type?: string } | undefined
       if (event?.type === 'turn/start' || event?.type === 'turn/end') return turnNumberOf(event)
     }
   } catch { /* 拿不到 turn 号不是致命问题：退回 0，注入仍会发生 */ }
   return 0
+}
+
+/**
+ * 当前回合在事件流里的**起点下标**：最后一个回合号等于 `turn` 的 `turn/start`。
+ *
+ * 找不到（事件形状异常 / 该回合没有 start）→ `-1`，退路由调用方各自决定
+ * （`currentTurnUserMessages` 退回"最后一条用户消息"、`assistantTextOf` 退回全量事件）。
+ *
+ * ⚠️ 这段倒扫原先在 `currentTurnUserMessages` 与 `assistantTextOf` 里**各写了一份**：
+ * 谁哪天给其中一份加了条件（例如再多认一种 `turn/start` 形状），另一份就悄悄落后 ——
+ * 而两份的偏差会直接表现为"取证范围不同"（一处少检索、一处多算引用）。
+ */
+function currentTurnStartIndex(events: readonly unknown[], turn: number): number {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index] as { type?: string } | undefined
+    if (event?.type === 'turn/start' && turnNumberOf(event) === turn) return index
+  }
+  return -1
 }
 
 /** 从用户消息里取纯文本（可能有多段）。 */
@@ -1392,12 +1407,7 @@ export function latestUserMessage(events: unknown[]): unknown {
 export function currentTurnUserMessages(agent: unknown): unknown[] {
   const session = (agent as { session?: unknown } | undefined)?.session
   const events = snapshotEvents(session)
-  const turn = currentTurnOf(agent)
-  let start = -1
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index] as { type?: string } | undefined
-    if (event?.type === 'turn/start' && turnNumberOf(event) === turn) { start = index; break }
-  }
+  const start = currentTurnStartIndex(events, currentTurnOf(agent))
   if (start < 0) {
     const fallback = latestUserMessage(events)
     return fallback === undefined ? [] : [fallback]
@@ -1434,12 +1444,7 @@ export function currentTurnQueries(agent: unknown): string[] {
 export function assistantTextOf(agent: unknown): string {
   const session = (agent as { session?: unknown } | undefined)?.session
   const events = snapshotEvents(session)
-  const turn = currentTurnOf(agent)
-  let start = -1
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index] as { type?: string } | undefined
-    if (event?.type === 'turn/start' && turnNumberOf(event) === turn) { start = index; break }
-  }
+  const start = currentTurnStartIndex(events, currentTurnOf(agent))
   const scoped = start >= 0 ? events.slice(start) : events
   const parts: string[] = []
   for (const item of scoped) {

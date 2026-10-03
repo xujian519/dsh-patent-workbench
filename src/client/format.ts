@@ -1,24 +1,27 @@
 /**
  * 客户端纯格式化/标签工具（从 index.tsx 抽出，行为不变）。
  * 无副作用、无状态：时间格式化、日期边界、草稿/角色/事件的中文标签。
+ *
+ * `file://` 解析与本地日归一化的实现都在 `shared/`（与宿主侧共用同一份），
+ * 这里只做客户端语义的包装与再导出。
  */
+import { fileLinkToPath } from '../shared/hostPath.js'
+import { localDateString, startOfLocalDay } from '../shared/localDay.js'
+
+export { localDateString }
+
 export const folderForText = (text: string): string => {
   const cleaned = text.trim().replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').slice(0, 24).trim()
   return cleaned === '' ? '未命名任务' : cleaned
 }
+/** 客户端版本：解析失败时不抛错，退回原串（宿主侧实现会抛）。 */
 export const clientFileLinkToPath = (link: string): string => {
-  const trimmed = link.trim()
-  if (!/^file:/i.test(trimmed)) return trimmed
   try {
-    const url = new URL(trimmed)
-    let pathname = decodeURIComponent(url.pathname)
-    if (/^\/[A-Za-z]:[\\/]/.test(pathname)) pathname = pathname.slice(1)
-    return pathname
+    return fileLinkToPath(link)
   } catch {
-    return trimmed
+    return link.trim()
   }
 }
-export const localDateString = (d = new Date()): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 export const toLocalInput = (iso: string | null): string => {
   if (iso === null) return ''
   const d = new Date(iso)
@@ -106,5 +109,5 @@ export const EVENT_ICONS: Record<string, string> = {
 export const eventIcon = (code: string): string => EVENT_ICONS[code] ?? '•'
 export const shortId = (id: string): string => id.length > 12 ? `${id.slice(0, 8)}…` : id
 export const sameDay = (a: Date, b: Date): boolean => a.toDateString() === b.toDateString()
-export const startOfDay = (d: Date): Date => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
+export const startOfDay = (d: Date): Date => startOfLocalDay(d)
 export const startOfWeek = (d: Date): Date => { const x = startOfDay(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x }

@@ -10,7 +10,7 @@ import {
   listTaskMemories, listTaskReviews, listTaskSessions, listTasks, repairParentCompletion, restoreTask, updateTask, updateTaskWithCompletion,
 } from '../../db/repo.js'
 import { checkProgressInput } from '../../shared/taskProgress.js'
-import { TASKS_PREFIX, clampEstimateForStorage, isLoopbackRequest, pathSegments, publicTask, readJsonBody, requireCode, taskInputFromBody, todayRange, writeJson } from './helpers.js'
+import { TASKS_PREFIX, badRequest, clampEstimateForStorage, methodNotAllowed, pathSegments, publicTask, readJsonBody, requireCode, requireLoopback, taskInputFromBody, todayRange, writeJson } from './helpers.js'
 
 export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
   return [
@@ -18,7 +18,7 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
       kind: 'prefix',
       path: TASKS_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const segments = pathSegments(url, TASKS_PREFIX)
         const method = req.method ?? 'GET'
@@ -50,10 +50,10 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
               }
               return writeJson(res, 201, { ok: true, task: publicTask(task) })
             } catch (error) {
-              return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+              return badRequest(res, error)
             }
           }
-          return writeJson(res, 405, { error: 'method not allowed' })
+          return methodNotAllowed(res)
         }
 
         const id = segments[0]
@@ -149,7 +149,7 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
             }
             return writeJson(res, 200, { ok: true, task: publicTask(task) })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
         if (method === 'POST' && action === 'archive') {
@@ -159,7 +159,7 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
             if (task === undefined) return writeJson(res, 404, { error: 'task not found' })
             return writeJson(res, 200, { ok: true, task: publicTask(task), cascade })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
         if (method === 'POST' && action === 'restore') {
@@ -168,7 +168,7 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
             if (task === undefined) return writeJson(res, 404, { error: 'task not found' })
             return writeJson(res, 200, { ok: true, task: publicTask(task) })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
         if (method === 'GET' && action === 'events') {
@@ -199,7 +199,7 @@ export function makeTaskRoutes(db: DatabaseSync): WebRoute[] {
             const memory = addTaskMemory(db, { taskId: id, kind, content, sourceSessionId })
             return writeJson(res, 201, { ok: true, memory })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
         if (method === 'POST' && action === 'sessions') {

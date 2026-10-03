@@ -37,6 +37,15 @@ export interface ReminderPolicy {
 /** 可推送的草稿类型（与 task_drafts.kind_code 对齐）。 */
 export const NOTIFIABLE_DRAFT_KINDS = ['completion', 'review', 'knowledge', 'subtask_plan', 'task'] as const
 
+/**
+ * 投递失败 / 通道不可用时的重试退避：15 分钟。
+ *
+ * **唯一来源**：草稿通知的入队与失败记账（`draft-notify.ts` 五处）与适配层"对方让我们等一会儿"
+ * 的缺省值（`adapter.ts`）共用它。原先这六处各写一遍 `15 * 60_000` —— 想调退避的人改了其中一处，
+ * 另外几处还是老值，现象是"同一条通知有时 15 分钟重试、有时 30 分钟"，且没有任何测试会红。
+ */
+export const NOTIFY_RETRY_BACKOFF_MS = 15 * 60_000
+
 export const DEFAULT_REMINDER_POLICY: ReminderPolicy = {
   enabled: false,
   immediatePriorities: ['p0', 'p1'],

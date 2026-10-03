@@ -224,3 +224,32 @@ test('接线：三个读「当前会话」的地方都走 currentSessionIdOf（�
   assert.match(stripComments(host.text), /readCurrentSessionId\(/, '取到服务后必须交给唯一的纯判据')
 })
 
+
+/**
+ * 客户端设置初值必须**覆盖 `WorkbenchSettings` 的每一个字段**（且不多不少）。
+ *
+ * 为什么这条值得一条测试：初值缺字段的表现**不是**编译错误（`as WorkbenchSettings` 的
+ * 字面量会直接报错，但 `useState<T>(x)` 只要 x 类型对得上就行；缺字段时真实成因是
+ * "有人往契约里加了字段，服务端还没给、客户端也没兜底"）—— 那时界面上出现的是一句
+ * 暴露给用户的怪话（`默认 undefined 分钟`），像产品 bug 而不像漏改。
+ * 2026-10-03 把这**两份**（初值字面量 + 只列两个键的兜底表）收成 `defaultSettings()` 一份，
+ * 这条断言负责把"一份"钉住：契约加字段而默认值没跟，这里立刻红。
+ */
+test('客户端 defaultSettings() 与 WorkbenchSettings 契约逐字段对齐', () => {
+  const contracts = sources.find(({ path }) => rel(path) === 'shared/contracts.ts')?.text
+  const index = sources.find(({ path }) => rel(path) === 'client/index.tsx')?.text
+  assert.ok(contracts !== undefined && index !== undefined, 'contracts.ts 与 client/index.tsx 必须存在')
+
+  const body = contracts.slice(contracts.indexOf('export interface WorkbenchSettings {'))
+  const ifaceBody = body.slice(0, body.indexOf('\n}'))
+  const contractFields = [...ifaceBody.matchAll(/^ {2}([A-Za-z_][A-Za-z0-9_]*)\??:/gm)].map((m) => m[1])
+  assert.ok(contractFields.length >= 10, `应当从契约里解析出字段（实际 ${contractFields.length} 个：${contractFields.join(', ')}）`)
+
+  const fn = index.indexOf('function defaultSettings(): WorkbenchSettings {')
+  assert.ok(fn > 0, 'client/index.tsx 里应当有唯一一份 defaultSettings()（抽掉了就同步本测试）')
+  const fnBody = index.slice(fn, index.indexOf('\n}', fn))
+  const defaultFields = [...fnBody.matchAll(/^\s{4}([A-Za-z_][A-Za-z0-9_]*):/gm)].map((m) => m[1])
+
+  assert.deepEqual(defaultFields.slice().sort(), contractFields.slice().sort(),
+    'defaultSettings() 必须与 WorkbenchSettings 契约字段完全一致（少了 → 界面显示 undefined；多了 → 契约已删的残留）')
+})

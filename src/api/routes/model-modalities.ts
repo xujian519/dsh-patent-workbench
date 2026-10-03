@@ -23,7 +23,7 @@
  * 对 deepseek 适配器是**离线读配置**（`Promise.resolve(...)`），不会打网络。
  */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { isLoopbackRequest, writeJson } from '../http.js'
+import { errorMessage, methodNotAllowed, requireLoopback, writeJson } from '../http.js'
 
 export const MODEL_MODALITIES_PREFIX = '/api/workbench/model-modalities'
 
@@ -85,8 +85,8 @@ export function makeModelModalityRoutes(probe: () => LlmModalityProbe | undefine
       kind: 'exact',
       path: MODEL_MODALITIES_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'GET') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'GET') return methodNotAllowed(res)
         const llm = probe()
         /**
          * 拿不到 `llm`（旧宿主 / 该服务被 isolate 藏了）时返回 `available: false`，
@@ -98,7 +98,7 @@ export function makeModelModalityRoutes(probe: () => LlmModalityProbe | undefine
           const { models, failures } = await collectModelModalities(llm)
           return writeJson(res, 200, { ok: true, available: true, models, failures })
         } catch (error) {
-          return writeJson(res, 200, { ok: true, available: false, models: [], failures: [], error: error instanceof Error ? error.message : String(error) })
+          return writeJson(res, 200, { ok: true, available: false, models: [], failures: [], error: errorMessage(error) })
         }
       },
     },

@@ -36,19 +36,6 @@ export const VIEW_ATTR = 'data-dsh-personal-workbench-view'
  */
 export const OFFICIAL_ATTR = 'data-dsh-personal-workbench-official'
 
-/** 标记「这个容器是当前激活的 App 宿主」；由 React 树所在的那一路设置，见 OFFICIAL_ATTR。 */
-export const HOST_ACTIVE_ATTR = 'data-dsh-personal-workbench-host-active'
-
-/**
- * 标记「这一行是宿主渲染的官方面板行，已被我们隐藏」（v1.14.36）。
- *
- * 为什么需要：走自建腿时（例如本机 layout 服务不可达 —— 官方行点了切不动面板），
- * 自建入口行才是唯一可用的入口，而宿主仍会渲染它自己那一行 → 侧栏出现**两个**
- * 「工作台」入口（用户实测反馈）。这条属性用于隐藏官方行并保持幂等
- * （避免重复扫描时反复作用，也便于排查时一眼看出"这行是被我们藏掉的"）。
- */
-export const REDUNDANT_ROW_ATTR = 'data-dsh-personal-workbench-row-hidden'
-
 /**
  * 侧栏入口那套家族契约（`ENTRY_ATTR` / 语义属性 / 行结构 / 折叠态识别）见
  * `entryContract.ts`：那里是纯常量与纯函数，可以被 node --test 直接锁住不变量。

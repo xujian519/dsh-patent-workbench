@@ -7,40 +7,8 @@ import { execFile } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { assertValidFileLink } from '../db/repo.js'
-import { isLoopbackRequest, readJsonBody, writeJson } from './http.js'
-
-function fileLinkToPath(link: string): string {
-  const trimmed = link.trim()
-  if (/^file:/i.test(trimmed)) {
-    const url = new URL(trimmed)
-    if (url.protocol !== 'file:') throw new Error('not a file URL')
-    let pathname = decodeURIComponent(url.pathname)
-    if (/^\/[A-Za-z]:[\\/]/.test(pathname)) pathname = pathname.slice(1)
-    return pathname
-  }
-  return trimmed
-}
-
-function toNativePath(link: string): string {
-  let path = fileLinkToPath(link)
-  if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(path)) {
-    const match = /^([A-Za-z]):[\\/]?(.*)$/.exec(path)
-    if (match !== null) {
-      const drive = match[1].toLowerCase()
-      const rest = (match[2] ?? '').replace(/\\/g, '/').replace(/^\/+/, '')
-      path = rest === '' ? `/mnt/${drive}` : `/mnt/${drive}/${rest}`
-    }
-  }
-  return path
-}
-
-function wslPathToWindowsPath(filePath: string): string {
-  const match = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(filePath)
-  if (match === null) return filePath
-  const drive = match[1].toUpperCase()
-  const rest = (match[2] ?? '').replace(/\//g, '\\')
-  return rest === '' ? `${drive}:\\` : `${drive}:\\${rest}`
-}
+import { badRequest, errorMessage, methodNotAllowed, readJsonBody, requireLoopback, writeJson } from './http.js'
+import { toNativePath, wslDriveToWindows } from '../shared/hostPath.js'
 
 function tryOpen(candidates: Array<{ command: string; args: string[] }>): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -48,7 +16,7 @@ function tryOpen(candidates: Array<{ command: string; args: string[] }>): Promis
     const errors: unknown[] = []
     const attempt = (): void => {
       if (index >= candidates.length) {
-        reject(new AggregateError(errors, `无法打开文件：所有打开命令均失败（${errors.map((e) => e instanceof Error ? e.message : String(e)).join('; ')}）`))
+        reject(new AggregateError(errors, `无法打开文件：所有打开命令均失败（${errors.map(errorMessage).join('; ')}）`))
         return
       }
       const { command, args } = candidates[index++]
@@ -67,7 +35,7 @@ function openLocalFile(filePath: string): Promise<void> {
   if (process.platform === 'darwin') {
     return tryOpen([{ command: 'open', args: [filePath] }])
   }
-  const winPath = wslPathToWindowsPath(filePath)
+  const winPath = wslDriveToWindows(filePath)
   const candidates: Array<{ command: string; args: string[] }> = []
   if (winPath !== filePath) {
     candidates.push({ command: 'cmd.exe', args: ['/c', 'start', '', winPath] })
@@ -84,8 +52,8 @@ export function makeOpenFileRoute(): WebRoute {
     kind: 'exact',
     path: '/api/workbench/knowledge/open-file',
     handler: async (req, res) => {
-      if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-      if ((req.method ?? 'GET') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+      if (!requireLoopback(req, res)) return
+      if ((req.method ?? 'GET') !== 'POST') return methodNotAllowed(res)
       const body = await readJsonBody(req)
       if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })
       const raw = typeof body.fileLink === 'string' ? body.fileLink : typeof body.path === 'string' ? body.path : undefined
@@ -93,13 +61,13 @@ export function makeOpenFileRoute(): WebRoute {
       try {
         const fileLink = assertValidFileLink(raw)
         if (fileLink === null) return writeJson(res, 400, { error: 'fileLink is required' })
-        const filePath = toNativePath(fileLink)
+        const filePath = toNativePath(fileLink, process.platform)
         const info = await stat(filePath)
         if (!info.isFile()) return writeJson(res, 400, { error: 'path is not a file' })
         await openLocalFile(filePath)
         return writeJson(res, 200, { ok: true, path: filePath })
       } catch (error) {
-        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+        return badRequest(res, error)
       }
     },
   }

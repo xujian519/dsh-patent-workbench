@@ -38,6 +38,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { readMeta, writeMeta } from './db/repo/meta.js'
+import { localDateString } from './shared/localDay.js'
 
 /** 一条待写入的记忆（落盘 + 入队用）。 */
 export interface MemoryNote {
@@ -172,11 +173,6 @@ export function slugify(title: string, maxLen = 40): string {
   return (cleaned || 'note').slice(0, maxLen).replace(/-$/, '')
 }
 
-function localDate(now: Date): string {
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-}
-
 /** 原子写：先写 `.part` 再 rename，断电不会留下半截文件把队列卡住。 */
 function atomicWrite(file: string, text: string): void {
   const tmp = `${file}.part`
@@ -188,8 +184,8 @@ function atomicWrite(file: string, text: string): void {
 export function saveMemoryNote(home: string, note: MemoryNote, now = new Date()): { file: string; id: string } {
   const notesDir = join(home, 'notes')
   mkdirSync(notesDir, { recursive: true })
-  const id = `review-${localDate(now)}-${memoryContentHash(note.kind, note.title).slice(0, 10)}-${note.slot}`
-  const base = `${localDate(now)}-${slugify(note.title)}`
+  const id = `review-${localDateString(now)}-${memoryContentHash(note.kind, note.title).slice(0, 10)}-${note.slot}`
+  const base = `${localDateString(now)}-${slugify(note.title)}`
   let file = join(notesDir, `${base}.md`)
   let suffix = 2
   while (true) {

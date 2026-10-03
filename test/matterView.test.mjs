@@ -27,6 +27,12 @@ import { buildMatterTimeline } from '../lib/client/matterTimeline.js'
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
 const clientSource = read('src/client/index.tsx')
 const viewSource = read('src/client/components/MattersView.tsx')
+/**
+ * H4-5 把案卷视图主体（案卷条 + 列表 + 详情）搬去了 `components/views/MatterPane.tsx`。
+ * 扫描范围因此**扩到新落点**（plan §5.4：迁移而不是删除）——`viewSource` 仍是那两个部件的
+ * 家，视图装配那几条改看 `paneSource`，并各补一条反向断言（`index.tsx` 不许再直接渲染它们）。
+ */
+const paneSource = read('src/client/components/views/MatterPane.tsx')
 const routeSource = read('src/api/routes/matters.ts')
 const repoSource = read('src/db/repo/matters.ts')
 const timelineSource = read('src/client/matterTimeline.ts')
@@ -64,6 +70,14 @@ test('5B：案件视图已接进视图联合与顶栏（否则代码在、点不
    */
   assert.match(clientSource, /<Icon name="folder" \/>案卷/, '入口文案是「案卷」（与阶段 2/3 的既有称谓一致）')
   assert.match(clientSource, /view === 'matters' && \(/, '视图主体要挂在 matters 上')
+  /**
+   * H4-5 之后"主体"是那个搬出去的组件：容器只许挂一个 `<MatterPane …/>`，
+   * 列表与详情只许在它里面渲染（多一处就是"同一语义两处实现"，本项目第一大 bug 类别）。
+   */
+  assert.match(clientSource, /<MatterPane\b/, 'matters 视图主体必须挂新的 MatterPane（H4-5）')
+  assert.doesNotMatch(clientSource, /<Matter(List|Detail)\b/, 'index.tsx 不许再直接渲染列表/详情（已搬进 MatterPane）')
+  assert.match(paneSource, /<MatterList\b/, 'MatterPane 里必须真的挂列表')
+  assert.match(paneSource, /<MatterDetail\b/, 'MatterPane 里必须真的挂详情')
 })
 
 test('5B：详情真的拉官文/期限/事件三份（少一份时间线就会静默缺一块）', () => {
@@ -333,13 +347,21 @@ test('5D：实体的既有称谓是「案卷」—— 界面文案不再出现�
    * 术语不统一是**可核实**的问题：同一屏里「案件」与「案卷」混用，用户会以为它们是两个东西。
    * 历史迁移注释里的旧表述（"案件 = 根任务"）是**当时的记录**，按纪律不改写，所以只扫这几处文案源。
    */
-  const uiSources = ['src/client/index.tsx', 'src/client/components/MattersView.tsx', 'src/client/matterTimeline.ts']
+  const uiSources = ['src/client/index.tsx', 'src/client/components/MattersView.tsx', 'src/client/components/views/MatterPane.tsx', 'src/client/matterTimeline.ts',
+    /**
+     * H4-8：建档 / 官文登记表单搬去了 `components/dialogs/` —— 它们渲染的同样是用户可见文案，
+     * 扫描范围跟着扩（plan §5.4：迁移而不是缩小覆盖面）。
+     */
+    'src/client/components/dialogs/MatterDraftModal.tsx', 'src/client/components/dialogs/NoticeDraftModal.tsx',
+    // H4-8（第 4 批）：「待你处理」弹窗同批搬出，它也是用户可见文案的落点。
+    'src/client/components/dialogs/PendingModal.tsx']
   for (const file of uiSources) {
     const stripped = read(file).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, '')
     assert.doesNotMatch(stripped, /案件/, `${file} 的用户可见文案里还有「案件」`)
   }
   assert.match(read('src/api/routes/matters.ts'), /案卷事件/, '路由注释的术语同步')
-  assert.match(read('src/client/index.tsx'), /案卷目录/, '工作目录仍叫「案卷目录」（那是目录，不是实体）')
+  // H4-8：这个字段标签随表单搬进了 MatterDraftModal（判据随落点迁移）。
+  assert.match(read('src/client/components/dialogs/MatterDraftModal.tsx'), /案卷目录/, '工作目录仍叫「案卷目录」（那是目录，不是实体）')
 })
 
 test('5D：package.json 描述与 README 已不宣称被删掉的功能（日报周报/点子/容量/重复）', () => {

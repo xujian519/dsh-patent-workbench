@@ -636,3 +636,41 @@ test('迁移 23：patent_* 类型字典保持可用（停用会让归档任务�
     db.close()
   }
 })
+
+/**
+ * M17：`schema_version` 是脏值时**拒绝打开**，不许当成 0。
+ *
+ * ## 为什么这是一条安全断言而不是洁癖
+ *
+ * 旧实现 `Number(row.value)` 对非数字串给 `NaN`，而 `migration.version <= NaN` 恒为 false
+ * —— 于是**全部迁移从第一个重放**。在已有数据的库上重放：撞"表已存在"则插件彻底起不来，
+ * 若建表语句带 IF NOT EXISTS 则静默跑完并把版本号写成最新（看上去一切正常）。
+ * 两种结果都不是"用户手滑改了一个 meta 值"该付的代价。
+ */
+test('schema_version 是脏值 → 拒绝打开（不许当 0 重放全部迁移）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-badversion-'))
+  try {
+    const dbPath = join(dir, 'workbench.db')
+    const first = openWorkbenchDb({ dbPath })
+    seedDictionaries(first)
+    first.prepare("UPDATE meta SET value = 'not-a-number' WHERE key = 'schema_version'").run()
+    first.close()
+
+    assert.throws(
+      () => openWorkbenchDb({ dbPath }),
+      /schema_version 不是合法版本号/,
+      '脏版本号必须当场报错并说清原因，而不是把迁移重放一遍',
+    )
+
+    // 负数同样是脏值（`1 <= -5` 为假 → 一样会重放）
+    const second = openWorkbenchDb({ dbPath: ':memory:' })
+    try {
+      second.prepare("UPDATE meta SET value = '-1' WHERE key = 'schema_version'").run()
+      assert.throws(() => migrate(second), /schema_version 不是合法版本号/)
+    } finally {
+      second.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

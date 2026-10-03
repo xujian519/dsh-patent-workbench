@@ -27,7 +27,7 @@ import {
   type PlanItemShape,
   type PlanTaskRef,
 } from '../../shared/dailyPlanPolicy.js'
-import { parseDraft, type RawDraftRow } from './shared.js'
+import { parseDraft, safeJsonParse, type RawDraftRow } from './shared.js'
 
 export type DailyPlanItem = PlanItemShape
 
@@ -494,7 +494,7 @@ export function getPendingDailyPlanDraft(db: DatabaseSync, sessionId: string | n
   }>
   for (const row of rows) {
     if (row.session_id !== sessionId) continue
-    const payload = JSON.parse(row.payload_json) as Record<string, unknown>
+    const payload = safeJsonParse<Record<string, unknown>>(row.payload_json, {})
     if (planDate !== undefined && payload.planDate !== planDate) continue
     return parseDraft(row as unknown as RawDraftRow)
   }

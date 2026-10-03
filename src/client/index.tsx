@@ -13,7 +13,6 @@ import {
   countTasksByType,
   createTaskSorter,
   filterTaskTree,
-  isTaskDueOnDay,
   isTaskFilterEmpty,
   matchesTaskFilter,
   type TaskFilterState,
@@ -24,7 +23,11 @@ import {
 import { isWslStylePath, joinPath, normalizeWindowsPathToWsl } from './workspacePath.js'
 import { DEFAULT_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES, planDayRange, planDayKey, todayPlanCandidates } from './dailyPlanCandidates.js'
 import { resolveDayPanelTab } from '../shared/dailyPlanPolicy.js'
-import { DayPanel, type DayTab } from './components/DayPanel.js'
+import type { DayTab } from './components/DayPanel.js'
+import { CalendarView } from './components/CalendarView.js'
+import { TodayView } from './components/views/TodayView.js'
+import { TaskDetailPane, type ReviewSinkInput, type SubtaskDraft, type TaskDetailTab } from './components/views/TaskDetailPane.js'
+import { useCalendarView } from './calendarView.js'
 import { useDayPanelModel } from './dayPanelModel.js'
 import { buildPlanPrompt } from './dailyPlanPrompt.js'
 import { WORKBENCH_CSS } from './styles.js'
@@ -37,10 +40,8 @@ import { checkHostCapabilities, refuseToStart, type SlotsProbe } from './capabil
 import {
   ENTRY_TITLE, OFFICIAL_MAIN_SLOT, OFFICIAL_OVERLAY_SLOT, OFFICIAL_PANEL_LIST_SLOT,
 } from './entryContract.js'
-import { Modal } from './components/Modal.js'
 import { SettingsModal, type DictKind } from './components/SettingsModal.js'
 import { DraftBanner, type DraftConfirmOutcome } from './components/DraftBanner.js'
-import { MarkdownText } from './components/MarkdownText.js'
 import { ToastHost, useToasts } from './components/Toast.js'
 import { api } from './api.js'
 import { withSkillPromptBlock } from './skillPrompt.js'
@@ -64,24 +65,30 @@ import type {
 } from '../shared/contracts.js'
 import { Icon } from './components/Icon.js'
 import { ModelPicker, readQuickModelSelection, reportModelDirectoryUnavailable, resolveModelDirectoryOutcomeFor, writeQuickModelSelection } from './components/ModelPicker.js'
-import { Badge, MultiSelectDropdown, TaskTreeRows, countTaskTree } from './components/TaskList.js'
-import { TaskProgress } from './components/TaskProgress.js'
-import { pendingCompletionMap, taskProgressView } from './taskProgressView.js'
-import { ALL, buildTabs, TabBar, toggleTab } from './components/TabBar.js'
+import { pendingCompletionMap } from './taskProgressView.js'
+import { ALL, buildTabs, toggleTab } from './components/TabBar.js'
 import { LocalDocModal, type LocalDirListing } from './components/LocalDocModal.js'
-import { WorkspacePicker } from './components/WorkspacePicker.js'
 import { workspaceCandidates } from './workspacePicker.js'
 import { localDirRequestUrl } from './localDirBrowser.js'
-import { KnowledgeList, KnowledgePager, KnowledgeToolbar, EMPTY_KNOWLEDGE_FILTERS, kindTabs, reconcileKnowledgeKinds, selectedKind, type KnowledgeFilters } from './components/KnowledgeList.js'
-import {
-  DEFAULT_SORT_DIR, buildListPage, normalizePageSize, normalizeSortDir, normalizeSortKey, toContentItem,
-} from './listPresentation.js'
+import { buildKnowledgePayload, useKnowledgeView, type KnowledgeDraft } from './knowledgeView.js'
+import { KnowledgeView } from './components/views/KnowledgeView.js'
+import { KnowledgeDetailPane } from './components/views/KnowledgeDetailPane.js'
 import { PlanPanel } from './components/PlanPanel.js'
-import { MatterDetail, MatterList, UpcomingDeadlines, type MatterDeadlineView, type MatterNoticeView, type MatterView, type UpcomingDeadlineView } from './components/MattersView.js'
+import { MatterPane } from './components/views/MatterPane.js'
+import { TasksView } from './components/views/TasksView.js'
+import { QuickEntryModal } from './components/dialogs/QuickEntryModal.js'
+import { MatterDraftModal } from './components/dialogs/MatterDraftModal.js'
+import { NoticeDraftModal } from './components/dialogs/NoticeDraftModal.js'
+import { ReminderModal } from './components/dialogs/ReminderModal.js'
+import { DuplicatePromptModal } from './components/dialogs/DuplicatePromptModal.js'
+import { PromptModal } from './components/dialogs/PromptModal.js'
+import { NewTaskModal } from './components/dialogs/NewTaskModal.js'
+import { EditTaskModal, type EditTaskDraft } from './components/dialogs/EditTaskModal.js'
+import { PendingModal } from './components/dialogs/PendingModal.js'
+import type { MatterDeadlineView, MatterNoticeView, MatterView, UpcomingDeadlineView } from './components/MattersView.js'
 import { buildMatterTimeline, type MatterTimelineEvent } from './matterTimeline.js'
 import {
-  clientFileLinkToPath, draftKindLabel, eventIcon, eventLabel, fmtTime, localDateString,
-  roleLabel, sameDay, shortId, startOfDay, startOfWeek, toLocalInput,
+  clientFileLinkToPath, fmtTime, localDateString, startOfDay, toLocalInput,
 } from './format.js'
 import type {
   Bootstrap, DailyPlanItemView, DailyPlanView, Dict, DshSessionListState, DshSessionSummary,
@@ -89,7 +96,7 @@ import type {
   SessionDriver, Task, TaskDetail, WorkbenchRuntime,
 } from './viewTypes.js'
 import {
-  buildQuickIntakePrompt, isQuickImageDraft, MAX_QUICK_DOCUMENTS, MAX_QUICK_IMAGES,
+  buildQuickIntakePrompt, isQuickImageDraft,
   partitionQuickFiles, type QuickAttachmentDraft, type QuickDocumentDraft, type QuickImageDraft,
   type QuickImageMediaType,
 } from './quickAttachments.js'
@@ -137,9 +144,6 @@ function newTaskId(): string {
   return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-/** 知识库列表状态的本地存储键（Tab 与排序要在刷新后保持，见验收项）。 */
-const KNOWLEDGE_FILTER_STORAGE_KEY = 'dsh.patent-workbench.knowledgeList'
-
 /**
  * 「预计耗时」非法时的**行内红字**（文案定稿，见设计文档 §12.4）。
  *
@@ -151,11 +155,31 @@ function estimateRangeMessage(defaultMinutes: number): string {
   return `耗时必须是 1–1440 之间的整数（留空表示用默认 ${defaultMinutes} 分钟）`
 }
 
-/** 两项偏好的兜底值（与 `dailyPlanCandidates.ts` 的常量同值：一处读书、一处落库，必须一致）。 */
-const SETTINGS_FALLBACK = {
-  defaultEstimateMinutes: DEFAULT_ESTIMATE_MINUTES,
-  planIncludeOverdue: false,
-} as const
+/**
+ * 客户端设置的**初值与兜底值**（唯一一份）。
+ *
+ * - 它是 state 的初值（`useState<WorkbenchSettings>(defaultSettings)`），所以必须写成
+ *   **函数**：字面量会被所有调用方共享，谁在别处就地改一下（`settings.personaFavorites.push(...)`）
+ *   就污染了"默认值"本身，而这种 bug 只在"先点一次某操作、再打开设置页"时才显形。
+ * - `defaultEstimateMinutes` 与 `dailyPlanCandidates.ts` 的常量同值：一处读书、一处落库，必须一致。
+ *
+ * 从前这里是**两份**（初值字面量 + 只列两个键的 `SETTINGS_FALLBACK`）：加一个设置字段时
+ * 极易只改一处，表现为"装盘过渡期某个开关显示成 undefined"。
+ */
+function defaultSettings(): WorkbenchSettings {
+  return {
+    defaultWorkspace: '',
+    autoCreateTypeFolders: true,
+    desktopNotify: true,
+    quickWorkspaceRecent: [],
+    autoKnowledgeRecall: true,
+    defaultEstimateMinutes: DEFAULT_ESTIMATE_MINUTES,
+    planIncludeOverdue: false,
+    personaExternalDir: '',
+    personaFavorites: [],
+    personaDisabledIds: [],
+  }
+}
 
 /**
  * 把服务端返回的 settings 补上「客户端必需、但服务端可能还没给」的字段。
@@ -170,64 +194,14 @@ const SETTINGS_FALLBACK = {
  * 兜底只补**缺失**的键（`??`），不覆盖服务端明确给出的值；重启后服务端给出真值，兜底自然失效。
  */
 function withSettingsFallback(settings: WorkbenchSettings): WorkbenchSettings {
+  const defaults = defaultSettings()
   return {
     ...settings,
-    defaultEstimateMinutes: settings.defaultEstimateMinutes ?? SETTINGS_FALLBACK.defaultEstimateMinutes,
-    planIncludeOverdue: settings.planIncludeOverdue ?? SETTINGS_FALLBACK.planIncludeOverdue,
+    defaultEstimateMinutes: settings.defaultEstimateMinutes ?? defaults.defaultEstimateMinutes,
+    planIncludeOverdue: settings.planIncludeOverdue ?? defaults.planIncludeOverdue,
   }
 }
 
-/**
- * 读回知识库列表状态。
- *
- * 存储里的值**一律不可信**（分类可能被删、排序键可能改过、JSON 可能被手改）。
- * ⚠️ 分类的合法性**必须拿到字典后才能判**（字典是异步来的），所以这里只做"形状"归一化，
- * 真正"这个分类还在不在"由 `useEffect` 里的 `reconcileKnowledgeKinds` 收口 —— 否则删过分类的用户
- * 下次打开会看到**空列表且没有任何 Tab 高亮**（v1.15.2 复审 F3）。
- * localStorage 不可用（隐私模式）时静默降级为默认值。
- */
-function readKnowledgeFilters(): KnowledgeFilters {
-  try {
-    const raw = localStorage.getItem(KNOWLEDGE_FILTER_STORAGE_KEY)
-    if (raw === null) return EMPTY_KNOWLEDGE_FILTERS
-    const saved = JSON.parse(raw) as Record<string, unknown>
-    const kinds = Array.isArray(saved.kinds) && saved.kinds.every((k) => typeof k === 'string') && saved.kinds.length > 0
-      ? saved.kinds as string[]
-      : ['all']
-    const tags = Array.isArray(saved.tags) ? saved.tags.filter((t): t is string => typeof t === 'string') : []
-    const sortKey = normalizeSortKey(saved.sortKey)
-    return {
-      keyword: '',
-      kinds,
-      tags,
-      sortKey,
-      sortDir: saved.sortDir === undefined ? DEFAULT_SORT_DIR : normalizeSortDir(saved.sortDir),
-      page: 0,
-      pageSize: normalizePageSize(saved.pageSize),
-    }
-  } catch {
-    return EMPTY_KNOWLEDGE_FILTERS
-  }
-}
-
-/**
- * 分类合法性的唯一收口在 `KnowledgeList.tsx` 的 `reconcileKnowledgeKinds()` 里
- * （可被 `node --test` 直接测；`index.tsx` 会碰 `window`，导入不了所以判定不放这儿）。
- * 这里只负责在**拿到字典之后**调它。
- */
-
-/** 只写"要在刷新后保持"的字段：关键词与页码是瞬时意图，不落盘。 */
-function writeKnowledgeFilters(filters: KnowledgeFilters): void {
-  try {
-    localStorage.setItem(KNOWLEDGE_FILTER_STORAGE_KEY, JSON.stringify({
-      kinds: filters.kinds,
-      tags: filters.tags,
-      sortKey: filters.sortKey,
-      sortDir: filters.sortDir,
-      pageSize: filters.pageSize,
-    }))
-  } catch { /* localStorage 不可用时静默降级：状态只在本次会话内有效 */ }
-}
 
 
 
@@ -285,8 +259,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [selected, setSelected] = useState<TaskDetail | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null)
-  const [editDraft, setEditDraft] = useState<{ title: string; description: string; typeCode: string; priorityCode: string; statusCode: string; aiPolicyCode: string; dueLocal: string; workspacePath: string; parentId: string; estimatedMinutes: string; allDay: boolean } | null>(null)
-  const [detailTab, setDetailTab] = useState<'desc' | 'children' | 'sessions' | 'records'>('desc')
+  const [editDraft, setEditDraft] = useState<EditTaskDraft | null>(null)
+  const [detailTab, setDetailTab] = useState<TaskDetailTab>('desc')
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const [sessionPickerRole, setSessionPickerRole] = useState('consult')
   const [sessionPickerQuery, setSessionPickerQuery] = useState('')
@@ -319,7 +293,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    */
   const [quickAttachments, setQuickAttachments] = useState<QuickAttachmentDraft[]>([])
   const [quickAttachmentNotice, setQuickAttachmentNotice] = useState<string | null>(null)
-  const quickImageInputRef = useRef<HTMLInputElement>(null)
   /**
    * 附件列表的**写穿镜像 ref**：只给"读当前列表"用（上限判定、卸载清理）。
    *
@@ -423,7 +396,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     /** 本次已经建出来的那条（"就删掉这条新建的"用得上）。 */
     newTaskId: string
   } | null>(null)
-  const [settings, setSettings] = useState<WorkbenchSettings>({ defaultWorkspace: '', autoCreateTypeFolders: true, desktopNotify: true, quickWorkspaceRecent: [], autoKnowledgeRecall: true, defaultEstimateMinutes: DEFAULT_ESTIMATE_MINUTES, planIncludeOverdue: false, personaExternalDir: '', personaFavorites: [], personaDisabledIds: [] })
+  const [settings, setSettings] = useState<WorkbenchSettings>(defaultSettings)
   /**
    * 系统通知的可用性三态（v1.15.7）。
    *
@@ -480,14 +453,12 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   /** 看板刷新键（重算 / 改状态后 +1，与知识库同一套"显式刷新"做法）。 */
   const [matterDeadlineKey, setMatterDeadlineKey] = useState(0)
   /**
-   * 知识库列表的筛选/排序/分页状态。
-   *
-   * 首屏从 localStorage 读回，保证「刷新 / 重开面板后 Tab 与排序还在」（验收项）。
-   * 判定全部交给 `listPresentation.ts`，这里只存状态、不存"哪些条目可见"。
+   * 知识库的筛选/排序/分页状态**收在容器调用的 hook** 里（H4-4，`knowledgeView.ts`）：
+   * 首屏从 localStorage 读回，保证「刷新 / 重开面板后 Tab 与排序还在」（验收项）；
+   * state 仍住在容器实例内，所以切页签卸载视图不会把它重置（H4 plan §3）。
    */
-  const [knowledgeFilters, setKnowledgeFilters] = useState<KnowledgeFilters>(() => readKnowledgeFilters())
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntry | null>(null)
-  const [knowledgeDraft, setKnowledgeDraft] = useState<{ title: string; contentMd: string; kindCode: string; tags: string; sourceTaskId: string; sourceReviewId: string; matterId: string; fileLink: string } | null>(null)
+  const [knowledgeDraft, setKnowledgeDraft] = useState<KnowledgeDraft | null>(null)
   const [knowledgeEditId, setKnowledgeEditId] = useState<string | null>(null)
   const [knowledgeRefreshKey, setKnowledgeRefreshKey] = useState(0)
   const [localDocPath, setLocalDocPath] = useState('')
@@ -550,15 +521,13 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   /**
    * 共享提示词弹窗里的模型选择（2026-10-01）。
    *
-   * 与快速录入**同一份持久化**（`writeQuickModelSelection` → 同一个 localStorage 键）：
-   * "我这次用哪个模型"是同一件事，存两处必然出现"这个入口选完、那个入口还是旧的"。
-   * 所以在两个弹窗之间它是同一份状态读写，只有 UI 挂载点不同。
+   * 与快速录入是**同一份状态**（同 `useState` + 同 localStorage 键）：
+   * "我这次用哪个模型"是同一件事，两个独立的 state 必然出现
+   * "这个入口选完、那个入口还是旧的"（改动前就是这样：两处各自 `useState` 初始化，
+   * 只共享持久化、不共享内存状态）。这里直接共用同一个 state 与 setter。
    */
-  const [promptModelSelection, setPromptModelSelectionState] = useState<QuickModelSelection | null>(() => readQuickModelSelection())
-  const setPromptModelSelection = (selection: QuickModelSelection | null): void => {
-    setPromptModelSelectionState(selection)
-    writeQuickModelSelection(selection)
-  }
+  const promptModelSelection = quickModelSelection
+  const setPromptModelSelection = setQuickModelSelection
   const selectedRef = useRef<string | null>(null)
 
   const dicts = useMemo(() => bootstrap?.dictionaries ?? [], [bootstrap])
@@ -2091,6 +2060,174 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       })
   }
 
+  /**
+   * H4-3：详情视图（`components/views/TaskDetailPane.tsx`）只发**意图**，写动作与判空留在这里。
+   *
+   * 为什么不让视图自己发请求：视图里一旦出现 `api(...)`，"这个界面会写哪些端点"就要去
+   * 视图文件里找；放在这里，写入口与判空都在同一屏内，`selected === null` 也只需处理一次。
+   * 每个回调的动作与原内联写法**逐字同义**。
+   */
+  const restoreSelectedTask = (): void => {
+    if (selected === null) return
+    void api(`/api/workbench/tasks/${selected.task.id}/restore`, { method: 'POST' })
+      .then(() => { setNotice('任务已恢复'); setArchivedMode(false); void refresh() })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }
+
+  /** 「编辑」：把任务摊成编辑草稿（`toLocalInput` 的时区口径只在容器里做一次）。 */
+  const beginEditTask = (): void => {
+    if (selected === null) return
+    const task = selected.task
+    setEditDraft({
+      title: task.title, description: task.description, typeCode: task.typeCode, priorityCode: task.priorityCode,
+      statusCode: task.statusCode, aiPolicyCode: task.aiPolicyCode, dueLocal: toLocalInput(task.dueAt),
+      workspacePath: task.workspacePath ?? '', parentId: task.parentId ?? '',
+      estimatedMinutes: task.estimatedMinutes === null ? '' : String(task.estimatedMinutes), allDay: task.allDay,
+    })
+  }
+
+  /** 详情里的「状态 / AI 策略」下拉：改的是当前选中的任务。 */
+  const patchSelectedTask = (patch: Record<string, unknown>): void => {
+    if (selected === null) return
+    void patchTask(selected.task.id, patch)
+  }
+  /** 返回 Promise：`TaskProgress` 靠它把"正在保存"的态撑到落库回执（不要 `void` 掉）。 */
+  const saveSelectedProgress = (percent: number): Promise<void> => {
+    if (selected === null) return Promise.resolve()
+    return saveProgress(selected.task.id, percent)
+  }
+  const completeSelectedFromProgress = (): Promise<void> => {
+    if (selected === null) return Promise.resolve()
+    return completeTaskFromProgress(selected.task.id)
+  }
+
+  /**
+   * 详情页四个 AI 入口：**按 mode 决定做什么**（session 语义留在这里，视图只管按钮）。
+   *
+   * `review` 是带判据的那一个：已有可复用的复盘会话就进去，否则新建 —— 原先是内联在按钮里的
+   * 四行判据，现在仍是唯一一处（`aiSessionUsable` 要读宿主快照）。
+   */
+  const startDetailAI = (mode: 'review' | 'execute' | 'consult' | 'breakdown'): void => {
+    if (selected === null) return
+    const task = selected.task
+    if (mode === 'execute') {
+      void startAISession('execute', task, task.title, selected.sessions.filter((x) => x.role_code === 'execute'))
+      return
+    }
+    if (mode === 'review') {
+      const existing = selected.sessions.find((x) => x.role_code === 'review')
+      if (existing !== undefined && typeof existing.session_id === 'string' && existing.session_id !== '' && aiSessionUsable(runtime, existing.session_id)) {
+        openSessionInPanel(existing.session_id)
+      } else {
+        void startAISession('review', task, task.title)
+      }
+      return
+    }
+    void startAISession(mode, task, task.title)
+  }
+
+  /** 子任务页签里的新建表单：视图读表单，请求与善后（清父任务、提示、刷新）在这里。 */
+  const createSubtask = (draft: SubtaskDraft): void => {
+    if (subtaskParent === null) return
+    void api('/api/workbench/tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: draft.title, typeCode: draft.typeCode, priorityCode: draft.priorityCode, statusCode: 'todo', parentId: subtaskParent.id, dueAt: draft.dueAt }),
+    })
+      .then(() => { setSubtaskParent(null); setNotice('子任务已创建'); void refresh() })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }
+
+  /** 复盘 → 知识：已沉淀的条目直接打开（切到知识库并选中它）。 */
+  const openKnowledgeEntry = (entry: KnowledgeEntry): void => {
+    setKnowledgeDraft(null)
+    setKnowledgeEditId(null)
+    setSelectedKnowledge(entry)
+    setView('knowledge')
+  }
+
+  /**
+   * H4-4：知识视图（左栏 `KnowledgeView.tsx` + 右栏 `KnowledgeDetailPane.tsx`）只发**意图**，
+   * 草稿形状、payload 拼装与请求都留在这里 —— 每个回调与原内联写法逐字同义。
+   */
+  /** 摊开一份空草稿（工具条的「新建」与空态的「新建知识」是同一件事）。 */
+  const beginNewKnowledge = (): void => {
+    setKnowledgeEditId(null)
+    setKnowledgeDraft({ title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', matterId: '', fileLink: '' })
+  }
+
+  /** 按当前选中条目摊一份编辑草稿（`tags` 数组在这里 join 成输入框里的字符串）。 */
+  const beginEditKnowledge = (): void => {
+    if (selectedKnowledge === null) return
+    setKnowledgeEditId(selectedKnowledge.id)
+    setKnowledgeDraft({
+      title: selectedKnowledge.title, contentMd: selectedKnowledge.contentMd, kindCode: selectedKnowledge.kindCode,
+      tags: selectedKnowledge.tags.join(', '), sourceTaskId: selectedKnowledge.sourceTaskId ?? '',
+      sourceReviewId: selectedKnowledge.sourceReviewId ?? '', matterId: selectedKnowledge.matterId ?? '',
+      fileLink: selectedKnowledge.fileLink ?? '',
+    })
+  }
+
+  const cancelKnowledgeDraft = (): void => {
+    setKnowledgeDraft(null)
+    setKnowledgeEditId(null)
+  }
+
+  /** 表单字段改动：视图发补丁，草稿本体在这里。 */
+  const updateKnowledgeDraft = (patch: Partial<KnowledgeDraft>): void => {
+    setKnowledgeDraft((prev) => (prev === null ? prev : { ...prev, ...patch }))
+  }
+
+  /**
+   * 保存草稿：新建走 POST、编辑走 PATCH。
+   * 载荷拼装（标签切分 / 空串归一）在 `knowledgeView.ts#buildKnowledgePayload`（纯函数，可单测）。
+   */
+  const saveKnowledgeDraft = async (): Promise<void> => {
+    if (knowledgeDraft === null) return
+    if (knowledgeDraft.title.trim() === '') return
+    const isEdit = knowledgeEditId !== null
+    const payload = buildKnowledgePayload(knowledgeDraft)
+    try {
+      await api(isEdit ? `/api/workbench/knowledge/${knowledgeEditId}` : '/api/workbench/knowledge', { method: isEdit ? 'PATCH' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+      setKnowledgeDraft(null); setKnowledgeEditId(null); setKnowledgeRefreshKey((v) => v + 1); setNotice(isEdit ? '知识条目已更新' : '知识条目已创建')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  /** 删除当前条目（确认弹窗在这里，视图只管发按钮意图）。 */
+  const deleteKnowledge = async (): Promise<void> => {
+    if (selectedKnowledge === null) return
+    if (!window.confirm('删除这条知识？')) return
+    try {
+      await api(`/api/workbench/knowledge/${selectedKnowledge.id}`, { method: 'DELETE' })
+      setSelectedKnowledge(null); setKnowledgeRefreshKey((v) => v + 1); setNotice('已删除')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  /** 列表点某条：按 id 在全量列表里找（视图只有 id，条目本体在容器）。 */
+  const openKnowledgeById = (id: string): void => {
+    const entry = knowledgeEntries.find((e) => e.id === id)
+    if (entry === undefined) return
+    openKnowledgeEntry(entry)
+  }
+
+  /** 关联任务的显示名（查不到就显示 id —— 与拆分前那个表达式同义）。 */
+  const knowledgeTaskTitle = (taskId: string): string => tasks.find((t) => t.id === taskId)?.title ?? taskId
+
+  /** 复盘 → 知识：没沉淀过就拼一份草稿并切到知识库的编辑态（草稿形状只有这里知道）。 */
+  const sinkReviewToKnowledge = (review: ReviewSinkInput): void => {
+    if (selected === null) return
+    setKnowledgeEditId(null)
+    setKnowledgeDraft({
+      title: `复盘：${selected.task.title}`, contentMd: review.summaryMd, kindCode: 'lesson', tags: '复盘',
+      sourceTaskId: selected.task.id, sourceReviewId: review.reviewId, matterId: '', fileLink: '',
+    })
+    setSelectedKnowledge(null)
+    setView('knowledge')
+  }
+
   /** 保存任务编辑（详情页编辑弹窗）。 */
   const saveEditDraft = async (): Promise<void> => {
     if (editDraft === null || selected === null) return
@@ -2174,16 +2311,20 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [taskFilter, setTaskFilter] = useState<TaskFilterState>({ keyword: '', statusCodes: [], priorityCodes: [], typeCodes: [] })
   const [taskSortKey, setTaskSortKey] = useState<TaskSortKey>('dueAt')
   const [taskSortDir, setTaskSortDir] = useState<TaskSortDir>('asc')
-  const [openFilter, setOpenFilter] = useState<'status' | 'priority' | 'type' | null>(null)
+  /** 同一时刻只开一个下拉。原先还带 `'type'` 这个成员，但类型早已升为 Tab、没有任何一处写它，H4-6 顺手删掉。 */
+  const [openFilter, setOpenFilter] = useState<'status' | 'priority' | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('dsh.patent-workbench.treeExpanded') ?? '[]') as string[]) } catch { return new Set() }
   })
   useEffect(() => {
     try { localStorage.setItem('dsh.patent-workbench.treeExpanded', JSON.stringify([...expanded])) } catch { /* ignore */ }
   }, [expanded])
-  const toggleExpanded = (id: string): void => setExpanded((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
-  const toggleTodayExpanded = (id: string): void => setTodayExpanded((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
-  const toggleCalendarExpanded = (id: string): void => setCalendarExpanded((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  /** 三个展开态的切换逻辑同构，只写一处（否则改一处漏两处）。 */
+  const toggleInSet = (setter: (update: (prev: Set<string>) => Set<string>) => void) => (id: string): void =>
+    setter((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  const toggleExpanded = toggleInSet(setExpanded)
+  const toggleTodayExpanded = toggleInSet(setTodayExpanded)
+  const toggleCalendarExpanded = toggleInSet(setCalendarExpanded)
   const collapseAll = (): void => { setExpanded(new Set()); setTodayExpanded(new Set()); setCalendarExpanded(new Set()) }
 
   const priorityWeights = useMemo(() => new Map(dictOf('priority').map((d) => [d.code, Number(d.config.weight ?? 99)])), [dicts])
@@ -2205,55 +2346,16 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   }, [archivedMode, archivedTasks, tasks, taskSorter, taskFilter, taskTypeDicts])
 
   /**
-   * 知识库：把「条目 + 筛选状态」交给 `listPresentation.ts` 判定，组件只渲染结果。
-   *
-   * `now` 每次渲染现取：时间分组（今天/本周/…）本来就要跟着现实时间走，
-   * 而"判定输入是显式快照"这条约束要求它是显式传进去的，不是在判定模块里读 `Date.now()`。
+   * 知识库的筛选状态与列表派生（H4-4）：state 与那两个 effect 都在
+   * `knowledgeView.ts#useKnowledgeView` 里，**由容器调用**（state 因此仍住在容器实例内）。
+   * 判定（过滤/排序/分组/分页）在 `listPresentation.ts`，这里只是把它接上。
    */
   const knowledgeDicts = useMemo(() => dictOf('knowledge_kind'), [dictOf])
-  const knowledgePage = useMemo(() => buildListPage({
-    items: knowledgeEntries.map(toContentItem),
-    query: {
-      tab: selectedKind(knowledgeFilters),
-      keyword: knowledgeFilters.keyword,
-      tags: knowledgeFilters.tags,
-      sortKey: knowledgeFilters.sortKey,
-      sortDir: knowledgeFilters.sortDir,
-      page: knowledgeFilters.page,
-      pageSize: knowledgeFilters.pageSize,
-    },
-    now: Date.now(),
-    tabOf: (entry) => entry.kindCode,
-    tabCodes: knowledgeDicts.map((d) => d.code),
-  }), [knowledgeEntries, knowledgeFilters, knowledgeDicts])
-  /** 唯一的筛选状态入口：改状态。落盘交给下面的 effect —— **不在 setState 更新函数里写存储**。 */
-  const updateKnowledgeFilters = useCallback((patch: Partial<KnowledgeFilters>) => {
-    setKnowledgeFilters((prev) => ({ ...prev, ...patch }))
-  }, [])
-  /**
-   * 持久化 + 分类合法性收口：只在筛选状态真的变化时写。
-   *
-   * 不写在 `setKnowledgeFilters` 的更新函数里是有原因的：那个函数是**渲染期计算**，
-   * React 可以重复调用它（并发渲染 / StrictMode 双调用），副作用放进去就会被执行多次。
-   * 放 effect 里既幂等也符合"副作用只在 effect 里"这条项目硬约束。
-   */
-  useEffect(() => {
-    writeKnowledgeFilters(knowledgeFilters)
-  }, [knowledgeFilters])
-  /**
-   * 字典到了之后校正一次存下来的分类（删过分类的用户不该看到"空列表 + 无 Tab 高亮"）。
-   * 字典是异步来的，所以这件事只能在 effect 里做，不能在读 localStorage 时做。
-   */
-  useEffect(() => {
-    const fixed = reconcileKnowledgeKinds(knowledgeFilters, knowledgeDicts.map((d) => d.code))
-    if (fixed !== null) setKnowledgeFilters(fixed)
-  }, [knowledgeFilters, knowledgeDicts])
+  const knowledge = useKnowledgeView({ knowledgeEntries, knowledgeDicts })
 
   const now = new Date()
   const todayStart = startOfDay(now)
   const todayEnd = new Date(todayStart); todayEnd.setDate(todayEnd.getDate() + 1)
-  const openTasks = tasks.filter((t) => !['done', 'cancelled'].includes(t.statusCode))
-  const openTree = useMemo(() => buildTaskTree(openTasks), [tasks])
   const todayPlan = bootstrap?.todayPlan ?? null
   /**
    * 日历选中日（`picked` / `pickedAnchor`）在**这里**声明，而不是紧跟下面的日历状态块：
@@ -2262,6 +2364,25 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    */
   const [picked, setPicked] = useState<Date>(todayStart)
   const pickedAnchor = localDateString(picked)
+  /**
+   * 候选判定的**唯一调用点**（AI 排序提示词与两处手动池全走这里）。
+   *
+   * 为什么收成一处：`todayPlanCandidates` 原先在 index.tsx 里被调三遍（提示词一次、
+   * 今日池一次、选中日池一次），参数逐字相同 —— 正是本项目最大的 bug 类别
+   * 「同一语义多处实现」。收成一处后，口径改动只可能落在这里。
+   */
+  const planCandidatesFor = (plan: DailyPlanView | null) => todayPlanCandidates({
+    tasks,
+    plan,
+    includeOverdue: settings.planIncludeOverdue,
+    defaultEstimateMinutes: settings.defaultEstimateMinutes,
+    now,
+  })
+
+  /** 手动"添加任务"的候选行（今日与日历选中日共用）。 */
+  const candidateRowsFor = (plan: DailyPlanView | null) => planCandidatesFor(plan)
+    .candidates.map((candidate) => ({ id: candidate.taskId, title: candidate.title }))
+
   /**
    * 当日候选快照（唯一实现见 `shared/dailyPlanPolicy.ts#planCandidates`）。
    *
@@ -2276,13 +2397,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     const todayKey = planDayKey(now)
     const pinnedKey = pickedAnchor
     const planOf = (date: string): DailyPlanView | null => (date === todayKey ? todayPlan : (date === pinnedKey ? pickedPlan : null))
-    const candidatesFor = (date: string) => todayPlanCandidates({
-      tasks,
-      plan: planOf(date),
-      includeOverdue: settings.planIncludeOverdue,
-      defaultEstimateMinutes: settings.defaultEstimateMinutes,
-      now,
-    })
+    const candidatesFor = (date: string) => planCandidatesFor(planOf(date))
     return {
       /**
        * 为指定日期拼提示词。候选与"另有 N 条未列出"的提示**同一次判定**产出，
@@ -2302,45 +2417,35 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   }, [tasks, todayPlan, pickedPlan, pickedAnchor, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
 
   /**
+   * 候选截断信息 → 面板要的形状（今日与日历选中日**共用**，避免同一件事两份实现）。
+   */
+  const promptInfoFor = (dayKey: string) => {
+    const payload = planCandidateInfo.promptFor(dayKey)
+    return { truncated: payload.truncated, notice: payload.notice, omitted: payload.omitted, total: payload.total }
+  }
+
+  /**
    * 今日候选的截断提示（**同一次判定**的产物，不再算一遍）。
    *
    * 只有"另有 N 条未列出"这一件事：候选满 31 条时发起窗口必须显式告知，
    * 否则用户会以为这 30 条就是全部（需求 §5.1、AX-C02）。
    */
-  const todayPromptInfo = useMemo(() => {
-    const payload = planCandidateInfo.promptFor(planDayKey(now))
-    return { truncated: payload.truncated, notice: payload.notice, omitted: payload.omitted, total: payload.total }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  }, [planCandidateInfo, planDayKey(now)])
+  const todayPromptInfo = useMemo(() => promptInfoFor(planDayKey(now)), [planCandidateInfo, planDayKey(now)])
 
   /** 今日手动"添加任务"的候选行（**同一份** `planCandidates` 输出，不另写过滤）。 */
-  const todayPlanCandidateRows = useMemo(() => todayPlanCandidates({
-    tasks,
-    plan: todayPlan,
-    includeOverdue: settings.planIncludeOverdue,
-    defaultEstimateMinutes: settings.defaultEstimateMinutes,
-    now,
-  }).candidates.map((candidate) => ({ id: candidate.taskId, title: candidate.title })),
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  [tasks, todayPlan, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
+  const todayPlanCandidateRows = useMemo(
+    () => candidateRowsFor(todayPlan),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
+    [tasks, todayPlan, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
 
   /** 日历选中日的同一份提示（切到该日时显示"另有 N 条未列出"）。 */
-  const pickedPromptInfo = useMemo(() => {
-    const payload = planCandidateInfo.promptFor(pickedAnchor)
-    return { truncated: payload.truncated, notice: payload.notice, omitted: payload.omitted, total: payload.total }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  }, [planCandidateInfo, pickedAnchor, planDayKey(now)])
+  const pickedPromptInfo = useMemo(() => promptInfoFor(pickedAnchor), [planCandidateInfo, pickedAnchor, planDayKey(now)])
 
   /** 日历选中日手动"添加任务"的候选行（同上，同一份候选函数）。 */
-  const pickedPlanCandidateRows = useMemo(() => todayPlanCandidates({
-    tasks,
-    plan: pickedPlan,
-    includeOverdue: settings.planIncludeOverdue,
-    defaultEstimateMinutes: settings.defaultEstimateMinutes,
-    now,
-  }).candidates.map((candidate) => ({ id: candidate.taskId, title: candidate.title })),
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  [tasks, pickedPlan, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
+  const pickedPlanCandidateRows = useMemo(
+    () => candidateRowsFor(pickedPlan),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
+    [tasks, pickedPlan, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
   const clearTodayPlan = async (): Promise<void> => {
     await api(`/api/workbench/plans/${localDateString()}`, { method: 'DELETE' })
     await refresh()
@@ -2432,9 +2537,9 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     }
   }
 
-  // 周/月日历
-  const [cursor, setCursor] = useState<Date>(startOfWeek(now))
-  const [calMode, setCalMode] = useState<'week' | 'month'>('week')
+  // 周/月日历（H4-1：游标与派生搬去 `calendarView.ts`；state 仍挂在**本组件**上，
+  // 因为视图会随页签卸载 —— 搬进视图会让"切走再切回"重置月份与周/月模式）
+  const cal = useCalendarView(now)
   const [dayTab, setDayTab] = useState<DayTab>('plan')
   const todayAnchor = localDateString(new Date())
 
@@ -2484,15 +2589,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     walk(null, 0)
     return out
   }, [editDraft !== null, selected?.task.id, tasks])
-  const weekDays = Array.from({ length: 7 }, (_, i) => { const d = new Date(cursor); d.setDate(d.getDate() + i); return d })
-  const moveWeek = (delta: number): void => { const d = new Date(cursor); d.setDate(d.getDate() + delta * 7); setCursor(startOfWeek(d)) }
-  const monthGrid = (() => {
-    const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
-    const start = startOfWeek(first)
-    return Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(d.getDate() + i); return d })
-  })()
-  const moveMonth = (delta: number): void => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1))
-
   /**
    * 日期面板的数据层（批次2 D15）：派生全部收在 `dayPanelModel.ts#useDayPanelModel` 里，
    * 这里只调一次 —— 树的口径（当日到期 ∪ 当日计划项 ∪ 进行中）与"逐条标来源"都在那边，
@@ -2647,6 +2743,28 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     setSkillQuery('')
     void loadSkills()
     setShowQuick(true)
+  }
+  /**
+   * 快速录入弹窗的「创建澄清会话」—— 原来内联在按钮的 `onClick` 里，H4-7 抽弹窗时
+   * 提成具名回调：**弹窗只管发意图，装配仍在这里**。
+   *
+   * 工作区选择随会话一起带下去。⚠️ 不在这里拼文件夹名：资料夹名是
+   * `<任务ID>-<标题片段>`，而任务 ID 由 `startAISession` 在澄清前预留（这里拿不到），
+   * 所以只传"用户选的目录"与"要不要在里面建任务资料夹"。
+   *
+   * ⚠️「最近手动选择」的清单只管**用户真的动过这个输入框**的选择
+   * （`shouldRememberQuickWorkspace`）。自动预填进来的值一旦被记进去，
+   * 下一次它就变成"上次手动选择"—— 默认值自己污染自己。
+   */
+  const submitQuickEntry = (): void => {
+    const chosen = quickWorkspace.trim()
+    if (shouldRememberQuickWorkspace(quickWorkspaceTouched, chosen)) void rememberQuickWorkspace(chosen)
+    void startAISession('clarify', null, quickText, [], undefined, chosen, {
+      attachments: quickAttachments,
+      followFolder: quickFollowFolder,
+      /** 角色选择随会话一起带下去（澄清 mode 的角色入口就在快速录入弹窗里）。 */
+      persona: quickPersona,
+    })
   }
   /**
    * 记住这次用过的工作区（写进设置，最新的排最前）。
@@ -2926,64 +3044,37 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         <button className="wb-btn" onClick={() => closePanel()}><Icon name="back" /><span className="wb-label">返回对话</span></button>
       </div>
 
+      {/**
+        * 共享提示词弹窗（H4-8）：搬去 `components/dialogs/PromptModal.tsx`。
+        * `promptModal` / `promptPersona` / `selectedSkills` / 模型选择（与快速录入**同一份**）都住容器 ——
+        * 这个弹窗的产物要经 `askUserPrompt()` 的 resolve 交给 `startAISession`。
+        * ⚠️ 它是自建的 `.wb-modal-mask`（不是共用 `Modal`），结构在弹窗里逐字保留。
+        */}
       {promptModal !== null && (
-        <div className="wb-modal-mask" onClick={cancelPrompt}>
-          <div className="wb-modal" style={{ width: 'min(620px, 94vw)' }} onClick={(e) => e.stopPropagation()}>
-            <h4>补充 AI 提示词</h4>
-            <p>{promptModal.title}：可留空，留空则继续使用原有默认提示词；填写后会在默认提示词末尾追加你的补充要求。</p>
-            <textarea autoFocus value={promptModal.value} onChange={(e) => setPromptModal((prev) => prev === null ? prev : { ...prev, value: e.target.value })} placeholder="输入你想追加给 AI 的补充要求…" />
-            {/**
-              * 角色选择器（D13-B）：与技能选择器**并列**，且都走普通文档流（不遮挡，AX-R07）。
-              * 9 个走共享提示词弹窗的 mode 全部经由这里选择角色。
-              *
-              * 顺序：**角色在前、技能在后**（AX-R07 的判据，也是原实现的顺序）——
-              两个都是普通文档流里的块，谁在前谁在上；角色是"这次以谁的身份"，先定身份再挑工具。
-              */}
-            <PersonaPicker
-              value={promptPersona}
-              onChange={setPromptPersona}
-              disabled={busy}
-              onError={setError}
-              onNotice={(message) => pushToast(message, 'success')}
-            />
-            {/**
-              * 技能选择器：与角色选择器并列（都走普通文档流）。
-              *
-              * 抽成 `SkillPicker` 组件之后，**快速录入弹窗挂的是同一个组件** ——
-              * 用户反馈的"快速录入不能选 Skill"就是在这里补上的（2026-10-01）。
-              */}
-            <SkillPicker
-              catalog={skillCatalog}
-              loading={skillsLoading}
-              available={skillsAvailable}
-              problem={skillProblem}
-              selected={selectedSkills}
-              onToggle={toggleSkill}
-              onRetry={() => void loadSkills()}
-              disabled={busy}
-            />
-            {/**
-              * 模型选择器（2026-10-01 补上）：与快速录入**同一个组件**。
-              *
-              * 用户反馈："除了快速录入外，其他调用 AI 的弹框中依旧无法选择 AI 模型。"
-              * 原来它只渲染在快速录入里；现在两个弹窗共用一份实现，
-              * 选择值经 `askUserPrompt()` 的返回值传到 `startAISession`（并在那里对**所有 mode**生效）。
-              */}
-            <ModelPicker
-              runtime={runtime}
-              value={promptModelSelection}
-              onChange={setPromptModelSelection}
-              modalityTable={modelModalityTable}
-              disabled={busy}
-              onError={setError}
-              onLoaded={() => { void loadModelModalityTable().then(setModelModalityTable) }}
-            />
-            <div className="wb-modal-actions">
-              <button className="wb-btn" onClick={cancelPrompt}>取消</button>
-              <button className="wb-btn primary" onClick={confirmPrompt}>开始</button>
-            </div>
-          </div>
-        </div>
+        <PromptModal
+          title={promptModal.title}
+          value={promptModal.value}
+          onValue={(value) => setPromptModal((prev) => prev === null ? prev : { ...prev, value })}
+          skillCatalog={skillCatalog}
+          skillsLoading={skillsLoading}
+          skillsAvailable={skillsAvailable}
+          skillProblem={skillProblem}
+          selectedSkills={selectedSkills}
+          onToggleSkill={toggleSkill}
+          onRetrySkills={() => void loadSkills()}
+          persona={promptPersona}
+          onPersonaChange={setPromptPersona}
+          runtime={runtime}
+          modelSelection={promptModelSelection}
+          onModelChange={setPromptModelSelection}
+          modelModalityTable={modelModalityTable}
+          onModelLoaded={() => { void loadModelModalityTable().then(setModelModalityTable) }}
+          busy={busy}
+          onError={setError}
+          onNotice={(message) => pushToast(message, 'success')}
+          onCancel={cancelPrompt}
+          onConfirm={confirmPrompt}
+        />
       )}
       <LocalDocModal
         open={filePickerOpen}
@@ -3000,97 +3091,48 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         onSummarize={() => void summarizeLocalDoc()}
       />
       {/**
-        * 建档 / 编辑案卷（阶段 5 · 5B）。
-        *
-        * 字段按「引擎要什么」排在前面：申请日 / 优先权日 / 要求优先权 / 专利类型 是
-        * `patent-deadline` 起算期限的输入（决策 3），填错会算出错的期限 ——
-        * 所以它们与案号同级显眼，而不是埋在最后。
+        * 建档 / 编辑案卷（H4-8）：表单搬去 `components/dialogs/MatterDraftModal.tsx`。
+        * `matterDraft` / `matterEditId` 仍住容器 —— `saveMatter` 要从整份草稿拼载荷、
+        * 并按 `matterEditId` 决定打 POST 还是 PUT；弹窗只画与发意图。
         */}
       {matterDraft !== null && (
-        <Modal
-          title={<><Icon name="folder" />{matterEditId === null ? '新建案卷' : '编辑案卷'}</>}
-          size="md"
+        <MatterDraftModal
+          title={matterEditId === null ? '新建案卷' : '编辑案卷'}
+          draft={matterDraft}
+          onChange={setMatterDraft}
+          matterTypeOptions={dictOf('matter_type')}
+          patentKindOptions={dictOf('patent_kind')}
+          stageOptions={dictOf('matter_stage')}
+          busy={busy}
           onClose={() => { setMatterDraft(null); setMatterEditId(null) }}
-          footer={(
-            <>
-              <span className="wb-foot-note">案号与名称必填；其余可留空（留空 = 库里为 NULL，不是空串）</span>
-              <button className="wb-btn primary" type="submit" form="wb-matter-form" disabled={busy}><Icon name="check" />保存</button>
-            </>
-          )}
-        >
-          <form className="wb-form" id="wb-matter-form" onSubmit={(e) => void saveMatter(e)}>
-            <label className="full">案号<input required value={matterDraft.caseNumber} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, caseNumber: e.target.value })} placeholder="内部案号，如 2026-UM-002" /></label>
-            <label className="full">发明名称<input required value={matterDraft.title} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, title: e.target.value })} /></label>
-            <label>案型<select value={matterDraft.matterType} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, matterType: e.target.value })}>{dictOf('matter_type').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>专利类型<select value={matterDraft.patentKind} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, patentKind: e.target.value })}><option value="">（未定）</option>{dictOf('patent_kind').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>阶段<select value={matterDraft.stageCode} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, stageCode: e.target.value })}>{dictOf('matter_stage').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>客户<input value={matterDraft.clientId} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, clientId: e.target.value })} /></label>
-            <label>申请号<input value={matterDraft.applicationNo} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, applicationNo: e.target.value })} /></label>
-            <label>公开号<input value={matterDraft.publicationNo} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, publicationNo: e.target.value })} /></label>
-            <label>授权号<input value={matterDraft.patentNo} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, patentNo: e.target.value })} /></label>
-            <label>申请日<input type="date" value={matterDraft.filingDate} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, filingDate: e.target.value })} /></label>
-            <label>优先权日<input type="date" value={matterDraft.priorityDate} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, priorityDate: e.target.value })} /></label>
-            <label className="wb-inline-check"><input type="checkbox" checked={matterDraft.claimsPriority === '1'} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, claimsPriority: e.target.checked ? '1' : '0' })} />要求优先权</label>
-            <label className="wb-inline-check"><input type="checkbox" checked={matterDraft.isPctNationalPhase === '1'} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, isPctNationalPhase: e.target.checked ? '1' : '0' })} />PCT 进入中国</label>
-            <label>技术领域<input value={matterDraft.techField} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, techField: e.target.value })} /></label>
-            <label>IPC<input value={matterDraft.ipc} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, ipc: e.target.value })} /></label>
-            <label>发明人<input value={matterDraft.inventors} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, inventors: e.target.value })} placeholder="多人用逗号分隔" /></label>
-            <label>申请人<input value={matterDraft.applicant} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, applicant: e.target.value })} /></label>
-            <label>代理师<input value={matterDraft.attorney} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, attorney: e.target.value })} /></label>
-            <label className="full">案卷目录<input value={matterDraft.workspacePath} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, workspacePath: e.target.value })} placeholder="该案卷的工作目录（会话在此目录下时会优先召回本卷知识）" /></label>
-          </form>
-        </Modal>
+          onSubmit={(event) => void saveMatter(event)}
+        />
       )}
 
       {/**
-        * 官文登记（阶段 5 · 5C 的前置）：官文是**期限的输入源** —— 没有官文就没有起算点。
-        * 这里只登记事实（发文日/送达/指定期限/文件），**不算期限** —— 算期限是引擎的职责（决策 3）。
+        * 官文登记（H4-8）：表单搬去 `components/dialogs/NoticeDraftModal.tsx` ——
+        * 官文是**期限的输入源**（没有官文就没有起算点），但这里只登记事实，算期限是引擎的职责（决策 3）。
+        * `noticeDraft` 仍住容器（`saveNotice` 要从整份草稿拼载荷）。
         */}
       {noticeDraft !== null && (
-        <Modal
-          title={<><Icon name="file" />登记官文</>}
-          size="sm"
+        <NoticeDraftModal
+          draft={noticeDraft}
+          onChange={setNoticeDraft}
+          noticeKindOptions={dictOf('notice_kind')}
+          deliveryModeOptions={dictOf('delivery_mode')}
+          busy={busy}
           onClose={() => setNoticeDraft(null)}
-          footer={(
-            <>
-              <span className="wb-foot-note">只登记事实；期限由引擎按这些输入计算</span>
-              <button className="wb-btn primary" type="submit" form="wb-notice-form" disabled={busy}><Icon name="check" />登记</button>
-            </>
-          )}
-        >
-          <form className="wb-form" id="wb-notice-form" onSubmit={(e) => void saveNotice(e)}>
-            <label className="full">官文类型<select required value={noticeDraft.noticeKind} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, noticeKind: e.target.value })}>{dictOf('notice_kind').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>发文日<input required type="date" value={noticeDraft.dispatchDate} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, dispatchDate: e.target.value })} /></label>
-            <label>送达方式<select value={noticeDraft.deliveryMode} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, deliveryMode: e.target.value })}>{dictOf('delivery_mode').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>送达日<input type="date" value={noticeDraft.deliveryDate} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, deliveryDate: e.target.value })} /></label>
-            <label>指定期限（月）<input type="number" min={1} max={36} value={noticeDraft.designatedMonths} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, designatedMonths: e.target.value })} placeholder="留空 = 不指定" /></label>
-            <label className="full">官文文件<input value={noticeDraft.fileLink} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, fileLink: e.target.value })} placeholder="file:// 或绝对路径（复用知识库同一套 file_link 机制）" /></label>
-            <label className="full">备注<input value={noticeDraft.note} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, note: e.target.value })} /></label>
-          </form>
-        </Modal>
+          onSubmit={(event) => void saveNotice(event)}
+        />
       )}
 
+      {/* 到期提醒（H4-8）：搬去 `components/dialogs/ReminderModal.tsx`；`reminders` / `reminderModalOpen` 仍住容器（轮询与调度器都会写）。 */}
       {reminders.length > 0 && reminderModalOpen && (
-        <Modal
-          title={<><Icon name="bell" />到期提醒（{reminders.length}）</>}
-          size="sm"
+        <ReminderModal
+          reminders={reminders}
           onClose={() => setReminderModalOpen(false)}
-          footer={(
-            <>
-              <span className="wb-foot-note">点「知道了」后不再提示；host 侧已推送的不会重复出现</span>
-              <button className="wb-btn" onClick={() => setReminderModalOpen(false)}>稍后处理</button>
-            </>
-          )}
-        >
-          <div className="wb-scroll-area">
-            {reminders.map((r) => (
-              <div key={r.reminderId} className="wb-row" style={{ cursor: 'default' }}>
-                <span style={{ flex: 1 }}>{r.title} · {fmtTime(r.dueAt)}</span>
-                <button className="wb-btn" onClick={() => void ackReminder(r.reminderId)}>知道了</button>
-              </div>
-            ))}
-          </div>
-        </Modal>
+          onAck={(reminderId) => void ackReminder(reminderId)}
+        />
       )}
       {pendingDraft !== null && <DraftBanner
         draft={pendingDraft}
@@ -3131,42 +3173,20 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       />}
 
       {/**
-        * 「库里已有同名任务」选择框（2026-09-13 重复建单事故）。
-        *
-        * 服务端**只告警、不静默合并**：同名任务可能是正当需求（每周例会），
-        * 所以这里必须由用户明确选一次 —— 要么保留两条，要么把这次的产出收口到已有那条上。
+        * 「库里已有同名任务」选择框（H4-8）：搬去 `components/dialogs/DuplicatePromptModal.tsx`。
+        * 服务端**只告警、不静默合并**（同名可能是正当需求，例如每周例会），所以必须由用户明确选一次 ——
+        * 两条路（保留两条 / 收口到已有那条）都是弹窗发的意图，`duplicatePrompt` 与
+        * `reuseExistingTask` 仍住容器。
         */}
       {duplicatePrompt !== null && (
-        <Modal
-          title={<>⚠️ 库里已经有一条同名任务</>}
-          size="sm"
+        <DuplicatePromptModal
+          existingTitle={duplicatePrompt.existingTitle}
+          existingTaskId={duplicatePrompt.existingTaskId}
+          sameDescription={duplicatePrompt.sameDescription}
+          sameWorkspace={duplicatePrompt.sameWorkspace}
           onClose={() => setDuplicatePrompt(null)}
-          footer={(
-            <>
-              <button className="wb-btn" onClick={() => setDuplicatePrompt(null)}>保留两条，我自己处理</button>
-              <button className="wb-btn primary" onClick={() => void reuseExistingTask(duplicatePrompt)}>
-                就用已有那条（归档本次新建的那条）
-              </button>
-            </>
-          )}
-        >
-          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
-            <div style={{ marginBottom: 6 }}>标题：<b>{duplicatePrompt.existingTitle}</b></div>
-            <div style={{ marginBottom: 6, color: 'var(--dsw-alias-label-secondary)' }}>
-              本次草稿确认后，库里现在有两条同名任务。已有那条 id：{duplicatePrompt.existingTaskId.slice(0, 8)}
-            </div>
-            <div style={{ fontSize: 12.5, color: 'var(--dsw-alias-label-secondary)' }}>
-              {duplicatePrompt.sameDescription
-                ? '两条的**描述逐字相同** —— 很可能是同一件事被提交了两次（例如执行会话又交了一份草稿）。'
-                : '两条的描述**不同** —— 可能是两次独立录入，也可能是执行会话重复提交，请自行判断。'}
-              {duplicatePrompt.sameWorkspace ? ' 工作区相同。' : ' 工作区不同。'}
-            </div>
-            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }}>
-              「就用已有那条」会把这条草稿收口到已有任务上，并归档本次新建的那条
-              （可在任务列表页「查看归档」恢复，不会丢数据）。
-            </div>
-          </div>
-        </Modal>
+          onReuseExisting={() => void reuseExistingTask(duplicatePrompt)}
+        />
       )}
 
       <div className="wb-body">
@@ -3256,1028 +3276,313 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
           onClose={() => setShowSettings(false)}
         />
       )}
+          {/**
+            * 今日视图（H4-2）：统计卡 + 期限看板 + 日期面板 today 实例，三块都搬去
+            * `components/views/TodayView.tsx`。这里只负责把容器持有的数据与入口递进去 ——
+            * 「重算全部」仍在这层装配，因为它要逐个案卷重算（依赖 `matters` 与重算函数）。
+            */}
           {view === 'today' && (
-            <>
-              <div className="wb-stats wb-stats-sticky">
-                <div className="wb-stat"><b>{bootstrap?.stats.overdue ?? 0}</b><span>逾期</span></div>
-                <div className="wb-stat"><b>{bootstrap?.stats.todayDue ?? 0}</b><span>今天到期</span></div>
-                <div className="wb-stat"><b>{bootstrap?.stats.doing ?? 0}</b><span>进行中</span></div>
-                <div className="wb-stat"><b>{bootstrap?.stats.total ?? 0}</b><span>总数</span></div>
-              </div>
-
-              {/**
-                * 期限看板（阶段 5 · 5C）：跨案卷的"近 7 天到期"，放在今日视图的日期面板之前。
-                *
-                * 为什么放这：期限是"今天要办的事"里**最难自己想起来**的那类（答复期限、年费），
-                * 而日期面板只看任务。另开一个顶级页签会变成"要记得去看"的另一处（决策 D5-3 的推荐口径）。
-                * 引擎不可用时这张卡会明确说明原因 —— 空看板必须能自证是"真的没有"还是"没装引擎"。
-                */}
-              <UpcomingDeadlines
-                deadlines={upcomingDeadlines}
-                days={upcomingDays}
-                engineAvailable={bootstrap?.deadlineEngineAvailable === true}
-                onRecomputeAll={() => { void (async () => {
-                  for (const matter of matters) await recomputeMatterDeadlines(matter.id)
-                  await loadUpcomingDeadlines(upcomingDays).catch(() => undefined)
-                })() }}
-                busy={busy}
-              />
-
-              {/**
-                * 今日 = 日期面板的 **today 实例**（ADR0001 口径冻结 / D15）。
-                * 上面那张统计卡是今日视图独有的，面板本身与日历共用一份。
-                */}
-              <DayPanel
-                {...dayPanelProps}
-                emptyPlanAction={(
-                  <div className="wb-empty" style={{ padding: '28px 18px' }}>
-                    <div style={{ marginBottom: 6, color: 'var(--dsw-alias-state-business-primary, #4f8ef7)' }}><Icon name="today" size={30} /></div>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>今天没有需要关注的任务</div>
-                    <div style={{ fontSize: 12, opacity: .8, marginBottom: 12 }}>可以快速录入一个新任务，或新建一个待办</div>
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                      <button className="wb-btn primary" onClick={openQuickEntry}>快速录入</button>
-                      <button className="wb-btn" onClick={() => setShowForm((v) => !v)}>新建任务</button>
-                    </div>
-                  </div>
-                )}
-              />
-            </>
+            <TodayView
+              stats={bootstrap?.stats}
+              deadlines={upcomingDeadlines}
+              upcomingDays={upcomingDays}
+              engineAvailable={bootstrap?.deadlineEngineAvailable === true}
+              onRecomputeAll={() => { void (async () => {
+                for (const matter of matters) await recomputeMatterDeadlines(matter.id)
+                await loadUpcomingDeadlines(upcomingDays).catch(() => undefined)
+              })() }}
+              busy={busy}
+              dayPanelProps={dayPanelProps}
+              onQuickEntry={openQuickEntry}
+              onNewTask={() => setShowForm((v) => !v)}
+            />
           )}
           {view === 'calendar' && (
-            <>
-              <div className="wb-cal-nav">
-                <button className="wb-btn" onClick={() => (calMode === 'week' ? moveWeek(-1) : moveMonth(-1))}>◀</button>
-                <button className="wb-btn" onClick={() => (calMode === 'week' ? setCursor(startOfWeek(now)) : setCursor(new Date(now.getFullYear(), now.getMonth(), 1)))}>今天</button>
-                <button className="wb-btn" onClick={() => (calMode === 'week' ? moveWeek(1) : moveMonth(1))}>▶</button>
-                <div style={{ flex: 1, textAlign: 'center', fontWeight: 600 }}>
-                  {calMode === 'week' ? `${cursor.getFullYear()}/${cursor.getMonth() + 1}/${cursor.getDate()} 周` : `${cursor.getFullYear()}年${cursor.getMonth() + 1}月`}
-                </div>
-                <div className="wb-segmented wb-sub-segmented">
-                  <button className={`wb-seg ${calMode === 'week' ? 'on' : ''}`} onClick={() => setCalMode('week')}>周</button>
-                  <button className={`wb-seg ${calMode === 'month' ? 'on' : ''}`} onClick={() => setCalMode('month')}>月</button>
-                </div>
-              </div>
-
-              {calMode === 'week' && (
-                <div className="wb-week">
-                  {weekDays.map((d) => {
-                    const n = tasks.filter((t) => isTaskDueOnDay(t, d)).length
-                    return (
-                      <div key={d.toISOString()} className={`wb-day ${sameDay(d, now) ? 'today' : ''} ${sameDay(d, picked) ? 'selected' : ''}`} onClick={() => setPicked(startOfDay(d))}>
-                        <div className="wb-day-date" style={{ fontSize: 12, color: '#999' }}>{d.getMonth() + 1}/{d.getDate()}</div>
-                        {n > 0 && <div className="wb-chip" style={{ background: '#4f8ef7', marginTop: 4 }}>{n} 个任务</div>}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              {calMode === 'month' && (
-                <div className="wb-month">
-                  {monthGrid.map((d) => (
-                    <div key={d.toISOString()} className={`wb-mday ${d.getMonth() !== cursor.getMonth() ? 'other' : ''} ${sameDay(d, now) ? 'today' : ''} ${sameDay(d, picked) ? 'selected' : ''}`} onClick={() => setPicked(startOfDay(d))}>
-                      <div className="wb-mday-date" style={{ fontSize: 12 }}>{d.getDate()}</div>
-                      {tasks.some((t) => isTaskDueOnDay(t, d)) && <div className="wb-chip" style={{ background: '#4f8ef7', marginTop: 2 }}>•</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/**
-                * 日历选中某天 = **同一个** 日期面板（ADR0001 / D15）。
-                * 页签（计划/逾期/未排期/已完成）、计划面板、任务树都来自它 ——
-                * 原来的两份装配（口径还不一致）已经删掉。
-                */}
-              <DayPanel
-                {...dayPanelProps}
-                emptyPlanAction={dayPanel.readOnly ? undefined : (
-                  <>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>{dayPanel.day} 没有计划任务</div>
-                    <button className="wb-btn primary" style={{ marginTop: 8 }} onClick={() => void startAISession('plan', null, dayPanel.day)}>AI 智能排序</button>
-                  </>
-                )}
-              />
-            </>
+            <CalendarView
+              now={now}
+              picked={picked}
+              onPickDay={(day) => setPicked(startOfDay(day))}
+              cal={cal}
+              dayPanelProps={dayPanelProps}
+            />
           )}
+          {/**
+            * 知识视图（H4-4）：工具条 + 列表 + 分页搬去 `components/views/KnowledgeView.tsx`，
+            * 右栏的知识详情搬去 `KnowledgeDetailPane.tsx` —— 左栏与右栏是两个兄弟容器，
+            * 一个组件盖不住两块 DOM（见该文件头）。
+            */}
           {view === 'knowledge' && (
-            <>
-              {/* 本地文档三件套已收进弹窗（LocalDocModal）；工具栏只留一个按钮，和「新建」「清空筛选」同一行右对齐 */}
-              <KnowledgeToolbar
-                filters={knowledgeFilters}
-                tabs={kindTabs(knowledgeDicts, knowledgePage.tabCounts)}
-                tagCounts={knowledgePage.tagCounts}
-                total={knowledgePage.total}
-                onChange={updateKnowledgeFilters}
-                onClear={() => updateKnowledgeFilters({ keyword: '', kinds: ['all'], tags: [], page: 0 })}
-                onCreate={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', matterId: '', fileLink: '' }) }}
-                onSummarizeDoc={openFilePicker}
-                busy={busy}
-              />
-              {knowledgeEntries.length === 0 ? (
-                <div className="wb-empty" style={{ padding: '28px 18px' }}>
-                  <div style={{ marginBottom: 6, color: 'var(--dsw-alias-state-business-primary, #4f8ef7)' }}><Icon name="book" size={30} /></div>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>还没有知识条目</div>
-                  <div style={{ fontSize: 12, opacity: .8, marginBottom: 12 }}>沉淀经验教训、决策和可复用片段；也可以在 AI 复盘后一键写入</div>
-                  <button className="wb-btn primary" onClick={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', matterId: '', fileLink: '' }) }}>新建知识</button>
-                </div>
-              ) : (
-                <>
-                  <KnowledgeList
-                    page={knowledgePage}
-                    dicts={knowledgeDicts}
-                    selectedId={selectedKnowledge?.id}
-                    onOpen={(item) => {
-                      const entry = knowledgeEntries.find((e) => e.id === item.id)
-                      if (entry === undefined) return
-                      setKnowledgeEditId(null); setKnowledgeDraft(null); setSelectedKnowledge(entry)
-                    }}
-                  />
-                  <KnowledgePager
-                    page={knowledgePage}
-                    pageSize={knowledgeFilters.pageSize}
-                    onPage={(page) => updateKnowledgeFilters({ page })}
-                    onPageSize={(pageSize) => updateKnowledgeFilters({ pageSize, page: 0 })}
-                  />
-                </>
-              )}
-            </>
+            <KnowledgeView
+              entries={knowledgeEntries}
+              dicts={knowledgeDicts}
+              page={knowledge.knowledgePage}
+              filters={knowledge.knowledgeFilters}
+              selectedId={selectedKnowledge?.id}
+              busy={busy}
+              onChange={knowledge.updateKnowledgeFilters}
+              onNew={beginNewKnowledge}
+              onOpenEntry={openKnowledgeById}
+              onSummarizeDoc={openFilePicker}
+            />
           )}
-
+          {/**
+            * 案卷视图（H4-5）：案卷条 + 列表 + 详情搬去 `components/views/MatterPane.tsx`
+            *（文件名与相邻的 `components/MattersView.tsx` 部件库区分开，见该文件头）。
+            * 选中 id、三份明细与两条回执仍留在容器 —— 它们活得比视图久（plan §3），
+            * 写在容器里的 `loadMatterDetail` effect 也照旧按 `view === 'matters'` 触发。
+            */}
           {view === 'matters' && (
-            <>
-              <div className="wb-matter-bar">
-                <span className="wb-matter-bar-note">案卷 {matters.length} 个{selectedMatterId === null ? '' : '（已选 1 个）'}</span>
-                <button className="wb-btn primary" disabled={busy} onClick={() => openMatterForm(null)} data-matter-create><Icon name="plus" />新建案卷</button>
-              </div>
-              {/**
-                * 列表在上、详情在下（与知识库同一条布局判断）：面板是**窄栏**，
-                * 左右分栏会把两边都挤到读不出东西。点一行即选中，详情跟着换。
-                */}
-              <MatterList matters={matters} dicts={dicts} selectedId={selectedMatterId} onOpen={(matter) => setSelectedMatterId(matter.id)} />
-              {selectedMatter === null
-                ? (matters.length === 0 ? null : <div className="wb-empty">选一个案卷看详情与时间线。</div>)
-                : (
-                  <MatterDetail
-                    matter={selectedMatter}
-                    dicts={dicts}
-                    timeline={matterTimeline}
-                    notices={matterNotices}
-                    onEdit={() => openMatterForm(selectedMatter)}
-                    onAddNotice={openNoticeForm}
-                    onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
-                    deadlines={matterDeadlines}
-                    engineAvailable={bootstrap?.deadlineEngineAvailable === true}
-                    recomputeNote={matterRecomputeNote}
-                    onRecompute={() => void recomputeMatterDeadlines(selectedMatter.id)}
-                    onSetDeadlineStatus={(deadlineId, status) => void setMatterDeadlineStatus(deadlineId, status)}
-                    onSyncEvents={() => void syncMatterEvents(selectedMatter.id)}
-                    syncNote={matterSyncNote}
-                    busy={busy}
-                  />
-                )}
-            </>
+            <MatterPane
+              matters={matters}
+              dicts={dicts}
+              selectedMatterId={selectedMatterId}
+              selectedMatter={selectedMatter}
+              timeline={matterTimeline}
+              notices={matterNotices}
+              deadlines={matterDeadlines}
+              engineAvailable={bootstrap?.deadlineEngineAvailable === true}
+              recomputeNote={matterRecomputeNote}
+              syncNote={matterSyncNote}
+              busy={busy}
+              onOpen={(matter) => setSelectedMatterId(matter.id)}
+              onCreate={() => openMatterForm(null)}
+              onEdit={(matter) => openMatterForm(matter)}
+              onAddNotice={openNoticeForm}
+              onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
+              onRecompute={(matterId) => void recomputeMatterDeadlines(matterId)}
+              onSetDeadlineStatus={(deadlineId, status) => void setMatterDeadlineStatus(deadlineId, status)}
+              onSyncEvents={(matterId) => void syncMatterEvents(matterId)}
+            />
           )}
+          {/**
+            * 任务视图（H4-6）：筛选 + 排序 + 任务树搬去 `components/views/TasksView.tsx`。
+            * 筛选 / 排序 / 归档 / 展开四组状态仍留在容器 —— 前三个喂给下面两个派生
+            *（`visibleTaskTree` / `taskTypeTabs`），`expanded` 还被顶栏「收起全部」一起复位。
+            * `toggleTab` 也留在容器：它是"怎么把点选写回 `typeCodes`"的判定，不是画法。
+            */}
           {view === 'list' && (
-            <>
-              <div style={{ position: 'relative', zIndex: 25, display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <input
-                  style={{ position: 'relative', zIndex: 25, flex: 1, minWidth: 140, background: 'var(--dsw-alias-bg-base,#17171a)', border: '1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.15))', color: 'inherit', borderRadius: 8, padding: '7px 10px' }}
-                  placeholder="搜索标题 / 描述"
-                  value={taskFilter.keyword}
-                  onChange={(e) => setTaskFilter((prev) => ({ ...prev, keyword: e.target.value }))}
-                />
-                <MultiSelectDropdown
-                  label="状态"
-                  options={dictOf('status')}
-                  selected={taskFilter.statusCodes}
-                  open={openFilter === 'status'}
-                  onToggle={() => setOpenFilter((prev) => prev === 'status' ? null : 'status')}
-                  onClose={() => setOpenFilter(null)}
-                  onChange={(codes) => setTaskFilter((prev) => ({ ...prev, statusCodes: codes }))}
-                />
-                <MultiSelectDropdown
-                  label="优先级"
-                  options={dictOf('priority')}
-                  selected={taskFilter.priorityCodes}
-                  open={openFilter === 'priority'}
-                  onToggle={() => setOpenFilter((prev) => prev === 'priority' ? null : 'priority')}
-                  onClose={() => setOpenFilter(null)}
-                  onChange={(codes) => setTaskFilter((prev) => ({ ...prev, priorityCodes: codes }))}
-                />
-              </div>
-              {/* 类型从「多选下拉」升为 Tab（与知识库一致）；点=单选，Ctrl/Cmd+点=多选。
-                  状态与优先级仍保留下拉（同维度多选在那里更合适）。 */}
-              <TabBar
-                tabs={taskTypeTabs}
-                selected={taskFilter.typeCodes.length === 0 ? [ALL] : taskFilter.typeCodes}
-                onSelect={(code, multi) => setTaskFilter((prev) => {
-                  const next = toggleTab(prev.typeCodes.length === 0 ? [ALL] : prev.typeCodes, code, multi)
-                  return { ...prev, typeCodes: next.includes(ALL) ? [] : next }
-                })}
-                ariaLabel="任务类型"
-              />
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }}>排序</span>
-                <select
-                  style={{ background: 'var(--dsw-alias-bg-base,#17171a)', border: '1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.15))', color: 'inherit', borderRadius: 8, padding: '7px 10px' }}
-                  value={taskSortKey}
-                  onChange={(e) => setTaskSortKey(e.target.value as TaskSortKey)}
-                >
-                  <option value="dueAt">截止时间</option>
-                  <option value="priority">优先级</option>
-                  <option value="createdAt">创建时间</option>
-                  <option value="title">标题</option>
-                </select>
-                <button className="wb-btn" onClick={() => setTaskSortDir((prev) => prev === 'asc' ? 'desc' : 'asc')} title={taskSortDir === 'asc' ? '当前升序，点击切换为降序' : '当前降序，点击切换为升序'}>
-                  {taskSortDir === 'asc' ? '↑ 升序' : '↓ 降序'}
-                </button>
-                <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)' }}>共 {countTaskTree(visibleTaskTree)} 条</span>
-                <div style={{ flex: 1 }} />
-                <button className="wb-btn" disabled={isTaskFilterEmpty(taskFilter)} onClick={() => setTaskFilter({ keyword: '', statusCodes: [], priorityCodes: [], typeCodes: [] })}><Icon name="refresh" />清空</button>
-                <button className="wb-btn" onClick={() => {
-                  const next = !archivedMode
-                  setArchivedMode(next)
-                  if (next) { void api<{ tasks: Task[] }>('/api/workbench/tasks?archived=true').then((r) => setArchivedTasks(r.tasks)).catch(() => undefined) }
-                }}>{archivedMode ? '返回任务' : '查看归档'}</button>
-              </div>
-              <div className="wb-list">
-                <TaskTreeRows roots={visibleTaskTree} depth={0} expanded={expanded} toggle={toggleExpanded} dicts={dicts} onOpen={openTask} selectedId={selected?.task.id} pending={pendingMap} childrenOf={childrenOf} />
-                {archivedMode && archivedTasks.length === 0 && <div className="wb-empty">没有归档任务</div>}
-                {!archivedMode && tasks.length === 0 && <div className="wb-empty">还没有任务，点“快速录入”或“新建”开始</div>}
-                {!isTaskFilterEmpty(taskFilter) && visibleTaskTree.length === 0 && <div className="wb-empty">没有符合条件的任务，点“清空”恢复完整列表</div>}
-              </div>
-            </>
+            <TasksView
+              filter={taskFilter}
+              filterEmpty={isTaskFilterEmpty(taskFilter)}
+              statusOptions={dictOf('status')}
+              priorityOptions={dictOf('priority')}
+              openFilter={openFilter}
+              onToggleFilter={(name) => setOpenFilter((prev) => prev === name ? null : name)}
+              onCloseFilter={() => setOpenFilter(null)}
+              onKeyword={(keyword) => setTaskFilter((prev) => ({ ...prev, keyword }))}
+              onStatusCodes={(codes) => setTaskFilter((prev) => ({ ...prev, statusCodes: codes }))}
+              onPriorityCodes={(codes) => setTaskFilter((prev) => ({ ...prev, priorityCodes: codes }))}
+              typeTabs={taskTypeTabs}
+              onSelectType={(code, multi) => setTaskFilter((prev) => {
+                const next = toggleTab(prev.typeCodes.length === 0 ? [ALL] : prev.typeCodes, code, multi)
+                return { ...prev, typeCodes: next.includes(ALL) ? [] : next }
+              })}
+              sortKey={taskSortKey}
+              onSortKey={setTaskSortKey}
+              sortDir={taskSortDir}
+              onToggleSortDir={() => setTaskSortDir((prev) => prev === 'asc' ? 'desc' : 'asc')}
+              tree={visibleTaskTree}
+              onClearFilter={() => setTaskFilter({ keyword: '', statusCodes: [], priorityCodes: [], typeCodes: [] })}
+              archivedMode={archivedMode}
+              onToggleArchived={() => {
+                const next = !archivedMode
+                setArchivedMode(next)
+                if (next) { void api<{ tasks: Task[] }>('/api/workbench/tasks?archived=true').then((r) => setArchivedTasks(r.tasks)).catch(() => undefined) }
+              }}
+              taskCount={tasks.length}
+              archivedCount={archivedTasks.length}
+              expanded={expanded}
+              toggleExpanded={toggleExpanded}
+              dicts={dicts}
+              onOpenTask={openTask}
+              selectedTaskId={selected?.task.id}
+              pending={pendingMap}
+              childrenOf={childrenOf}
+            />
           )}
         </div>
 
         <div className="wb-detail">
           {view === 'knowledge'
-            ? knowledgeDraft !== null
-              ? (
-                <form className="wb-form" onSubmit={(e) => {
-                  e.preventDefault()
-                  if (knowledgeDraft.title.trim() === '') return
-                  const tags = knowledgeDraft.tags.split(/[,#，\s]+/).map((tag) => tag.trim()).filter((tag) => tag !== '').slice(0, 20)
-                  const isEdit = knowledgeEditId !== null
-                  const payload = { title: knowledgeDraft.title.trim(), contentMd: knowledgeDraft.contentMd, kindCode: knowledgeDraft.kindCode, tags, sourceTaskId: knowledgeDraft.sourceTaskId.trim() === '' ? null : knowledgeDraft.sourceTaskId.trim(), sourceReviewId: knowledgeDraft.sourceReviewId.trim() === '' ? null : knowledgeDraft.sourceReviewId.trim(), matterId: knowledgeDraft.matterId === '' ? null : knowledgeDraft.matterId, fileLink: knowledgeDraft.fileLink.trim() === '' ? null : knowledgeDraft.fileLink.trim() }
-                  void api(isEdit ? `/api/workbench/knowledge/${knowledgeEditId}` : '/api/workbench/knowledge', { method: isEdit ? 'PATCH' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-                    .then(() => { setKnowledgeDraft(null); setKnowledgeEditId(null); setKnowledgeRefreshKey((v) => v + 1); setNotice(isEdit ? '知识条目已更新' : '知识条目已创建') })
-                    .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-                }}>
-                  <h4 className="full" style={{ margin: 0 }}>{knowledgeEditId === null ? '新建知识条目' : '编辑知识条目'}</h4>
-                  <label className="full">标题<input value={knowledgeDraft.title} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, title: e.target.value })} placeholder="可检索的标题" /></label>
-                  <label>分类<select value={knowledgeDraft.kindCode} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, kindCode: e.target.value })}>{dictOf('knowledge_kind').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-                  <label>标签<input value={knowledgeDraft.tags} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, tags: e.target.value })} placeholder="用逗号/空格分隔，如 TTS, 踩坑" /></label>
-                  {/**
-                    * 归入案卷（阶段 5）：与「关联任务 id」是**两件事** ——
-                    * 关联任务是"这条经验是哪次干活沉淀的"（溯源），归入案卷是"它属于哪个案子"（归属）。
-                    * 归入后，该案卷目录下的会话会优先召回它（本任务 > 本案卷 > 全库）。
-                    */}
-                  <label>归入案卷（可选）<select value={knowledgeDraft.matterId} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, matterId: e.target.value })}><option value="">（不归入）</option>{matters.map((m) => <option key={m.id} value={m.id}>{m.caseNumber}{m.title === '' ? '' : ` · ${m.title}`}</option>)}</select></label>
-                  <label className="full">本地文件链接（可选）<input value={knowledgeDraft.fileLink} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, fileLink: e.target.value })} placeholder="file:// 或绝对路径，如 D:\docs\方案.md、/mnt/d/docs/方案.md" /></label>
-                  <label className="full">关联任务 id（可选）<input value={knowledgeDraft.sourceTaskId} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, sourceTaskId: e.target.value })} placeholder="留空表示不关联" /></label>
-                  <label className="full">正文（Markdown）<textarea rows={12} value={knowledgeDraft.contentMd} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, contentMd: e.target.value })} /></label>
-                  <div className="full" style={{ display: 'flex', gap: 8 }}><button className="wb-btn primary" type="submit"><Icon name="check" />保存</button><button className="wb-btn" type="button" onClick={() => { setKnowledgeDraft(null); setKnowledgeEditId(null) }}>取消</button></div>
-                </form>
-              )
-              : selectedKnowledge !== null
-                ? (
-                  <div className="wb-card">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <h4 style={{ flex: 1, margin: 0 }}>{selectedKnowledge.title}</h4>
-                      <button className="wb-btn" onClick={() => { setKnowledgeEditId(selectedKnowledge.id); setKnowledgeDraft({ title: selectedKnowledge.title, contentMd: selectedKnowledge.contentMd, kindCode: selectedKnowledge.kindCode, tags: selectedKnowledge.tags.join(', '), sourceTaskId: selectedKnowledge.sourceTaskId ?? '', sourceReviewId: selectedKnowledge.sourceReviewId ?? '', matterId: selectedKnowledge.matterId ?? '', fileLink: selectedKnowledge.fileLink ?? '' }) }}><Icon name="edit" />编辑</button>
-                      <button className="wb-btn" onClick={() => { if (window.confirm('删除这条知识？')) { void api(`/api/workbench/knowledge/${selectedKnowledge.id}`, { method: 'DELETE' }).then(() => { setSelectedKnowledge(null); setKnowledgeRefreshKey((v) => v + 1); setNotice('已删除') }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err))) } }}><Icon name="trash" />删除</button>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '8px 0' }}>
-                      <Badge dict={dictOf('knowledge_kind')} code={selectedKnowledge.kindCode} />
-                      {selectedKnowledge.tags.map((tag) => <span key={tag} style={{ fontSize: 12, color: '#999' }}>#{tag}</span>)}
-                      {/**
-                        * ⚠️ 用 `?? ''` 而不是 `=== null`：装盘完成、宿主还没重启的那段时间里，
-                        * 服务端还是**旧代码**，响应里根本没有 `matterId`（`undefined`）。
-                        * 直接判 `=== null` 会把"旧服务端"渲染成「案卷：（已删除的案卷）」——
-                        * 一句暴露给用户的假话（与 `withSettingsFallback` 防的是同一类事故）。
-                        */}
-                      {(selectedKnowledge.matterId ?? '') === '' ? null : (
-                        <span style={{ fontSize: 12, color: '#999' }}>
-                          案卷：{matters.find((m) => m.id === selectedKnowledge.matterId)?.caseNumber ?? '（已删除的案卷）'}
-                        </span>
-                      )}
-                    </div>
-                    {selectedKnowledge.fileLink !== null && selectedKnowledge.fileLink !== '' && (
-                      <div style={{ margin: '8px 0', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span>📎 本地文件：</span>
-                        <span className="wb-file-chip"><Icon name="file" size={12} /><code>{selectedKnowledge.fileLink}</code></span>
-                        <button className="wb-btn" onClick={() => { void openKnowledgeFile(selectedKnowledge.fileLink!) }}><Icon name="file" />打开文件</button>
-                      </div>
-                    )}
-                    {selectedKnowledge.sourceTaskId !== null && (
-                      <div style={{ margin: '8px 0', fontSize: 13 }}>
-                        🔗 关联任务：
-                        <button className="wb-btn" onClick={() => openTaskById(selectedKnowledge.sourceTaskId!)}>
-                          {tasks.find((t) => t.id === selectedKnowledge.sourceTaskId)?.title ?? selectedKnowledge.sourceTaskId}
-                        </button>
-                      </div>
-                    )}
-                    <MarkdownText text={selectedKnowledge.contentMd} />
-                  </div>
-                )
-                : <div className="wb-empty">← 从左侧选择或新建知识条目</div>
-            : selected === null
-            ? <div className="wb-empty">← 从左侧选择一个任务查看详情<br /><span style={{ fontSize: 12 }}>AI 澄清/咨询/拆解会跳转到官方会话区，完成后回这里确认草稿</span></div>
-            : (
-              <>
-                <div className="wb-card">
-                  {(
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <h4 style={{ flex: 1, margin: 0 }}>{selected.task.title}</h4>
-                        {/**
-                          * 「归档」移到详情页**右上角**（2026-10-01 用户要求）。
-                          * 原来它在下面那排 AI 动作按钮的最右边，一个低频且不可逆的动作
-                          * 混在高频动作里，还把那一行挤到换行（用户截图："归档掉到第二行"）。
-                          * 判定与确认弹窗一个字没改，只是位置和视觉权重变了：
-                          * 这里是 secondary + 危险色，与「编辑」并列。
-                          */}
-                        {!selected.task.archived && (
-                          <button
-                            className="wb-btn"
-                            style={{ color: '#e0645c', borderColor: 'color-mix(in srgb, #e0645c 45%, transparent)' }}
-                            title="归档后任务会从工作台列表隐藏（其子任务也会一并从列表隐藏），可在列表页「查看归档」中恢复"
-                            onClick={archiveSelectedTask}
-                          ><Icon name="archive" />归档</button>
-                        )}
-                        {!selected.task.archived && <button className="wb-btn" onClick={() => setEditDraft({ title: selected.task.title, description: selected.task.description, typeCode: selected.task.typeCode, priorityCode: selected.task.priorityCode, statusCode: selected.task.statusCode, aiPolicyCode: selected.task.aiPolicyCode, dueLocal: toLocalInput(selected.task.dueAt), workspacePath: selected.task.workspacePath ?? '', parentId: selected.task.parentId ?? '', estimatedMinutes: selected.task.estimatedMinutes === null ? '' : String(selected.task.estimatedMinutes), allDay: selected.task.allDay })}><Icon name="edit" />编辑</button>}
-                      </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '8px 0' }}>
-                        <Badge dict={dictOf('type')} code={selected.task.typeCode} />
-                        <Badge dict={dictOf('priority')} code={selected.task.priorityCode} />
-                        <Badge dict={dictOf('status')} code={selected.task.statusCode} />
-                      </div>
-                      {!selected.task.archived && (
-                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '8px 0 4px' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }}>状态
-                            <select style={{ background: 'var(--dsw-alias-bg-base,#17171a)', color: 'inherit', fontWeight: 600, border: '1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.2))', borderRadius: 8, padding: '6px 10px' }} value={selected.task.statusCode} onChange={(e) => void patchTask(selected.task.id, { statusCode: e.target.value })}>
-                              {dictOf('status').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}
-                            </select>
-                          </label>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }}>AI 策略
-                            <select style={{ background: 'var(--dsw-alias-bg-base,#17171a)', color: 'inherit', fontWeight: 600, border: '1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.2))', borderRadius: 8, padding: '6px 10px' }} value={selected.task.aiPolicyCode} onChange={(e) => void patchTask(selected.task.id, { aiPolicyCode: e.target.value })}>
-                              {dictOf('ai_policy').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}
-                            </select>
-                          </label>
-                        </div>
-                      )}
-                      <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>截止：{selected.task.effectiveDueAt === null ? '无' : fmtTime(selected.task.effectiveDueAt)}{selected.task.dueAt === null && selected.task.effectiveDueAt !== null ? '（继承父任务）' : ''}</div>
-                      {/* 预计耗时（v1.15.1）：参与当日候选排序，所以未填时必须说清"按默认算"。 */}
-                      <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>预计耗时：{selected.task.estimatedMinutes === null ? `默认 ${settings.defaultEstimateMinutes} 分钟（未单独设置）` : `${selected.task.estimatedMinutes} 分钟`}{selected.task.allDay ? ' · 全天' : ''}</div>
-                      <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>AI 工作区：{selected.task.effectiveWorkspacePath ?? (settings.defaultWorkspace || '默认工作区未设置')}{selected.task.workspacePath === null && selected.task.effectiveWorkspacePath !== null ? '（继承父任务）' : ''}</div>
-                    </>
-                  )}
-                </div>
-
-                {/**
-                  * 进度卡（T1/D04）：**独立组件** `TaskProgress`，列表/详情/计划行共用同一份。
-                  * 判定全部来自纯模块 `taskProgressView()`——这里不写 `statusCode === 'done' ?` 这类分支。
-                  * `pending` 传的是列表那次**共用查询**折出来的 Map（避免 N+1），
-                  * 但详情页以自身 `pendingCompletion` 为准（它是最新的单任务读取）。
-                  */}
-                <TaskProgress
-                  view={taskProgressView({
-                    task: selected.task,
-                    children: selected.children,
-                    pending: selected.pendingCompletion !== undefined
-                      ? new Map([[selected.task.id, selected.pendingCompletion]])
-                      : pendingMap,
-                  })}
-                  onSave={selected.task.statusCode === 'done' || selected.task.statusCode === 'cancelled' || selected.task.archived
-                    ? undefined
-                    : (percent) => saveProgress(selected.task.id, percent)}
-                  onComplete={selected.task.statusCode === 'done' || selected.task.statusCode === 'cancelled' || selected.task.archived
-                    ? undefined
-                    : () => completeTaskFromProgress(selected.task.id)}
-                />
-
-                {editDraft === null && (
-                  <>
-                    <div className="wb-detail-actions">
-                      {selected.task.archived ? (
-                        <button className="wb-btn primary" onClick={() => { void api(`/api/workbench/tasks/${selected.task.id}/restore`, { method: 'POST' }).then(() => { setNotice('任务已恢复'); setArchivedMode(false); void refresh() }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))) }}><Icon name="refresh" />恢复任务</button>
-                      ) : (
-                        <>
-                          {selected.task.statusCode === 'done' || selected.task.statusCode === 'cancelled'
-                            ? <button className="wb-btn" disabled={busy} onClick={() => {
-                                    const existing = selected.sessions.find((x) => x.role_code === 'review')
-                                    if (existing !== undefined && typeof existing.session_id === 'string' && existing.session_id !== '' && aiSessionUsable(runtime, existing.session_id)) {
-                                      openSessionInPanel(existing.session_id)
-                                    } else {
-                                      void startAISession('review', selected.task, selected.task.title)
-                                    }
-                                  }}><Icon name="report" />{selected.sessions.some((x) => x.role_code === 'review') ? '进入复盘会话' : 'AI 复盘'}</button>
-                                : <>
-                                    {/**
-                                      * ⚠️ **文案精简**（2026-10-01 用户要求）。
-                                      *
-                                      * 原先把"父任务 / 新会话续作 / 需可执行"三件事全部拼进按钮文字，
-                                      * 父任务上就成了「AI 执行（父任务）（新会话续作）（需可执行）」——
-                                      * 一行放不下，整个动作行被挤到换行。用户明确要求精简。
-                                      *
-                                      * 精简口径：**按钮上只留"能不能点、点了干什么"**，
-                                      * 其余全放进 `title`（悬停可看，不占宽度）。唯一保留在文字里的是
-                                      * 「父任务」——它是**动作语义的一部分**（验收会级联子任务），
-                                      * 不适合只藏在悬停里。
-                                      */}
-                                    <button
-                                      className="wb-btn primary"
-                                      disabled={busy || selected.task.aiPolicyCode !== 'execute'}
-                                      title={selected.task.aiPolicyCode !== 'execute'
-                                        ? '请先在“AI 策略”里开启「可执行」'
-                                        : selected.children.length > 0
-                                          ? '执行父任务：验收通过后未完成子任务会级联完成；所有子节点完成后父节点也会自动完成'
-                                          : selected.sessions.some((x) => x.role_code === 'execute')
-                                            ? '新建执行会话并携带此前会话提示'
-                                            : '开始执行'}
-                                      onClick={() => void startAISession('execute', selected.task, selected.task.title, selected.sessions.filter((x) => x.role_code === 'execute'))}
-                                    ><Icon name="ai" />AI 执行{selected.children.length > 0 ? '（父任务）' : ''}</button>
-                                    <button className="wb-btn" disabled={busy} title="就这个任务向 AI 咨询（不改任务状态）" onClick={() => void startAISession('consult', selected.task, selected.task.title)}><Icon name="ai" />AI 协助</button>
-                                    <button className="wb-btn" disabled={busy} title="让 AI 把任务拆成子任务提案（确认后才建）" onClick={() => void startAISession('breakdown', selected.task, selected.task.title)}><Icon name="breakdown" />AI 拆解</button>
-                                    <button className="wb-btn" title="手动添加子任务" onClick={() => { setSubtaskParent(selected.task); setDetailTab('children') }}><Icon name="subtask" />子任务</button>
-                                  </>}
-                          {/* 「归档」已移到详情页右上角（与「编辑」并列），见本卡片标题那一行 */}
-                        </>
-                      )}
-                    </div>
-                    {/**
-                      * ⚠️ 这里原本有一段独立提示（"执行父任务：验收通过后未完成子任务会级联完成…" /
-                      * "执行会话完成后，AI 会提交验收申请…"）。用户要求删除：它独占一行高度，
-                      * 而**同样的语义已经在两处说清**——
-                      * ① 点「完成任务」时的确认弹窗（`completeTaskFromProgress` 的 window.confirm 写明级联）；
-                      * ② 「AI 执行」按钮的 `title`（"执行父任务：验收通过后未完成子任务会级联完成"）。
-                      * 删掉它不丢语义，只是不再重复占高度。
-                      */}
-                    <div className="wb-detail-tabs">
-                      <button className={`wb-detail-tab ${detailTab === 'desc' ? 'on' : ''}`} onClick={() => setDetailTab('desc')}>描述</button>
-                      <button className={`wb-detail-tab ${detailTab === 'children' ? 'on' : ''}`} onClick={() => setDetailTab('children')}>子任务<span className="count">{selected.children.length}</span></button>
-                      <button className={`wb-detail-tab ${detailTab === 'sessions' ? 'on' : ''}`} onClick={() => setDetailTab('sessions')}>会话<span className="count">{selected.sessions.length}</span></button>
-                      <button className={`wb-detail-tab ${detailTab === 'records' ? 'on' : ''}`} onClick={() => setDetailTab('records')}>记录<span className="count">{selected.reminders.length + (selected.reviews?.length ?? 0) + (selected.events?.length ?? 0)}</span></button>
-                    </div>
-
-                    {detailTab === 'desc' && (
-                      <div className="wb-card">
-                        <MarkdownText text={selected.task.description || '（无描述）'} />
-                      </div>
-                    )}
-
-                    {detailTab === 'children' && (
-                      <>
-                        {subtaskParent !== null && subtaskParent.id === selected.task.id && (
-                          <form className="wb-form wb-form-panel" onSubmit={(e) => {
-                            e.preventDefault()
-                            const form = new FormData(e.currentTarget)
-                            const title = String(form.get('title') ?? '').trim()
-                            if (title === '') return
-                            const due = String(form.get('due') ?? '')
-                            void api('/api/workbench/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, typeCode: String(form.get('type') ?? subtaskParent.typeCode), priorityCode: String(form.get('priority') ?? subtaskParent.priorityCode), statusCode: 'todo', parentId: subtaskParent.id, dueAt: due === '' ? null : new Date(due).toISOString() }) }).then(() => { setSubtaskParent(null); setNotice('子任务已创建'); void refresh() }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-                          }}>
-                            <h4 className="full" style={{ margin: 0 }}><Icon name="subtask" />新建子任务（父任务：{subtaskParent.title}）</h4>
-                            <label className="full">标题<input name="title" required placeholder="子任务标题" /></label>
-                            <label>类型<select name="type" defaultValue={subtaskParent.typeCode}>{dictOf('type').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-                            <label>优先级<select name="priority" defaultValue={subtaskParent.priorityCode}>{dictOf('priority').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-                            <label>截止时间<input name="due" type="datetime-local" /></label>
-                            <div className="full" style={{ display: 'flex', gap: 8 }}><button className="wb-btn primary" type="submit">保存子任务</button><button className="wb-btn" type="button" onClick={() => setSubtaskParent(null)}>取消</button></div>
-                          </form>
-                        )}
-                        <div className="wb-card">
-                          <h4>子任务（{selected.children.length}）{selected.children.length > 0 ? ` · ${selected.children.filter((c) => c.statusCode === 'done').length}/${selected.children.length} 已完成` : ''}</h4>
-                          {selected.children.map((c) => <div key={c.id} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}><Badge dict={dictOf('status')} code={c.statusCode} /> <span onClick={() => openTask(c)} style={{ cursor: 'pointer' }}>{c.title}</span></div>)}
-                          {selected.children.length === 0 && <div style={{ color: '#999', fontSize: 12 }}>无</div>}
-                        </div>
-                      </>
-                    )}
-
-                    {detailTab === 'sessions' && (
-                      <div className="wb-card">
-                        <h4>关联会话（{selected.sessions.length}）<span style={{ flex: 1 }} />{!sessionPickerOpen && <button className="wb-btn" onClick={() => { setSessionPickerQuery(''); setSessionPickerOpen(true) }}><Icon name="plus" />添加已有对话</button>}</h4>
-                        {selected.sessions.length > 0
-                          ? (
-                              <div className="wb-session-list">
-                                {selected.sessions.map((s) => {
-                                  const sid = typeof s.session_id === 'string' ? s.session_id : ''
-                                  const role = String(s.role_code ?? '')
-                                  const sessionInfo = sessionListSnapshot.byId[sid]
-                                  const name = sessionInfo?.displayTitle ?? shortId(sid)
-                                  return (
-                                    <button key={`${sid}-${role}`} className="wb-session-row" onClick={() => {
-                                      if (sid === '') return
-                                      /** 会话页签的行来自历史关联：那条会话可能已被归档或删除，裸切只会静默失败。 */
-                                      if (!aiSessionUsable(runtime, sid)) { setNotice('这条会话已被归档或已删除，无法打开'); return }
-                                      openSessionInPanel(sid)
-                                    }} title={roleLabel(role)}>
-                                      <span className="wb-session-role">{roleLabel(role)}</span>
-                                      <span className="wb-session-name">{name}</span>
-                                      <span className="wb-session-open">打开 ↗</span>
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            )
-                          : <div className="wb-empty">暂无关联会话；点击“添加已有对话”关联，或在任务上启动 AI 会话自动关联。</div>}
-                        {sessionPickerOpen && (
-                          <div className="wb-session-picker">
-                            <div className="wb-session-picker-bar">
-                              <input className="wb-session-search" placeholder="搜索会话名称 / 工作区" value={sessionPickerQuery} onChange={(e) => setSessionPickerQuery(e.target.value)} autoFocus />
-                              <select className="wb-session-role-select" value={sessionPickerRole} onChange={(e) => setSessionPickerRole(e.target.value)}>
-                                {dictOf('session_role').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}
-                              </select>
-                              <button className="wb-btn" onClick={() => { setSessionPickerOpen(false); setSessionPickerQuery('') }}>取消</button>
-                            </div>
-                            <div className="wb-session-picker-list">
-                              {sessionCandidates.length > 0
-                                ? sessionCandidates.map((item) => {
-                                    const linked = linkedSessionIds.has(item.id)
-                                    return (
-                                      <button key={item.id} className="wb-session-option" disabled={sessionPickerBusy || linked} onClick={() => void linkExistingSession(item.id)}>
-                                        <span className="wb-session-name">{item.displayTitle}</span>
-                                        {item.cwd !== undefined && <span className="wb-session-cwd">{item.cwd.split(/[\\/]/).filter(Boolean).pop() ?? item.cwd}</span>}
-                                        <span className="wb-session-add">{linked ? '已关联' : '添加'}</span>
-                                      </button>
-                                    )
-                                  })
-                                : <div className="wb-empty">没有找到可添加的会话</div>}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {detailTab === 'records' && (
-                      <>
-                        <div className="wb-card">
-                          <h4>提醒（{selected.reminders.length}）</h4>
-                          {selected.reminders.map((r) => {
-                            // 三种终态分开显示：已送达 / 已跳过（太旧）/ 用户已确认 —— 原先把它们都塞在 fired_at 里
-                            const ackAt = r.acknowledgedAt ?? null
-                            const skipAt = r.skippedAt ?? null
-                            const state = ackAt !== null
-                              ? `已确认 ${fmtTime(ackAt)}`
-                              : skipAt !== null
-                                ? '已跳过（超出补发窗口）'
-                                : r.firedAt === null
-                                  ? '未触发'
-                                  : `已送达 ${fmtTime(r.firedAt)}`
-                            const settled = ackAt !== null || skipAt !== null || r.firedAt !== null
-                            return (
-                              <div key={r.id} style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                                <Icon name="bell" size={13} />
-                                {r.offsetMinutes === 0 ? '准时（截止时间）' : `提前 ${r.offsetMinutes} 分钟`} · {r.methodCode === 'os' ? '系统通知' : '页面/桌面通知'} · {state}
-                                {settled && <button className="wb-btn" style={{ padding: '1px 7px', fontSize: 11 }} title="清掉终态、回到未处理，到点会再提醒一次" onClick={() => void resetReminderState(r.id)}>重新武装</button>}
-                              </div>
-                            )
-                          })}
-                          {selected.task.effectiveDueAt === null
-                            ? <div style={{ fontSize: 12, color: '#999' }}>任务还没有截止时间，请先在详情里设置截止时间，再添加提醒。</div>
-                            : selected.task.statusCode === 'done' || selected.task.statusCode === 'cancelled'
-                              ? <div style={{ fontSize: 12, color: '#999' }}>已完成/已取消的任务不再提醒。</div>
-                              : (
-                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                                  {[{ offset: 0, label: '准时' }, { offset: 15, label: '提前15分' }, { offset: 30, label: '提前30分' }, { offset: 60, label: '提前1小时' }, { offset: 1440, label: '提前1天' }].map((item) => (
-                                    <button key={item.offset} className="wb-btn" disabled={busy} onClick={() => void addTaskReminder(item.offset)}>{item.label}</button>
-                                  ))}
-                                </div>
-                              )}
-                          <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>到提醒时间后：页内横幅 + 桌面通知（设置中授权）。超出补发窗口（默认 24 小时）的提醒会自动标为「已跳过」；任何一条只要显示为已送达 / 已跳过 / 已确认，都可以点「重新武装」让它重新提醒。</div>
-                        </div>
-                        <div className="wb-card">
-                          <h4>复盘记录（{selected.reviews?.length ?? 0}）</h4>
-                          {(selected.reviews ?? []).map((rv, i) => {
-                            const reviewId = String(rv.id ?? '')
-                            const existingKnowledge = taskKnowledge.find((entry) => entry.sourceReviewId === reviewId)
-                            return (
-                              <div key={String(rv.id ?? i)} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid var(--wb-border-soft)' }}>
-                                <MarkdownText text={String(rv.summary_md ?? '')} />
-                                {existingKnowledge !== undefined
-                                  ? <button className="wb-btn" style={{ marginTop: 6 }} onClick={() => { setKnowledgeDraft(null); setKnowledgeEditId(null); setSelectedKnowledge(existingKnowledge); setView('knowledge') }}><Icon name="book" />✅ 已沉淀，打开知识条目</button>
-                                  : <button className="wb-btn" style={{ marginTop: 6 }} onClick={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: `复盘：${selected.task.title}`, contentMd: String(rv.summary_md ?? ''), kindCode: 'lesson', tags: '复盘', sourceTaskId: selected.task.id, sourceReviewId: reviewId, matterId: '', fileLink: '' }); setSelectedKnowledge(null); setView('knowledge') }}><Icon name="book" />💡 沉淀为经验</button>}
-                              </div>
-                            )
-                          })}
-                          {(selected.reviews?.length ?? 0) === 0 && <div style={{ fontSize: 12, color: '#999' }}>暂无复盘；已完成任务可用“AI 复盘”。</div>}
-                        </div>
-                        <div className="wb-card">
-                          <h4>变更历史（{selected.events?.length ?? 0}）</h4>
-                          {(() => {
-                            const events = selected.events ?? []
-                            const shown = eventsExpanded ? events : events.slice(-5).reverse()
-                            let lastDate = ''
-                            return (
-                              <>
-                                {shown.map((ev, i) => {
-                                  const at = String(ev.at ?? '')
-                                  const dateKey = at.slice(0, 10)
-                                  const time = at.slice(11, 16)
-                                  const code = String(ev.event_code ?? '')
-                                  const actor = String(ev.actor ?? '')
-                                  const note = typeof ev.note === 'string' ? ev.note : ''
-                                  const isNewDate = dateKey !== lastDate
-                                  lastDate = dateKey
-                                  return (
-                                    <div key={String(ev.id ?? i)}>
-                                      {isNewDate && <div className="wb-event-group-date">{dateKey}</div>}
-                                      <div className="wb-event-row">
-                                        <span className="wb-event-icon">{eventIcon(code)}</span>
-                                        <div className="wb-event-main">
-                                          <div className="wb-event-title">{eventLabel(code)}{actor !== '' ? ` · ${actor}` : ''}</div>
-                                          {note !== '' && <div className="wb-event-meta">{note}</div>}
-                                          <div className="wb-event-meta">{time}</div>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-                                {events.length === 0 && <div style={{ fontSize: 12, color: '#999' }}>暂无变更记录。</div>}
-                                {events.length > 5 && (
-                                  <button className="wb-btn" style={{ marginTop: 8 }} onClick={() => setEventsExpanded((v) => !v)}>
-                                    {eventsExpanded ? '收起' : `展开全部（${events.length} 条）`}
-                                  </button>
-                                )}
-                              </>
-                            )
-                          })()}
-                        </div>
-                      </>
-                    )}
-                  </>
-                )}
-              </>
+            ? (
+              <KnowledgeDetailPane
+                draft={knowledgeDraft}
+                editing={knowledgeEditId !== null}
+                selected={selectedKnowledge}
+                dictOf={dictOf}
+                matters={matters}
+                taskTitleOf={knowledgeTaskTitle}
+                onDraftChange={updateKnowledgeDraft}
+                onSubmit={() => void saveKnowledgeDraft()}
+                onCancel={cancelKnowledgeDraft}
+                onEdit={beginEditKnowledge}
+                onDelete={() => void deleteKnowledge()}
+                onOpenFile={(link) => void openKnowledgeFile(link)}
+                onOpenTask={(taskId) => openTaskById(taskId)}
+              />
+            )            : (
+              <TaskDetailPane
+                selected={selected}
+                busy={busy}
+                dictOf={dictOf}
+                editing={editDraft !== null}
+                isSessionUsable={(sessionId) => aiSessionUsable(runtime, sessionId)}
+                detailTab={detailTab}
+                onDetailTab={setDetailTab}
+                subtaskParent={subtaskParent}
+                onBeginSubtask={(task) => { setSubtaskParent(task); setDetailTab('children') }}
+                onEndSubtask={() => setSubtaskParent(null)}
+                onCreateSubtask={createSubtask}
+                eventsExpanded={eventsExpanded}
+                onToggleEvents={() => setEventsExpanded((v) => !v)}
+                sessionPicker={{
+                  open: sessionPickerOpen,
+                  query: sessionPickerQuery,
+                  role: sessionPickerRole,
+                  busy: sessionPickerBusy,
+                  candidates: sessionCandidates,
+                  linkedIds: linkedSessionIds,
+                  onOpen: () => { setSessionPickerQuery(''); setSessionPickerOpen(true) },
+                  onClose: () => { setSessionPickerOpen(false); setSessionPickerQuery('') },
+                  onQuery: setSessionPickerQuery,
+                  onRole: setSessionPickerRole,
+                  onLink: (sessionId) => void linkExistingSession(sessionId),
+                }}
+                sessionListSnapshot={sessionListSnapshot}
+                pending={pendingMap}
+                onEdit={beginEditTask}
+                onArchive={archiveSelectedTask}
+                onRestore={restoreSelectedTask}
+                onPatch={patchSelectedTask}
+                onSaveProgress={saveSelectedProgress}
+                onCompleteFromProgress={completeSelectedFromProgress}
+                onStartAI={startDetailAI}
+                onOpenSession={openSessionInPanel}
+                onOpenTask={openTask}
+                onAddReminder={(offsetMinutes) => void addTaskReminder(offsetMinutes)}
+                onResetReminder={(reminderId) => void resetReminderState(reminderId)}
+                notify={setNotice}
+                taskKnowledge={taskKnowledge}
+                onOpenKnowledge={openKnowledgeEntry}
+                onSinkReview={sinkReviewToKnowledge}
+                defaultEstimateMinutes={settings.defaultEstimateMinutes}
+                defaultWorkspace={settings.defaultWorkspace}
+              />
             )}
         </div>
       </div>
+      {/**
+        * 快速录入弹窗（H4-7）：一句话 + 附件 + 工作区 / 技能 / 角色 / 模型搬去
+        * `components/dialogs/QuickEntryModal.tsx`。**一个 state 都没搬** ——
+        * 工作区预填由上面的 `openQuickEntry` 判定（有行为级测试逐字抽它跑），
+        * 附件刻意**跨开关保留**（容器不在打开时清空它），
+        * 模型选择还与共享提示词弹窗共用同一份 state。
+        * 弹窗只管画与发意图；装配（记工作区、起澄清会话）留在 `submitQuickEntry`。
+        */}
       {showQuick && (
-        <Modal
-          title={<><Icon name="sparkles" />快速录入</>}
-          size="md"
+        <QuickEntryModal
+          text={quickText}
+          onText={setQuickText}
+          attachments={quickAttachments}
+          attachmentNotice={quickAttachmentNotice}
+          onAddFiles={addQuickAttachments}
+          onRemoveAttachment={removeQuickAttachment}
+          workspace={quickWorkspace}
+          workspaceTouched={quickWorkspaceTouched}
+          workspaceSourceLabel={quickWorkspaceSourceLabel(quickWorkspaceSource)}
+          workspaceCandidates={workspaceChoices}
+          workspacePlaceholder={settings.defaultWorkspace || '例如 D:\\Code\\my-repo 或 /mnt/d/code/my-project'}
+          showForget={quickWorkspaceSource === 'last-manual' && !quickWorkspaceTouched}
+          onWorkspaceChange={(path) => { setQuickWorkspaceTouched(true); setQuickWorkspace(path) }}
+          onBrowse={() => openDirPicker('quick')}
+          onForget={() => void forgetQuickWorkspace(quickWorkspace)}
+          followFolder={quickFollowFolder}
+          onFollowFolder={setQuickFollowFolder}
+          skillCatalog={skillCatalog}
+          skillsLoading={skillsLoading}
+          skillsAvailable={skillsAvailable}
+          skillProblem={skillProblem}
+          selectedSkills={selectedSkills}
+          onToggleSkill={toggleSkill}
+          onRetrySkills={() => void loadSkills()}
+          persona={quickPersona}
+          onPersonaChange={setQuickPersona}
+          runtime={runtime}
+          modelSelection={quickModelSelection}
+          onModelChange={setQuickModelSelection}
+          modelModalityTable={modelModalityTable}
+          onModelLoaded={() => { void loadModelModalityTable().then(setModelModalityTable) }}
+          busy={busy}
+          onError={setError}
+          onNotice={(message) => pushToast(message, 'success')}
           onClose={() => setShowQuick(false)}
-          footer={(
-            <>
-              <span className="wb-foot-note">会跳转到官方会话区，由 AI 澄清后生成任务草稿</span>
-              <button className="wb-btn" onClick={() => { clearQuickAttachments(); setShowQuick(false) }}>取消</button>
-              <button
-                className="wb-btn primary"
-                disabled={busy || (quickText.trim() === '' && quickAttachments.length === 0)}
-                onClick={() => {
-                  /**
-                   * 工作区选择随会话一起带下去。
-                   *
-                   * ⚠️ v1.15.1 起**不再在这里拼文件夹名**：资料夹名是
-                   * `<任务ID>-<标题片段>`，而任务 ID 由 `startAISession` 在澄清前预留
-                   * （这里拿不到）。所以只传"用户选的目录"与"要不要在里面建任务资料夹"。
-                   *
-                   * ⚠️ v1.15.2：「最近手动选择」的清单只管**用户真的动过这个输入框**的选择
-                   * （`shouldRememberQuickWorkspace`）。自动预填进来的值一旦被记进去，
-                   * 下一次它就变成"上次手动选择"—— 默认值自己污染自己。
-                   */
-                  const chosen = quickWorkspace.trim()
-                  if (shouldRememberQuickWorkspace(quickWorkspaceTouched, chosen)) void rememberQuickWorkspace(chosen)
-                  void startAISession('clarify', null, quickText, [], undefined, chosen, {
-                    attachments: quickAttachments,
-                    followFolder: quickFollowFolder,
-                    /** 角色选择随会话一起带下去（澄清 mode 的角色入口就在这里）。 */
-                    persona: quickPersona,
-                  })
-                }}
-              >
-                创建澄清会话
-              </button>
-            </>
-          )}
-        >
-          <label className="wb-field">
-            <span>一句话描述任务</span>
-            <textarea
-              autoFocus
-              rows={3}
-              value={quickText}
-              onChange={(e) => setQuickText(e.target.value)}
-              onPaste={(e) => {
-                const files = Array.from(e.clipboardData.files)
-                if (files.length > 0) {
-                  e.preventDefault()
-                  addQuickAttachments(files)
-                }
-              }}
-              placeholder="一句话描述任务，例如：周五 10:30 接待重要客户；也可以粘贴或拖入图片、PDF、DOCX"
-            />
-          </label>
-
-          {/* ---------------- 附件（v1.15.1） ----------------
-              拖入/粘贴/选择三种入口都走 addQuickAttachments；
-              不收的文件会在下面用 `wb-quick-attach-note` 给出**逐条中文原因**（不静默丢弃）。 */}
-          <div
-            className="wb-field"
-            onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault() }}
-            onDrop={(e) => {
-              const files = Array.from(e.dataTransfer.files)
-              if (files.length === 0) return
-              e.preventDefault()
-              addQuickAttachments(files)
-            }}
-          >
-            <span>
-              附件
-              <span className="wb-field-note">
-                图片最多 {MAX_QUICK_IMAGES} 张 · PDF/DOCX 最多 {MAX_QUICK_DOCUMENTS} 份 · 单份 ≤ 5MB
-              </span>
-            </span>
-            {quickAttachments.length > 0 && (
-              <div className="wb-quick-attach-rail" aria-label="快速录入附件">
-                {quickAttachments.map((item) => (
-                  <div className="wb-quick-attach-item" key={item.id} title={isQuickImageDraft(item) ? (item.file.name || '图片') : item.name}>
-                    {isQuickImageDraft(item)
-                      ? <img src={item.previewUrl} alt={item.file.name || '图片'} />
-                      : <Icon name="file" size={18} />}
-                    <span className="wb-quick-attach-name">
-                      {isQuickImageDraft(item) ? (item.file.name || '图片') : `${item.name}${item.truncated ? '（已截断）' : ''}`}
-                    </span>
-                    <button type="button" className="wb-quick-attach-remove" onClick={() => removeQuickAttachment(item.id)} aria-label="移除附件">×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {quickAttachmentNotice !== null && <div className="wb-quick-attach-note">{quickAttachmentNotice}</div>}
-            <div className="wb-quick-actions">
-              <input
-                ref={quickImageInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.docx"
-                multiple
-                hidden
-                onChange={(e) => {
-                  if (e.currentTarget.files !== null) addQuickAttachments(Array.from(e.currentTarget.files))
-                  e.currentTarget.value = ''
-                }}
-              />
-              <button type="button" className="wb-btn" disabled={busy} onClick={() => quickImageInputRef.current?.click()}>
-                <Icon name="image" />添加附件
-              </button>
-              <ModelPicker
-                runtime={runtime}
-                value={quickModelSelection}
-                onChange={setQuickModelSelection}
-                modalityTable={modelModalityTable}
-                disabled={busy}
-                onError={setError}
-                onLoaded={() => { void loadModelModalityTable().then(setModelModalityTable) }}
-              />
-            </div>
-          </div>
-
-          {/* ---------------- 工作区选择（v1.14.0；2026-10-01 上移到技能/角色之前） ----------------
-              说明文字一律用 <div className="wb-hint"> 而不是 <p>/<label>：
-              `.wb-hint` 自带 margin，而 `.wb-field` 的标签是 display:block、
-              里面的 <input> 是行内元素 —— 把提示塞进 <label> 会被输入框的基线顶开重叠
-              （2026-09-12 用户实测："提示文字被上方输入框遮挡"）。
-
-              用户要求（2026-10-01 第二张截图）：把这一组**移到技能/角色选择之上**，
-              并压缩高度。原来的顺序是「技能 → 角色 → 工作区」，
-              现在改成「工作区 → 技能 → 角色」。
-              注意：三项都只是**本次会话的输入**，彼此没有依赖关系，
-              所以移动顺序不改变任何判定（判定仍全在纯模块里）。 */}
-          {/**
-            * 「AI 会话工作区」——批次2 #2：三个入口共用 `WorkspacePicker`。
-            *
-            * 两种选法（用户原始诉求）：**已有工作区下拉** + **「浏览…」文件夹弹框**；
-            * 手打路径照旧。候选集只剩一处实现（`workspaceCandidates`），
-            * 原先现场拼的那行 `new Set([...recent, ...openWorkspacePaths, default])` 已删 ——
-            * 它的去重口径与全项目的 `recentWorkspaceKey` 不一致。
-            *
-            * 「不再记住」保留原条件（只有默认值来自"上次手动选择"且用户没动过时才显示）：
-            * 它是**唯一**的"清掉上次手动选择"出口，删了会让"设置里的默认工作区"永远不生效
-            * （v1.15.2 修过的缺陷）。
-            */}
-          <WorkspacePicker
-            value={quickWorkspace}
-            touched={quickWorkspaceTouched}
-            sourceLabel={quickWorkspaceSourceLabel(quickWorkspaceSource)}
-            candidates={workspaceChoices}
-            disabled={busy}
-            placeholder={settings.defaultWorkspace || '例如 D:\\Code\\my-repo 或 /mnt/d/code/my-project'}
-            onChange={(path) => { setQuickWorkspaceTouched(true); setQuickWorkspace(path) }}
-            onBrowse={() => openDirPicker('quick')}
-            showForget={quickWorkspaceSource === 'last-manual' && !quickWorkspaceTouched}
-            onForget={() => void forgetQuickWorkspace(quickWorkspace)}
-          />
-          {quickWorkspace.trim() !== '' && (
-            <label className="wb-inline-check">
-              <input
-                type="checkbox"
-                checked={quickFollowFolder}
-                onChange={(e) => setQuickFollowFolder(e.target.checked)}
-              />
-              <span>在该工作区下建任务资料夹（`&lt;任务ID&gt;-&lt;标题片段&gt;`；不勾 = 直接用它本身）</span>
-            </label>
-          )}
-          {/**
-            * ⚠️ 这里原本还有两行长提示（"默认值取「上次手动选择的目录」…路径不存在时会明确报错" /
-            * "AI 会先澄清必要信息（一次一个主题，最多 5 轮）…"）。用户要求删除：它们各占一行，
-            * 而两条语义都已有去处 ——
-            *   · 默认值来源：就在上面的字段名后面（`wb-field-note` 的"上次手动选择 / 系统默认"，由判定给出）；
-            *   · 路径报错：真出错时以红色错误行就地显示（不静默换目录，这一点没变）；
-            *   · 澄清轮数：弹窗按钮文案与澄清流程本身已经说明，不必事前占高度。
-            */}
-
-          {/* ---------------- 技能选择（2026-10-01 补上） ----------------
-              用户反馈："快速录入弹框页面无法选择 SKill。"
-              与共享提示词弹窗**同一个组件、同一份 selectedSkills**，所以这里选的技能
-              会真的进提示词（`startAISession` 的 clarify 分支读的就是 selectedSkills）。 */}
-          <SkillPicker
-            catalog={skillCatalog}
-            loading={skillsLoading}
-            available={skillsAvailable}
-            problem={skillProblem}
-            selected={selectedSkills}
-            onToggle={toggleSkill}
-            onRetry={() => void loadSkills()}
-            disabled={busy}
-          />
-
-          {/* ---------------- 角色选择（D13-B） ----------------
-              与共享提示词弹窗**同一个组件、同一套选择逻辑**（需求 §6.3）。
-              这样 10 个 mode 都有角色入口：9 个走提示词弹窗，澄清走这里（快速录入）。 */}
-          <PersonaPicker
-            value={quickPersona}
-            onChange={setQuickPersona}
-            disabled={busy}
-            onError={setError}
-            onNotice={(message) => pushToast(message, 'success')}
-          />
-
-          {/* ---------------- 工作区选择已上移到技能选择之前（2026-10-01） ----------------
-              用户要求把「AI 会话工作区」这一组挪到技能/角色上面，所以这里不再重复渲染。
-              整组（字段 + 不再记住 + 任务资料夹勾选）只有一处实现，避免两处装配打架。*/}
-        </Modal>
+          onCancel={() => { clearQuickAttachments(); setShowQuick(false) }}
+          onSubmit={submitQuickEntry}
+        />
       )}
 
+      {/**
+        * 新建任务表单（H4-8）：画法搬去 `components/dialogs/NewTaskModal.tsx`。
+        * `formWorkspace` / `showForm` 仍住容器 —— 目录浏览的写回口（`applyWorkspaceDir`）
+        * 与提交后的 `createTask` 都在这里。
+        */}
       {showForm && (
-        <Modal
-          title={<><Icon name="plus" />新建任务</>}
-          size="md"
+        <NewTaskModal
+          typeOptions={dictOf('type')}
+          priorityOptions={dictOf('priority')}
+          statusOptions={dictOf('status')}
+          defaultEstimateMinutes={settings.defaultEstimateMinutes}
+          workspace={formWorkspace}
+          onWorkspaceChange={setFormWorkspace}
+          workspaceCandidates={workspaceChoices}
+          workspacePlaceholder={settings.defaultWorkspace || '默认工作区未设置'}
+          busy={busy}
+          onBrowse={() => openDirPicker('form')}
           onClose={() => setShowForm(false)}
-        >
-          <form className="wb-form" id="wb-new-task-form" onSubmit={(e) => void createTask(e)}>
-            <label className="full">标题<input name="title" required placeholder="要做什么？" /></label>
-            <label>类型<select name="type" defaultValue="client_meeting">{dictOf('type').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>优先级<select name="priority" defaultValue="p2">{dictOf('priority').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>状态<select name="status" defaultValue="todo">{dictOf('status').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>截止时间<input name="due" type="datetime-local" /></label>
-            {/* 与编辑弹窗同一套字段与文案：同一字段两个入口两套说法 = 迟早打架 */}
-            <label>耗时（分钟）<input name="estimatedMinutes" type="number" min={1} max={1440} step={5} placeholder={`留空 = 默认 ${settings.defaultEstimateMinutes} 分钟`} /></label>
-            <label style={{ alignSelf: 'end' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
-                <input name="allDay" type="checkbox" />
-                全天任务
-              </span>
-              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示，不改变候选排序</span>
-            </label>
-            {/**
-              * 批次2 #2：与快速录入、编辑任务**同一个组件**（两种选法：已有工作区下拉 + 浏览文件夹）。
-              * 表单本身是非受控的（提交时读 FormData），所以这里用一个 hidden 输入承接值 ——
-              * 受控的可见输入没法直接进 FormData 的可读列表之外的地方，用 hidden 更直白。
-              */}
-            <div className="full">
-              <WorkspacePicker
-                value={formWorkspace}
-                touched={false}
-                sourceLabel="留空 = 用默认工作区"
-                candidates={workspaceChoices}
-                disabled={busy}
-                placeholder={settings.defaultWorkspace || '默认工作区未设置'}
-                onChange={setFormWorkspace}
-                onBrowse={() => openDirPicker('form')}
-              />
-              <input type="hidden" name="workspacePath" value={formWorkspace} />
-            </div>
-            <label className="full">描述<textarea name="description" rows={2} placeholder="背景 / 目标 / 验收标准（Markdown）" /></label>
-            <div className="full" style={{ display: 'flex', gap: 8 }}>
-              <button className="wb-btn primary lg" type="submit"><Icon name="check" />保存任务</button>
-              <button className="wb-btn" type="button" onClick={() => setShowForm(false)}>取消</button>
-            </div>
-          </form>
-        </Modal>
+          onSubmit={(event) => void createTask(event)}
+        />
       )}
 
+      {/**
+        * 编辑任务表单（H4-8）：画法搬去 `components/dialogs/EditTaskModal.tsx`。
+        * 草稿 `editDraft` 住容器 —— `beginEditTask` 摊草稿、`saveEditDraft` 拼 payload
+        * 并做乐观更新；`reparentCandidates` 也依赖 `editDraft` 与 `selected`。
+        */}
       {editDraft !== null && selected !== null && (
-        <Modal
-          title={<><Icon name="edit" />编辑任务</>}
-          size="md"
+        <EditTaskModal
+          draft={editDraft}
+          onChange={(next) => setEditDraft(next)}
+          typeOptions={dictOf('type')}
+          priorityOptions={dictOf('priority')}
+          statusOptions={dictOf('status')}
+          aiPolicyOptions={dictOf('ai_policy')}
+          defaultEstimateMinutes={settings.defaultEstimateMinutes}
+          workspaceCandidates={workspaceChoices}
+          workspacePlaceholder={settings.defaultWorkspace || '默认工作区未设置'}
+          parentCandidates={reparentCandidates}
+          busy={busy}
+          onBrowse={() => openDirPicker('edit')}
           onClose={() => setEditDraft(null)}
-          footer={(
-            <>
-              <button className="wb-btn" onClick={() => setEditDraft(null)}>取消</button>
-              <button className="wb-btn primary" disabled={editDraft.title.trim() === ''} onClick={() => void saveEditDraft()}>
-                <Icon name="check" />保存
-              </button>
-            </>
-          )}
-        >
-          <div className="wb-form" style={{ border: 'none', padding: 0 }}>
-            <label className="full">标题<input value={editDraft.title} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, title: e.target.value })} /></label>
-            <label>类型<select value={editDraft.typeCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, typeCode: e.target.value })}>{dictOf('type').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>优先级<select value={editDraft.priorityCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, priorityCode: e.target.value })}>{dictOf('priority').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>状态<select value={editDraft.statusCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, statusCode: e.target.value })}>{dictOf('status').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>AI 策略<select value={editDraft.aiPolicyCode} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, aiPolicyCode: e.target.value })}>{dictOf('ai_policy').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
-            <label>截止时间<input type="datetime-local" value={editDraft.dueLocal} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, dueLocal: e.target.value })} /></label>
-            {/* ---------------- 预计耗时 / 全天任务（v1.15.1） ---------------- */}
-            <label>耗时（分钟）<input type="number" min={1} max={1440} step={5} value={editDraft.estimatedMinutes} placeholder={`留空 = 默认 ${settings.defaultEstimateMinutes} 分钟`} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, estimatedMinutes: e.target.value })} /></label>
-            <label style={{ alignSelf: 'end' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
-                <input type="checkbox" checked={editDraft.allDay} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, allDay: e.target.checked })} />
-                全天任务
-              </span>
-              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示，不改变候选排序</span>
-            </label>
-            <p className="wb-hint" style={{ gridColumn: '1 / -1', margin: '0 0 4px' }}>
-              {`耗时参与当日候选排序；留空 = 按默认 ${settings.defaultEstimateMinutes} 分钟计入。`}
-            </p>
-            <div className="full">
-              <WorkspacePicker
-                value={editDraft.workspacePath}
-                touched={false}
-                sourceLabel="留空 = 继承父任务，父任务也没有才用默认"
-                candidates={workspaceChoices}
-                disabled={busy}
-                placeholder={settings.defaultWorkspace || '默认工作区未设置'}
-                onChange={(path) => setEditDraft((prev) => (prev === null ? prev : { ...prev, workspacePath: path }))}
-                onBrowse={() => openDirPicker('edit')}
-              />
-            </div>
-            <label className="full">描述（Markdown）<textarea rows={6} value={editDraft.description} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, description: e.target.value })} /></label>
-            {/* ---------------- 改父任务（v1.14.0） ---------------- */}
-            <label className="full">
-              父任务
-              <select
-                value={editDraft.parentId}
-                onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, parentId: e.target.value })}
-              >
-                <option value="">（顶层）</option>
-                {reparentCandidates.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {'\u00a0'.repeat(candidate.depth * 2)}{candidate.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="wb-hint" style={{ gridColumn: '1 / -1', margin: '0 0 4px' }}>
-              移动子树：后代跟随一起移动。候选里不列出自身与自身后代（会形成环）；
-              服务端另有独立防环校验，失败会给出中文原因。移动会写入任务详情的「记录」页签。
-            </p>
-          </div>
-        </Modal>
+          onSave={() => void saveEditDraft()}
+        />
       )}
+      {/**
+        * 「待你处理」弹窗（H4-8）：画法搬去 `components/dialogs/PendingModal.tsx`。
+        * 清单仍来自服务端（`allPendingDrafts`），过滤 `deferredAt === null` 留在这里 ——
+        * 这里是「判」，组件里只是「画」。`pendingDraft !== null` 也只为传递一个小节间距。
+        */}
       {pendingOpen && (
-        <Modal
-          title={<>待你处理（{pendingCount}）</>}
-          size="sm"
+        <PendingModal
+          pendingCount={pendingCount}
+          pendingDrafts={allPendingDrafts.filter((d) => d.deferredAt === null)}
+          deferredDrafts={deferredDrafts}
+          reminders={reminders}
+          activeDraftOpen={pendingDraft !== null}
+          onResumePending={(draft) => void resumePendingDraft(draft)}
+          onResumeDeferred={(draftId) => void resumeDeferredDraft(draftId)}
+          onAckReminder={(reminderId) => void ackReminder(reminderId)}
           onClose={() => setPendingOpen(false)}
-          footer={<button className="wb-btn" onClick={() => setPendingOpen(false)}>关闭</button>}
-        >
-          <div className="wb-scroll-area">
-            {/**
-              * 待确认草稿一律**按服务端清单**列出（含"关掉横幅先收起"的）：
-              * 用户收起横幅只是"别挡着我"，不代表决定过了 —— 必须还能从这里找到。
-              */}
-            {allPendingDrafts.filter((d) => d.deferredAt === null).map((draft) => (
-              <div key={draft.id} className="wb-row" style={{ cursor: 'default', alignItems: 'flex-start' }}>
-                <span style={{ flex: 1 }}>
-                  <b>待确认的{draftKindLabel(draft.kindCode)}</b>
-                  <span className="wb-switch-desc">AI 已提交，确认后才会写入工作台。</span>
-                </span>
-                <button className="wb-btn" onClick={() => void resumePendingDraft(draft)}>打开弹框</button>
-              </div>
-            ))}
-            {deferredDrafts.length > 0 && (
-              <div style={{ marginTop: pendingDraft === null ? 0 : 10 }}>
-                <div className="wb-hint" style={{ marginBottom: 4 }}>已暂存（{deferredDrafts.length}）· 做完手上的事再从这里唤回</div>
-                {deferredDrafts.map((draft) => (
-                  <div key={draft.id} className="wb-row" style={{ cursor: 'default', alignItems: 'flex-start' }}>
-                    <span style={{ flex: 1 }}>
-                      <b>{draftKindLabel(draft.kindCode)}</b>
-                      <span className="wb-switch-desc">
-                        暂存于 {fmtTime(draft.deferredAt ?? draft.updatedAt)}
-                        {draft.deferCount > 1 ? ` · 第 ${draft.deferCount} 次` : ''}
-                      </span>
-                    </span>
-                    <button className="wb-btn primary" onClick={() => void resumeDeferredDraft(draft.id)}>唤回处理</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {reminders.map((r) => (
-              <div key={r.reminderId} className="wb-row" style={{ cursor: 'default' }}>
-                <span style={{ flex: 1 }}>{r.title} · {fmtTime(r.dueAt)}</span>
-                <button className="wb-btn" onClick={() => void ackReminder(r.reminderId)}>知道了</button>
-              </div>
-            ))}
-            {pendingCount === 0 && <p className="wb-hint">暂无待处理事项。</p>}
-          </div>
-        </Modal>
+        />
       )}
       {/**
         * 工作区的「浏览…」弹窗（批次2 #2/W03）：**同一个 `LocalDocModal`**，只是 `mode="dir"`。
@@ -4704,22 +4009,10 @@ let workbenchHost: {
   hasPanelInfoHook?: () => boolean
   /** 宿主面板状态可读时的选中态（不可读返回 undefined）。 */
   hostSelected?: () => boolean | undefined
-  /** 兄弟插件是否正开着面板（DOM 契约层判定，官方路径下也要问）。 */
-  siblingPanelActive?: () => boolean
-  /**
-   * 收起兄弟插件的面板标记并广播家族激活事件。
-   *
-   * 由 `WorkbenchPanelContent` 在「宿主选中了我们」时调用 —— 用于清掉**残留**的
-   * 兄弟标记（真实 task-board 只在关闭时才摘自己的标记，所以"被挤掉又点回来"时
-   * 它会残留）。做法与 task-board 打开时对 ssh 做的完全一致，属家族既定约定。
-   */
-  takeOverFamilyPanel?: () => void
   /** 同步 `<html>` 上的激活标记（宿主状态变化后调用，供 CSS 与标题栏按钮读）。 */
   syncActiveAttribute?: (active: boolean) => void
   /** 本地开关的权威状态（不依赖宿主订阅链）。 */
   isLocalOpen?: () => boolean
-  /** 本地开关是否处于"被用户强制收起"状态。 */
-  isForcedClosed?: () => boolean
   /** 宿主面板状态能否被安全读取（= layout 服务可用）。 */
   stateReadable?: () => boolean
 } | undefined
@@ -4744,7 +4037,7 @@ let workbenchHost: {
  *   这样"宿主行点开"和"我们自己的行点开"走的是同一条判据，不可能分叉。
  * - **宿主状态不可读**（旧宿主 / 没有该 hook）→ 退回本地标志（迁移前的老行为）。
  *
- * `isForcedClosed` 只在"宿主 state 不可读"时参与 —— 一旦可读，用户的"关"通过
+ * 本地标志只在"宿主 state 不可读"时参与 —— 一旦可读，用户的"关"通过
  * `layout.selectPanel(null)` 就能送达宿主，宿主的 `activePanelId` 自己会变成 null，
  * 不需要本地再压一层（压了就会出现"关掉后再点官方行打不开"的另一个 bug）。
  */
@@ -4771,12 +4064,11 @@ function WorkbenchPanelContent(props: Record<string, unknown>): JSX.Element | nu
    * 三个输入都是**取值**（把宿主能力与本地标志读成布尔），判定交给下面的纯函数。
    *
    * - `hostReadable`：宿主是否提供了 `usePanelInfo`（= 面板状态可读，走官方路径）；
-   * - `localOpen` / `forcedClosed`：本地开关及其"被用户强制收起"标记，仅作回落。
+   * - `localOpen`：本地开关，仅作回落。
    */
   const hostReadable = host?.hasPanelInfoHook?.() === true
   const localOpen = host?.isLocalOpen?.() ?? host?.isOpen() ?? false
-  const forcedClosed = host?.isForcedClosed?.() ?? false
-  const snapshot = { stateReadable: hostReadable, hostPanelId: hostPanelId ?? null, intentOpen: !forcedClosed && localOpen }
+  const snapshot = { stateReadable: hostReadable, hostPanelId: hostPanelId ?? null, intentOpen: localOpen }
   /**
    * 显示与否与 `data-open` 投影都走**同一个** `decidePanel()`（设计文档 P1 + I2）。
    *
@@ -4808,8 +4100,7 @@ function WorkbenchPanelContent(props: Record<string, unknown>): JSX.Element | nu
    * 主线程被占满 —— 用户现象就是**点开工作台后整个页面卡死**（WSL 侧）
    * 以及**点「收起侧边栏」后 Edge 卡死**（Windows 侧；两条路径都会经过本组件渲染）。
    *
-   * 本文件里我自己在别处写下的规矩就是"副作用一律走 useEffect"
-   *（见下方 `takeOverFamilyPanel` 的注释），这两行是执行时的疏漏。
+   * 本文件里我自己在别处写下的规矩就是"副作用一律走 useEffect"，这两行是执行时的疏漏。
    *
    * ## 现在怎么保证收敛
    *
@@ -4824,39 +4115,6 @@ function WorkbenchPanelContent(props: Record<string, unknown>): JSX.Element | nu
     host?.reportHostPanelId?.(hostPanelId)
     host?.syncActiveAttribute?.(open)
   }, [host, hostPanelId, open])
-  /**
-   * 宿主已经把我们选为当前面板、但页面上还留着兄弟插件的激活标记时，**由我们把它收起来**。
-   *
-   * ## 为什么必须有这一步（2026-09-13，本轮最后一个真 bug）
-   *
-   * 上一版把"兄弟面板开着"同时用在了**两个地方**：① 观察器里"兄弟开了就关掉自己"；
-   * ② 显示条件里"兄弟开着就不显示"。第 ② 条制造了一个**死锁**：
-   *
-   * ```text
-   * 面板被兄弟挤掉（我们把自己关了，宿主 activePanelId 仍是我们）
-   *   → 兄弟标记如果残留（真实 task-board 就会留着，它只在关闭时摘）
-   *   → 显示条件恒假
-   *   → 用户再点入口：宿主的 selectPanel(同一个值) 被 React 判定为"无变化"，
-   *     连重渲染都不会发生
-   *   → 面板**永远打不开**
-   * ```
-   *
-   * 正确做法是把"让位"只保留在 ①（观察器主动关掉自己，宿主状态随之为 null），
-   * 而显示与否**只信宿主**；一旦宿主选中我们，我们就把残留的兄弟标记收掉 ——
-   * 这正是 task-board 自己打开时对 ssh 做的事（`applyActive()` 里摘兄弟属性 + 广播），
-   * 属于家族既定约定，不是新发明。
-   */
-  useEffect(() => {
-    /**
-     * 宿主选中我们时收掉残留的兄弟标记。
-     *
-     * 判据用 `snapshot.hostPanelId`（宿主选中的是不是我们）—— 这与"面板该不该显示"
-     * **不是同一个问题**：这里问的是"宿主当前选中项是不是本插件"，所以直接把该值
-     * 与 `PANEL_NAME` 比即可，无需再走 `decidePanel()`（那会把本地回落也算进来）。
-     */
-    if (snapshot.hostPanelId !== PANEL_NAME) return
-    host?.takeOverFamilyPanel?.()
-  }, [snapshot.hostPanelId, host])
   if (host === undefined) return null
   return (
     /**
@@ -4896,17 +4154,6 @@ export function apply(ctx: unknown): () => void {
   instanceAlive = true
 
   let open = false
-  /**
-   * 「用户在本插件里显式关掉了面板」的本地权威标志（v1.14.30）。
-   *
-   * 为什么必须有它：当 `layout.selectPanel` 拿不到时，我们**无法通知宿主取消选中**，
-   * 宿主的 `activePanelId` 会一直停在 `patent-workbench`。此时若显隐只信宿主状态，
-   * 那张 `fixed; inset:0; z-index:55` 的满屏层就**再也关不掉**，永久盖住会话区
-   * （2026-09-13 实测：点「返回对话」后 `data-open` 仍为 "1"）。
-   *
-   * 语义：用户在本插件内的"关"是**权威**的，直到他再次显式打开。
-   */
-  let forcedClosed = false
   /**
    * 本地开关变化的**权威通知通道**：不依赖宿主订阅链（那条链在 layout 缺失时是死的），
    * 保证 `WorkbenchPanelContent` 每次开合都能重渲染。
@@ -5086,10 +4333,10 @@ export function apply(ctx: unknown): () => void {
     }
     open = value
     /**
-     * v1.14.45：**不再**用本地 `forcedClosed` 压着显隐。
+     * 面板显隐**不**另设本地"强制收起"标志（v1.14.45 定案，v1.16.x 移除残留变量）。
      *
-     * 原因是它会造成一个对称的 bug：关掉面板后 `forcedClosed` 一直为真，
-     * 于是用户再点**宿主的**侧栏行（宿主把 `activePanelId` 设回我们）时，
+     * 曾经有过一个 `forcedClosed`：它会造成对称的 bug —— 关掉面板后标志一直为真，
+     * 用户再点**宿主的**侧栏行（宿主把 `activePanelId` 设回我们）时，
      * 显示条件里的 `!forcedClosed` 仍然为假 → 面板打不开（实测复现）。
      *
      * 现在显隐由 `WorkbenchPanelContent` 按「宿主状态优先」统一判定：
@@ -5164,9 +4411,8 @@ export function apply(ctx: unknown): () => void {
      *
      * ## 为什么这里也走 `decidePanel()`
      *
-     * 本函数被两个地方消费：槽位句柄的 `isHostSelected`（标题栏按钮的回落），
-     * 以及"本插件面板是否真的显示着"（家族互斥让位）。**两处问的都是显示态**，
-     * 所以判据必须与面板容器同源；改动前三处各写一遍，正是 bug 2/6/9 的根因。
+     * 本函数是槽位句柄 `isHostSelected`（标题栏按钮的回落）的判据，问的是显示态，
+     * 所以必须与面板容器同源；改动前三处各写一遍，正是 bug 2/6/9 的根因。
      */
     const mirrored = hostSelectedFromMirror()
     if (mirrored !== undefined) return mirrored
@@ -5186,22 +4432,6 @@ export function apply(ctx: unknown): () => void {
     } catch { /* 读不到就退回本地标志 */ }
     return shouldShowPanel({ stateReadable: fromLayout !== undefined, hostPanelId: fromLayout ?? null, intentOpen: open })
   }
-  /**
-   * 本插件的面板**当前是不是真的显示着**。
-   *
-   * ## 为什么历史上必须有这个函数（值得留着，别再犯）
-   *
-   * ⚠️ **不能用 `open` 这个本地标志**（2026-09-13 实测踩到）：
-   * 用户点的是**宿主**的侧栏行，宿主直接调 `layout.selectPanel(id)` 把
-   * `activePanelId` 设成我们 —— 我们自己的 `setOpen` 根本没被调用，本地 `open`
-   * 依然是 `false`。此时面板是**显示着的**（`WorkbenchPanelContent` 按宿主状态渲染），
-   * 但任何 `if (open)` 的判断都会说"没开"。
-   *
-   * v1.14.53：它原先的**唯一消费者**是家族互斥（兄弟插件 `*-active` 出现时让位），
-   * 那条逻辑已删除，所以函数本体也删了。判据本身没有丢 ——
-   * 面板"该不该显示"仍然只有一个答案：`shouldShowPanel()`（`panelState.ts`）。
-   */
-
   const slotApi: WorkbenchSlotApi = {
     open: () => setOpen(true),
     close: () => setOpen(false),
@@ -5228,7 +4458,6 @@ export function apply(ctx: unknown): () => void {
       return () => { openListeners.delete(listener); disposeHost() }
     },
     isLocalOpen: () => open,
-    isForcedClosed: () => forcedClosed,
     stateReadable: () => selectPanel !== undefined,
     /**
      * 宿主面板选中态的**唯一可用通道**回写口。

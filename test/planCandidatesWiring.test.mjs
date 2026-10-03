@@ -111,7 +111,19 @@ test('AX-C06 各调用点都指向同一份候选：AI 排序 / 今日手动池 
   assert.match(code, /pickedPlanCandidateRows/)
   // AI 排序提示词
   assert.match(code, /buildPlanPrompt\(/)
-  assert.equal((code.match(/todayPlanCandidates\(/g) ?? []).length, 3, '三个入口共用同一份候选函数')
+  /**
+   * 三个入口不只"共用同一个函数"，而是**共用同一个调用点** `planCandidatesFor`。
+   *
+   * 2026-10-03 把提示词侧与两个手动池侧的三处逐字相同的调用收敛成一处
+   * （`todayPlanCandidates` 的入参原先被抄了三遍）。这比原先的"计数 === 3"更强：
+   * 现在连"再抄一遍参数"的余地都没有 —— 口径改动只可能落在 `planCandidatesFor`。
+   */
+  assert.equal((code.match(/todayPlanCandidates\(/g) ?? []).length, 1,
+    '候选函数在 index.tsx 只允许一个调用点（planCandidatesFor）')
+  assert.equal((code.match(/const planCandidatesFor = /g) ?? []).length, 1, 'planCandidatesFor 只允许定义一处')
+  for (const consumer of ['candidateRowsFor(todayPlan)', 'candidateRowsFor(pickedPlan)']) {
+    assert.ok(code.includes(consumer), `手动池必须吃共享调用点：${consumer}`)
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -139,7 +151,14 @@ test('AX-C07 编辑耗时的四个接线点都在（保存 payload / 编辑框�
   const code = stripComments(indexSource)
   assert.match(code, /estimatedMinutes,\n\s+allDay: editDraft\.allDay,/,
     '保存 payload 必须带上 estimatedMinutes —— 否则"编辑耗时"保存不进去（静默丢字段）')
-  assert.match(code, /estimatedMinutes: selected\.task\.estimatedMinutes === null \? '' : String\(selected\.task\.estimatedMinutes\)/,
+  /**
+   * ⚠️ H4-3 起这条**迁移过**：编辑框初值原来内联在详情页那一行的 onClick 里，现在收进了
+   * 容器的 `beginEditTask()`（任务详情搬去了 `components/views/TaskDetailPane.tsx`，
+   * 而"摊草稿"是写入口，按 H4 plan §3 留在容器）。判据的**意图不变**：初值必须来自
+   * 库里那个任务的真实 `estimatedMinutes`，不许写死空串。所以用反向引用匹配
+   * `X.estimatedMinutes`（两侧同一标识符），不再绑定具体变量名。
+   */
+  assert.match(code, /estimatedMinutes: (\w+)\.estimatedMinutes === null \? '' : String\(\1\.estimatedMinutes\)/,
     '编辑框初值必须来自库里真实值 —— 写死空串等于打开编辑框看不见真实值')
   assert.match(code, /estimated !== null && \(!Number\.isFinite\(estimated\) \|\| estimated < 1 \|\| estimated > MAX_ESTIMATE_MINUTES\)/,
     '客户端必须就地校验非法耗时 —— 否则只能靠服务端 400 猜')

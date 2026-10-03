@@ -6,9 +6,10 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { parseTask, effectiveDueAtForTask, effectiveWorkspacePathForTask, appendEvent, collectArchivedDescendants, isDescendantOf, type RawTaskRow } from './task-primitives.js'
+import { parseTask, effectiveDueAtForTask, effectiveWorkspacePathForTask, appendEvent, collectArchivedDescendants, createAncestorResolver, isDescendantOf, type RawTaskRow } from './task-primitives.js'
 import { listDictionaries } from './dictionaries.js'
 import { nowIso, type TaskInput, type TaskPatch, type TaskRow } from '../repo.js'
+import { withTransaction } from './shared.js'
 
 
 /**
@@ -86,19 +87,21 @@ export function createTask(db: DatabaseSync, input: TaskInput, actor = 'user', a
   }
   task.effectiveDueAt = effectiveDueAtForTask(db, task)
   task.effectiveWorkspacePath = effectiveWorkspacePathForTask(db, task)
-  db.prepare(`
-    INSERT INTO tasks
-      (id, parent_id, title, description, type_code, status_code, priority_code,
-       ai_policy_code, due_at, all_day, estimated_minutes, source, workspace_path, progress_percent, archived, extra,
-       created_at, updated_at, completed_at, cancelled_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-  `).run(
-    task.id, task.parentId, task.title, task.description, task.typeCode,
-    task.statusCode, task.priorityCode, task.aiPolicyCode, task.dueAt, task.allDay,
-    task.estimatedMinutes, task.source, task.workspacePath, task.progressPercent, JSON.stringify(task.extra),
-    task.createdAt, task.updatedAt, task.completedAt, task.cancelledAt,
-  )
-  appendEvent(db, id, 'created', { after: task, actor, at })
+  withTransaction(db, () => {
+    db.prepare(`
+      INSERT INTO tasks
+        (id, parent_id, title, description, type_code, status_code, priority_code,
+         ai_policy_code, due_at, all_day, estimated_minutes, source, workspace_path, progress_percent, archived, extra,
+         created_at, updated_at, completed_at, cancelled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+    `).run(
+      task.id, task.parentId, task.title, task.description, task.typeCode,
+      task.statusCode, task.priorityCode, task.aiPolicyCode, task.dueAt, task.allDay,
+      task.estimatedMinutes, task.source, task.workspacePath, task.progressPercent, JSON.stringify(task.extra),
+      task.createdAt, task.updatedAt, task.completedAt, task.cancelledAt,
+    )
+    appendEvent(db, id, 'created', { after: task, actor, at })
+  })
   return task
 }
 
@@ -117,9 +120,11 @@ export function listTasks(db: DatabaseSync, opts: { includeArchived?: boolean; p
   // 归档视图（includeArchived）不走这条过滤，它由 listArchivedTasks 自己带出整棵子树。
   const excluded = includeArchived ? new Set<string>() : collectArchivedDescendants(db, all)
   const priorityWeights = new Map(listDictionaries(db, 'priority').map((entry) => [entry.code, Number(entry.config.weight ?? 99)]))
+  // 祖先投影缓存：`all` 就是整表，用它做种子 → 继承计算不再逐层回库（原先 O(N·深度) 次查询）。
+  const resolveAncestor = createAncestorResolver(db, all)
   return all
     .filter((row) => (includeArchived || row.archived === 0) && !excluded.has(row.id))
-    .map((row) => parseTask(row, db))
+    .map((row) => parseTask(row, db, resolveAncestor))
     .filter((task): task is TaskRow => task !== undefined)
     .sort((a, b) => {
       const rank = (task: TaskRow): number => {
@@ -191,33 +196,35 @@ export function updateTask(db: DatabaseSync, id: string, patch: TaskPatch, actor
   }
   next.effectiveDueAt = effectiveDueAtForTask(db, next)
   next.effectiveWorkspacePath = effectiveWorkspacePathForTask(db, next)
-  db.prepare(`
-    UPDATE tasks SET
-      title = ?, description = ?, type_code = ?, status_code = ?, priority_code = ?,
-      ai_policy_code = ?, due_at = ?, all_day = ?, estimated_minutes = ?, archived = ?,
-      workspace_path = ?, parent_id = ?, extra = ?,
-      progress_percent = ?,
-      updated_at = ?, completed_at = ?, cancelled_at = ?
-    WHERE id = ?
-  `).run(
-    next.title, next.description, next.typeCode, next.statusCode, next.priorityCode,
-    next.aiPolicyCode, next.dueAt, next.allDay, next.estimatedMinutes, next.archived,
-    next.workspacePath, next.parentId, JSON.stringify(next.extra),
-    next.progressPercent,
-    next.updatedAt, next.completedAt, next.cancelledAt, id,
-  )
-  appendEvent(db, id, 'updated', { before, after: next, actor, at })
-  // 改父任务额外留一条可读事件：任务详情「记录」页签直接显示「父任务：A → B」，
-  // 而不是让用户从 before/after JSON 里自己比对 parent_id。
-  if (next.parentId !== before.parentId) {
-    appendEvent(db, id, 'reparented', {
-      before: { parentId: before.parentId },
-      after: { parentId: next.parentId },
-      actor,
-      at,
-      note: `父任务：${parentLabel(db, before.parentId)} → ${parentLabel(db, next.parentId)}`,
-    })
-  }
+  withTransaction(db, () => {
+    db.prepare(`
+      UPDATE tasks SET
+        title = ?, description = ?, type_code = ?, status_code = ?, priority_code = ?,
+        ai_policy_code = ?, due_at = ?, all_day = ?, estimated_minutes = ?, archived = ?,
+        workspace_path = ?, parent_id = ?, extra = ?,
+        progress_percent = ?,
+        updated_at = ?, completed_at = ?, cancelled_at = ?
+      WHERE id = ?
+    `).run(
+      next.title, next.description, next.typeCode, next.statusCode, next.priorityCode,
+      next.aiPolicyCode, next.dueAt, next.allDay, next.estimatedMinutes, next.archived,
+      next.workspacePath, next.parentId, JSON.stringify(next.extra),
+      next.progressPercent,
+      next.updatedAt, next.completedAt, next.cancelledAt, id,
+    )
+    appendEvent(db, id, 'updated', { before, after: next, actor, at })
+    // 改父任务额外留一条可读事件：任务详情「记录」页签直接显示「父任务：A → B」，
+    // 而不是让用户从 before/after JSON 里自己比对 parent_id。
+    if (next.parentId !== before.parentId) {
+      appendEvent(db, id, 'reparented', {
+        before: { parentId: before.parentId },
+        after: { parentId: next.parentId },
+        actor,
+        at,
+        note: `父任务：${parentLabel(db, before.parentId)} → ${parentLabel(db, next.parentId)}`,
+      })
+    }
+  })
   return next
 }
 

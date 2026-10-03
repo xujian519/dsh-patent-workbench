@@ -32,10 +32,11 @@
  * 可选：`--size=1280x800`（默认常见与偏小两档）、`--scroll=1`、`--out=<目录>`。
  */
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { discoverBrowser } from '../verify/browser.mjs'
 import {
   ACTIVE_ATTR, OFFICIAL_ATTR, PENDING_ATTR, VIEW_ATTR,
 } from '../../lib/client/constants.js'
@@ -125,11 +126,8 @@ function checkProductionWiring() {
   return { ok: problems.length === 0, problems }
 }
 
-const EDGE = [
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-].find((p) => existsSync(p))
-if (EDGE === undefined) throw new Error('找不到 Edge（本脚本需要真实浏览器）')
+const browserLaunch = discoverBrowser()
+if (!browserLaunch.ok) throw new Error(`找不到浏览器（本脚本需要真实浏览器）：${browserLaunch.reason}`)
 
 /**
  * 产物真样式：`styles.ts` 里没有类型注解，去掉 import / export 后可直接求值。
@@ -342,20 +340,20 @@ else runMeasure()
 }
 
 /**
- * 用 CDP 驱动 Edge（不用 `--dump-dom`：本机 Edge 上它不出输出，
- * 而且 `--screenshot` 与"控制视口尺寸"要分两次进程，容易各量各的）。
+ * 用 CDP 驱动 headless Chromium（路径由 `discoverBrowser()` 发现；不用 `--dump-dom`：
+ * 它不出输出，而且 `--screenshot` 与"控制视口尺寸"要分两次进程，容易各量各的）。
  * 一个进程里：设视口 → 导航 → 求值拿 metrics → 截图。
  *
  * 两个已被实测教育的细节：
  * - **不能靠子进程的 exit/stderr 判断浏览器起来没有**：Windows 上 `msedge.exe`
  *   只是启动器，它自己立刻退出、浏览器继续跑，且不打印 "DevTools listening"。
  *   所以这里**预留端口 + 轮询 `/json/version`**，收尾用 `Browser.close`。
- * - 必须 `--user-data-dir=<临时目录>`：否则命令行会被转发给用户已经在用的那个 Edge，
+ * - 必须 `--user-data-dir=<临时目录>`：否则命令行会被转发给用户已经在用的那个浏览器实例，
  *   于是既没有截图也没有报错（本机第一次跑就是这么静默失败的）。
- */async function withEdgePage(size, run) {
+ */async function withBrowserPage(size, run) {
   const port = await freePort()
   const profile = mkdtempSync(join(tmpdir(), 'wb-repro-'))
-  const child = spawn(EDGE, [
+  const child = spawn(browserLaunch.path, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--force-device-scale-factor=1',
     `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank',
@@ -364,7 +362,7 @@ else runMeasure()
   try {
     const version = await poll(async () => {
       try { return await (await fetch(`http://127.0.0.1:${port}/json/version`)).json() } catch { return null }
-    }, 20000, 'Edge 没在 20s 内打开 DevTools 端口')
+    }, 20000, '浏览器没在 20s 内打开 DevTools 端口')
     browserWs = version.webSocketDebuggerUrl
     const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
     const page = list.find((t) => t.type === 'page')
@@ -525,7 +523,7 @@ for (const size of SIZES) {
   const htmlPath = join(OUT, `${label}-${size.width}x${size.height}.html`)
   const pngPath = join(OUT, `${label}-${size.width}x${size.height}.png`)
   writeFileSync(htmlPath, buildHtml(css, PLACEMENT), 'utf8')
-  const measured = await withEdgePage(size, (cdp) => measureAndShoot(cdp, size, htmlPath, pngPath))
+  const measured = await withBrowserPage(size, (cdp) => measureAndShoot(cdp, size, htmlPath, pngPath))
   const report = wiring === null ? { ...measured, baseline } : { ...measured, wiring }
   // 前提不成立 → 这一档的判定无效（哪怕几何量出来是绿的）
   if (wiring !== null && !wiring.ok) report.verdict = 'wiring-missing'

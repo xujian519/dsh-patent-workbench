@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, type TaskRow } from '../repo.js'
+import { safeJsonParse } from './shared.js'
 
 export interface RawTaskRow {
   id: string
@@ -54,6 +55,31 @@ function readAncestorRow(db: DatabaseSync, id: string): AncestorRow | undefined 
 }
 
 /**
+ * 祖先 resolver（带缓存）—— **列表路径 N+1 的修复**。
+ *
+ * `parseTask` 对每一行都要向上找"最近一个有截止时间／工作区的祖先"，原先每层祖先各发一次
+ * `SELECT`（N 行 × 链深 D = O(N·D) 次查询）。
+ *
+ * 传了 `seedRows`（列表已经一次性取回整表）时，链上的祖先通常直接命中缓存，**零额外查询**；
+ * 未命中的才回库一次，而且**跨行共享**，所以总查询数从 O(N·D) 降到 O(不在种子里的祖先数)。
+ */
+export function createAncestorResolver(
+  db: DatabaseSync,
+  seedRows: readonly RawTaskRow[] = [],
+): (id: string) => AncestorRow | undefined {
+  const cache = new Map<string, AncestorRow | undefined>()
+  for (const row of seedRows) {
+    cache.set(row.id, { id: row.id, parentId: row.parent_id, dueAt: row.due_at, workspacePath: row.workspace_path, archived: row.archived })
+  }
+  return (id: string) => {
+    if (cache.has(id)) return cache.get(id)
+    const row = readAncestorRow(db, id)
+    cache.set(id, row)
+    return row
+  }
+}
+
+/**
  * **唯一**一份「沿 parent_id 向上走父链」的实现：有效截止继承、有效工作区继承、
  * 归档祖先判定与环检测（isDescendantOf）全部复用它，避免同一模式被复制多份。
  *
@@ -84,9 +110,13 @@ export function walkUpAncestors<T>(
 }
 
 /** 向上查找最近一个有截止时间的祖先（含自身）。带深度/防环保护。 */
-export function effectiveDueAtForTask(db: DatabaseSync, task: Pick<TaskRow, 'id' | 'parentId' | 'dueAt'>): string | null {
+export function effectiveDueAtForTask(
+  db: DatabaseSync,
+  task: Pick<TaskRow, 'id' | 'parentId' | 'dueAt'>,
+  resolveAncestor: (id: string) => AncestorRow | undefined = (id) => readAncestorRow(db, id),
+): string | null {
   if (task.dueAt !== null) return task.dueAt
-  return walkUpAncestors((id) => readAncestorRow(db, id), task.id, task.parentId, (row) => row.dueAt ?? undefined) ?? null
+  return walkUpAncestors(resolveAncestor, task.id, task.parentId, (row) => row.dueAt ?? undefined) ?? null
 }
 
 /**
@@ -97,9 +127,10 @@ export function effectiveDueAtForTask(db: DatabaseSync, task: Pick<TaskRow, 'id'
 export function effectiveWorkspacePathForTask(
   db: DatabaseSync,
   task: Pick<TaskRow, 'id' | 'parentId' | 'workspacePath'>,
+  resolveAncestor: (id: string) => AncestorRow | undefined = (id) => readAncestorRow(db, id),
 ): string | null {
   if (task.workspacePath !== null) return task.workspacePath
-  return walkUpAncestors((id) => readAncestorRow(db, id), task.id, task.parentId, (row) => row.workspacePath ?? undefined) ?? null
+  return walkUpAncestors(resolveAncestor, task.id, task.parentId, (row) => row.workspacePath ?? undefined) ?? null
 }
 
 /**
@@ -120,7 +151,11 @@ export function isDescendantOf(db: DatabaseSync, candidateId: string, ancestorId
   ) === true
 }
 
-export function parseTask(row: RawTaskRow | undefined, db?: DatabaseSync): TaskRow | undefined {
+export function parseTask(
+  row: RawTaskRow | undefined,
+  db?: DatabaseSync,
+  resolveAncestor?: (id: string) => AncestorRow | undefined,
+): TaskRow | undefined {
   if (row === undefined) return undefined
   const task: TaskRow = {
     id: row.id,
@@ -132,7 +167,7 @@ export function parseTask(row: RawTaskRow | undefined, db?: DatabaseSync): TaskR
     priorityCode: row.priority_code,
     aiPolicyCode: row.ai_policy_code,
     dueAt: row.due_at,
-    effectiveDueAt: db === undefined ? row.due_at : effectiveDueAtForTask(db, { id: row.id, parentId: row.parent_id, dueAt: row.due_at }),
+    effectiveDueAt: db === undefined ? row.due_at : effectiveDueAtForTask(db, { id: row.id, parentId: row.parent_id, dueAt: row.due_at }, resolveAncestor),
     allDay: row.all_day,
     estimatedMinutes: row.estimated_minutes,
     source: row.source,
@@ -140,9 +175,9 @@ export function parseTask(row: RawTaskRow | undefined, db?: DatabaseSync): TaskR
     progressPercent: typeof row.progress_percent === 'number' ? row.progress_percent : 0,
     effectiveWorkspacePath: db === undefined
       ? row.workspace_path
-      : effectiveWorkspacePathForTask(db, { id: row.id, parentId: row.parent_id, workspacePath: row.workspace_path }),
+      : effectiveWorkspacePathForTask(db, { id: row.id, parentId: row.parent_id, workspacePath: row.workspace_path }, resolveAncestor),
     archived: row.archived,
-    extra: JSON.parse(row.extra) as Record<string, unknown>,
+    extra: safeJsonParse<Record<string, unknown>>(row.extra, {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,

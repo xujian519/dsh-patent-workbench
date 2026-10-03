@@ -28,6 +28,7 @@ import {
   type PlanCandidateResult,
   type PlanCandidateTask,
 } from '../shared/dailyPlanPolicy.js'
+import { localDateString } from '../shared/localDay.js'
 
 /** 没填耗时时的兜底分钟数（与设置项 `defaultEstimateMinutes` 的缺省一致）。 */
 export const DEFAULT_ESTIMATE_MINUTES = DEFAULT_PLAN_MINUTES
@@ -96,7 +97,7 @@ export function planDayRange(now: Date): { dayStartMs: number; dayEndMs: number 
  * 放进 `useMemo` 依赖数组等于 memo 每帧失效。依赖这个字符串则跨天才变一次。
  */
 export function planDayKey(now: Date): string {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return localDateString(now)
 }
 
 /** 客户端的 Task 快照 → 共享候选判定要的形状（不做任何过滤）。 */

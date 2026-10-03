@@ -27,6 +27,7 @@ jobs:
 
       - run: pnpm typecheck
 
-      - run: pnpm build
-
+      # 不再单独 `pnpm build`：`pnpm test` 自己就是 `build && node --test`（见 package.json）。
+      # 这里再 build 一次等于同一个产物连出三遍（install 的 `prepare` + 这一步 + test 内部）
+      # —— CI 时间白花，而且掩盖了"测试到底验的是哪份产物"。
       - run: pnpm test

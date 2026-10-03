@@ -35,7 +35,7 @@
  */
 import { inflateRawSync, inflateSync } from 'node:zlib'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { isLoopbackRequest, readJsonBody, writeJson } from '../http.js'
+import { badRequest, errorMessage, readJsonBody, requireLoopback, writeJson } from '../http.js'
 import {
   MAX_QUICK_ATTACHMENT_BYTES, QUICK_DOCUMENT_MEDIA_TYPES, QUICK_IMAGE_MEDIA_TYPES,
 } from '../../shared/quickAttachments.js'
@@ -202,7 +202,7 @@ export function readZipEntry(buffer: Buffer, entryName: string): Buffer | undefi
          * 也无法判断"是文件太大还是坏了、该换什么"。
          */
         if (isInflateTooLargeError(error)) throw new Error(tooLargeMessage(MAX_QUICK_ATTACHMENT_UNCOMPRESSED_BYTES))
-        throw new Error(`DOCX 正文解压失败（文件可能已损坏）：${error instanceof Error ? error.message : String(error)}`)
+        throw new Error(`DOCX 正文解压失败（文件可能已损坏）：${errorMessage(error)}`)
       }
       /** ③ 解压**后**复核：声明值撒谎也拦得住。 */
       if (out.length > MAX_QUICK_ATTACHMENT_UNCOMPRESSED_BYTES) throw new Error(tooLargeMessage(MAX_QUICK_ATTACHMENT_UNCOMPRESSED_BYTES))
@@ -487,7 +487,7 @@ export function parseQuickAttachmentRequest(body: Record<string, unknown> | unde
   try {
     buffer = decodeCanonicalBase64(data)
   } catch (error) {
-    return { ok: false, status: 400, error: error instanceof Error ? error.message : String(error) }
+    return { ok: false, status: 400, error: errorMessage(error) }
   }
   if (buffer.length > MAX_QUICK_ATTACHMENT_BYTES) {
     return { ok: false, status: 413, error: `文档不能超过 5MB（当前 ${buffer.length} 字节）` }
@@ -501,7 +501,7 @@ export function makeQuickAttachmentRoutes(): WebRoute[] {
       kind: 'prefix',
       path: QUICK_ATTACHMENTS_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const rest = url.pathname.slice(QUICK_ATTACHMENTS_PREFIX.length).split('/').filter((part) => part !== '')
         if ((req.method ?? 'GET') !== 'POST' || rest.length !== 1 || rest[0] !== 'extract-text') {
@@ -521,7 +521,7 @@ export function makeQuickAttachmentRoutes(): WebRoute[] {
           const { content, truncated } = truncateQuickAttachmentText(extractQuickAttachmentText(parsed.buffer, parsed.name, parsed.mediaType))
           return writeJson(res, 200, { ok: true, name: parsed.name, mediaType: parsed.mediaType, content, truncated, size: parsed.buffer.length })
         } catch (error) {
-          return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          return badRequest(res, error)
         }
       },
     },

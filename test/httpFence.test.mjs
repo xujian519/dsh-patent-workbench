@@ -59,6 +59,37 @@ test('httpFence: readJsonBody 的体积上限是"读的过程中"拦截（不是
   assert.match(http, /if \(size > maxBytes\) return undefined/, '必须在流式读取途中就停下，避免先落一整份超大 body 在内存里')
 })
 
+/**
+ * 2026-10-03：403/405/400 的响应样板也收拢成唯一实现。
+ *
+ * `forbidden: loopback-only` 是**安全围栏的响应**，原先 27 个端点各抄一份；405 字面量同样 27 处；
+ * `error instanceof Error ? error.message : String(error)` 在路由层 25 处逐字重复。谁把其中一处
+ * 改成 401、或只给一处补头，其余各处就悄悄落后 —— 与 3.5 节同一个 bug 类别，行为测试证明不了
+ * "别处没有"，只能扫描。
+ *
+ * ⚠️ 异常转原因那条**只在 `src/api/` 范围内钉住**：客户端与其余服务端模块（`index.ts` / `tools.ts`
+ * / `review-memory.ts` 等）还有几十处同类表达式，那是一次更大范围的收敛，本轮只做路由层 ——
+ * 扫描范围写小一点，好过假装全仓已经统一。
+ */
+test('httpFence: 403/405/400 的响应样板只在 api/http.ts', () => {
+  const offenders = []
+  for (const file of FILES) {
+    if (!file.path.startsWith('api/') || file.path === 'api/http.ts') continue
+    for (const [label, re] of [
+      ['403 文案', /forbidden: loopback-only/],
+      ['405 文案', /'method not allowed'/],
+      ['异常转原因', /error instanceof Error \? error\.message : String\(error\)/],
+    ]) {
+      if (re.test(file.text)) offenders.push(`${file.path}（${label}）`)
+    }
+  }
+  assert.deepEqual(offenders, [], `这些响应样板只允许在 api/http.ts 里实现，实际漂到了：${offenders.join('、')}`)
+  const http = FILES.find((file) => file.path === 'api/http.ts').text
+  assert.match(http, /export function requireLoopback/, '403 围栏必须只有唯一入口（requireLoopback）')
+  assert.match(http, /export function methodNotAllowed/, '405 必须只有唯一实现')
+  assert.match(http, /export function badRequest/, '异常 → 400 必须只有唯一实现')
+})
+
 test('httpFence: 快速录入文档解析的护栏常量都在服务端一处（客户端只共享 shared/）', () => {
   const server = FILES.find((file) => file.path === 'api/routes/quick-attachments.ts').text
   // 只数**调用点**（注释里也提到这个名字，不能拿文本出现次数当判据）

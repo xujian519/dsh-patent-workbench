@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, appendEvent, getTask } from '../repo.js'
+import { withTransaction } from './shared.js'
 
 
 export interface TaskMemoryInput {
@@ -87,11 +88,13 @@ export function addTaskMemory(db: DatabaseSync, input: TaskMemoryInput, at = now
   const rootTaskId = getTaskRootId(db, input.taskId) ?? input.taskId
   const id = randomUUID()
   const kind = typeof input.kind === 'string' && input.kind.trim() !== '' ? input.kind.trim() : 'note'
-  db.prepare(`
-    INSERT INTO task_memories (id, root_task_id, task_id, kind, content, source_session_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, rootTaskId, input.taskId, kind, content, input.sourceSessionId ?? null, at, at)
-  appendEvent(db, input.taskId, 'memory_added', { actor: 'system', note: `${kind}:${id}`, at })
+  withTransaction(db, () => {
+    db.prepare(`
+      INSERT INTO task_memories (id, root_task_id, task_id, kind, content, source_session_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, rootTaskId, input.taskId, kind, content, input.sourceSessionId ?? null, at, at)
+    appendEvent(db, input.taskId, 'memory_added', { actor: 'system', note: `${kind}:${id}`, at })
+  })
   return getTaskMemory(db, id)
 }
 

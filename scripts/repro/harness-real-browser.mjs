@@ -14,7 +14,7 @@
  * ## 做法
  *
  * 用 `react-dom/server` 把**真实组件**渲染成 HTML → 拼进一个真页面 → 带上**真实的 `WORKBENCH_CSS`**
- * → 在 headless Edge 里加载 → 用 CDP 做**布局与像素级断言**。
+ * → 在 headless Chromium（路径由 `discoverBrowser()` 发现）里加载 → 用 CDP 做**布局与像素级断言**。
  *
  * ## 为什么必须补这一层
  *
@@ -39,10 +39,11 @@
  * 靠"脚本跑到底"当成功信号会出现假绿（本文件原先就没有显式退出码）。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { discoverBrowser } from '../verify/browser.mjs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
@@ -132,15 +133,12 @@ ${knowledgeMarkup}
 </script>
 </body></html>`)
 
-const EDGE = [
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-].find((p) => existsSync(p))
-if (EDGE === undefined) { console.error('SKIP: 未找到 Edge'); process.exit(2) }
+const browser = discoverBrowser()
+if (!browser.ok) { console.error(`SKIP: ${browser.reason}`); process.exit(2) }
 
 const PORT = 9800 + Math.floor(Math.random() * 150)
 const profile = mkdtempSync(join(tmpdir(), 'lv-harness-'))
-const child = spawn(EDGE, [
+const child = spawn(browser.path, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1340,900', '--hide-scrollbars', 'about:blank',

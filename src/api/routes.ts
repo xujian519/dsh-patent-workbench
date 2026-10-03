@@ -14,7 +14,7 @@ import {
 } from '../db/repo.js'
 import { makeAiSessionRoutes } from './routes/ai-sessions.js'
 import { makeDraftRoutes } from './routes/drafts.js'
-import { isLoopbackRequest, readJsonBody, todayRange, writeJson } from './routes/helpers.js'
+import { badRequest, methodNotAllowed, readJsonBody, requireLoopback, todayRange, writeJson } from './routes/helpers.js'
 import { makeKnowledgeRoutes } from './routes/knowledge.js'
 import type { KnowledgeRecallManager } from '../knowledge-recall.js'
 import { makeModelModalityRoutes, type LlmModalityProbe } from './routes/model-modalities.js'
@@ -193,8 +193,8 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
       kind: 'exact',
       path: '/api/workbench/workspaces/ensure',
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'POST') return methodNotAllowed(res)
         const body = await readJsonBody(req)
         const path = typeof body?.path === 'string' && body.path.trim() !== '' ? body.path.trim() : undefined
         if (path === undefined) return writeJson(res, 400, { error: 'path is required' })
@@ -202,7 +202,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
           mkdirSync(path, { recursive: true })
           return writeJson(res, 200, { ok: true, path })
         } catch (error) {
-          return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          return badRequest(res, error)
         }
       },
     },
@@ -211,7 +211,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
       kind: 'exact',
       path: '/api/workbench/settings',
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const method = req.method ?? 'GET'
         if (method === 'GET') return writeJson(res, 200, { ok: true, settings: readWorkbenchSettings(db) })
         if (method === 'POST') {
@@ -266,7 +266,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
           }
           return writeJson(res, 200, { ok: true, settings: readWorkbenchSettings(db) })
         }
-        return writeJson(res, 405, { error: 'method not allowed' })
+        return methodNotAllowed(res)
       },
     },
     // ------------------------------------------------------------------ bootstrap
@@ -274,7 +274,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
       kind: 'exact',
       path: '/api/workbench/bootstrap',
       handler(req, res) {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const now = new Date()
         const { start, end } = todayRange(now)
         const tasks = listTasks(db)
@@ -354,13 +354,13 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
       kind: 'exact',
       path: '/api/workbench/maintenance/repair-parents',
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'POST') return methodNotAllowed(res)
         try {
           const changed = repairParentCompletion(db)
           return writeJson(res, 200, { ok: true, changed })
         } catch (error) {
-          return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          return badRequest(res, error)
         }
       },
     },
@@ -374,7 +374,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
       kind: 'exact',
       path: '/api/workbench/health',
       handler(_req, res) {
-        if (!isLoopbackRequest(_req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(_req, res)) return
         const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined
         writeJson(res, 200, {
           ok: true,

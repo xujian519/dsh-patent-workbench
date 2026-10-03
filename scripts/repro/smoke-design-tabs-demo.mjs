@@ -1,5 +1,5 @@
 /**
- * 静态设计稿冒烟测试：真浏览器（Edge headless + CDP）打开 demo/knowledge-task-tabs-demo.html，
+ * 静态设计稿冒烟测试：真浏览器（headless Chromium + CDP）打开 demo/knowledge-task-tabs-demo.html，
  * 断言：无页面异常 / 无 console 错误、Tab 渲染、搜索命中正文、筛选叠加、排序默认更新时间降序、
  * 分页切片、虚拟滚动只挂窗口行、并排对比两列都在。
  *
@@ -11,14 +11,11 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { discoverBrowser } from '../verify/browser.mjs'
 
-const EDGE_CANDIDATES = [
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-]
-const edge = EDGE_CANDIDATES.find((p) => existsSync(p))
-if (edge === undefined) {
-  console.error('SKIP: 未找到 Edge，无法做真浏览器冒烟')
+const browser = discoverBrowser()
+if (!browser.ok) {
+  console.error(`SKIP: ${browser.reason}`)
   process.exit(2)
 }
 
@@ -33,7 +30,7 @@ const shotPath = shots >= 0 ? resolve(process.argv[shots + 1]) : null
 
 const PORT = 9333 + Math.floor(Math.random() * 400)
 const profile = mkdtempSync(join(tmpdir(), 'wb-design-smoke-'))
-const child = spawn(edge, [
+const child = spawn(browser.path, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1400,1000', 'about:blank',

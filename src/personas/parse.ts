@@ -136,25 +136,49 @@ function readFrontmatter(lines: string[]): FrontmatterOutcome | undefined {
   return { fields }
 }
 
-/** 元信息 blockquote 里我们认识的键（用于判断"下一行是延续的简介"还是"另一个字段"）。 */
-const META_KEYS = ['分类', '工作模式', '建议 emoji', '建议简介']
-
-function isMetaFieldLine(text: string): boolean {
-  return META_KEYS.some((key) => text.includes(key))
-}
-
 /**
- * 元信息行的片段拆分。
+ * 元信息 blockquote 里我们认识的字段标签（含别名）。**唯一来源**。
  *
- * 既有 9 篇里同一个 blockquote 行会写**多个字段**，分隔符既有 `·` / `|`，也有
- * **全角空格**（`建议 emoji：\`📡\`　建议简介（…）：`）。所以按"已知字段标签"切，
- * 而不是按固定分隔符切 —— 否则 emoji 会把后面整段建议简介一起吞掉。
+ * 为什么按"已知字段标签"切、而不是按固定分隔符切：既有写法里同一个 blockquote 行会写
+ * **多个字段**，分隔符既有 `·` / `|`，也有**全角空格**（`建议 emoji：\`📡\`　建议简介（…）：`）——
+ * 按固定分隔符切，emoji 会把后面整段建议简介一起吞掉。
+ *
+ * ⚠️ 从前这里有**三份手写清单**：判"这一行是不是新字段"的清单、切取值的两套 marker、
+ * 以及两处 `stops`（找"下一个字段从哪开始"的数组）。后果是实打实的：第一份漏了英文别名
+ * `emoji`，于是 `emoji：🔍` 这种行在"切取值"那套里算字段、在"是不是字段行"那套里不算 ——
+ * 同一行两种判定。清单只留一份，别名才不会只被一半代码认。
  */
 const META_LABELS = {
   /** 顺序 = 匹配优先级（emoji 的取值必须以"下一个字段"为界）。 */
   emoji: ['建议 emoji', '建议 emoji：', 'emoji'],
   description: ['建议简介'],
 } as const
+
+/** 所有字段标签（含别名）：判定"这行是不是字段行"与"下一个字段从哪开始"共用这一个表。 */
+const ALL_META_LABELS: readonly string[] = [...META_LABELS.emoji, ...META_LABELS.description, '工作模式', '分类']
+
+/** 其余字段标签在 `text` 里最早出现的位置（找不到 → `-1`）。 */
+function nextMetaLabelIndex(text: string): number {
+  let earliest = -1
+  for (const label of ALL_META_LABELS) {
+    const index = text.indexOf(label)
+    if (index === -1) continue
+    if (earliest === -1 || index < earliest) earliest = index
+  }
+  return earliest
+}
+
+/**
+ * 这一行是不是"又起了一个字段"（用于抓"简介写到一半又冒出字段行"的坏文件）。
+ *
+ * ⚠️ 必须按**行首**判定，不能用 `includes`：简介正文里出现"分类""工作模式"这些词太正常了，
+ * `includes` 会把正文行判成字段行，于是**一份好文件被报成坏文件**（而诊断信息还会指着
+ * 那句正文说"这里是字段行"）。允许 `- `/`* `/空格 前缀（引用块里写列表的形态）。
+ */
+function isMetaFieldLine(text: string): boolean {
+  const body = text.replace(/^[-*+]\s+/, '').trimStart()
+  return ALL_META_LABELS.some((label) => body.startsWith(label))
+}
 
 interface MetaPiece {
   kind: 'emoji' | 'description' | 'mode' | 'category' | 'text'
@@ -167,10 +191,8 @@ function sliceBetweenLabel(text: string, markers: readonly string[]): { rest: st
     const index = text.indexOf(marker)
     if (index === -1) continue
     const rest = text.slice(index + marker.length)
-    const stops = [rest.indexOf('建议简介'), rest.indexOf('建议 emoji'), rest.indexOf('工作模式'), rest.indexOf('分类')]
-      .filter((stop) => stop >= 0)
-    const end = stops.length === 0 ? rest.length : Math.min(...stops)
-    return { rest: rest.slice(0, end), afterMarker: marker }
+    const end = nextMetaLabelIndex(rest)
+    return { rest: end === -1 ? rest : rest.slice(0, end), afterMarker: marker }
   }
   return undefined
 }
@@ -205,8 +227,7 @@ function metaPieces(text: string): MetaPiece[] {
     const index = flat.indexOf(marker)
     if (index === -1) continue
     const rest = flat.slice(index + marker.length).replace(/^[\s:：·|]+/, '')
-    const stops = [rest.search(/[·|　]/), rest.indexOf('建议简介'), rest.indexOf('建议 emoji'), rest.indexOf('工作模式'), rest.indexOf('分类')]
-      .filter((stop) => stop >= 0)
+    const stops = [rest.search(/[·|　]/), nextMetaLabelIndex(rest)].filter((stop) => stop >= 0)
     const end = stops.length === 0 ? rest.length : Math.min(...stops)
     pieces.push({ kind, value: cleanValue(rest.slice(0, end)) })
   }

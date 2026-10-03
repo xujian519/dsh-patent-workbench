@@ -28,7 +28,7 @@ import {
 } from '../../personas/roots.js'
 import { listPersonaResources, readPersonaResource } from '../../personas/resources.js'
 import { personaBindingView, type PersonaDiagnostic, type PersonaResourceResponse } from '../../shared/persona.js'
-import { isLoopbackRequest, readJsonBody, writeJson } from './helpers.js'
+import { methodNotAllowed, readJsonBody, requireLoopback, writeJson } from './helpers.js'
 
 export const PERSONAS_PREFIX = '/api/workbench/personas'
 /** 请求体/查询串里最长能接受的 id（防"用一个 10 万字符的 id 打库"）。 */
@@ -54,16 +54,16 @@ export function makePersonaRoutes(db: DatabaseSync, options: PersonaRouteOptions
       kind: 'prefix',
       path: PERSONAS_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const method = req.method ?? 'GET'
         const url = new URL(req.url ?? '/', 'http://localhost')
         const tail = url.pathname.slice(PERSONAS_PREFIX.length).replace(/^\/+/, '').replace(/\/+$/, '')
         if (tail === 'bind') {
           if (method === 'GET') return writeBinding(res, db, url)
           if (method === 'POST') return writeBindResult(res, await bindFromRequest(req, db, options))
-          return writeJson(res, 405, { error: 'method not allowed' })
+          return methodNotAllowed(res)
         }
-        if (method !== 'GET') return writeJson(res, 405, { error: 'method not allowed' })
+        if (method !== 'GET') return methodNotAllowed(res)
         if (tail === '') return writeSummary(res, db, options)
         if (tail === 'resources') return writeResource(res, db, url, options)
         return writeJson(res, 404, { error: `未知的角色接口：${tail}` })

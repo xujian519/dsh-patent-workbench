@@ -61,4 +61,11 @@ test('对照：草稿通知侧仍然只按"通道装没装"放行（两处语义
   // 任务提醒侧则相反（不看会静默跳过）。这两条取舍各自都有原因，改动时不要"顺手统一"。
   assert.match(draftNotify, /if \(!deps\.adapter\.available\(\)\)/, '草稿通知的前置门仍是 available()')
   assert.doesNotMatch(draftNotify, /deps\.isTargetConfigured\(\)/, '草稿通知不许改用 isTargetConfigured()')
+  /**
+   * 更狠的一道：那个字段已经**从 `DraftNotifyDeps` 删掉**（M14）。
+   *
+   * 之前它只是个"声明了却从不调用"的死字段 —— 接口在撒谎，谁哪天顺手用上它就会复活
+   * v1.15.3 那个"重启后通知全静默"的事故。字段不存在，误用就编译不过。
+   */
+  assert.doesNotMatch(draftNotify, /isTargetConfigured/, 'DraftNotifyDeps 里不许再出现 isTargetConfigured（连声明都不许）')
 })

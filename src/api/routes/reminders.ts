@@ -5,7 +5,7 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import { acknowledgeReminder, listQueue, resetReminder, writeMeta } from '../../db/repo.js'
-import { isLoopbackRequest, pathSegments, readJsonBody, writeJson } from './helpers.js'
+import { methodNotAllowed, pathSegments, readJsonBody, requireLoopback, writeJson } from './helpers.js'
 
 export interface ReminderRouteDeps {
   /** 通道状态与目标选择（由入口注入；缺省时提醒相关接口返回未安装） */
@@ -30,7 +30,7 @@ export function makeReminderRoutes(db: DatabaseSync, deps: ReminderRouteDeps = {
       kind: 'exact',
       path: '/api/workbench/reminders/policy',
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         if (deps.policy === undefined) return writeJson(res, 503, { error: 'reminder policy unavailable' })
         const method = req.method ?? 'GET'
         if (method === 'GET') return writeJson(res, 200, { ok: true, policy: deps.policy.read() })
@@ -39,14 +39,14 @@ export function makeReminderRoutes(db: DatabaseSync, deps: ReminderRouteDeps = {
           if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })
           return writeJson(res, 200, { ok: true, policy: deps.policy.write(body) })
         }
-        return writeJson(res, 405, { error: 'method not allowed' })
+        return methodNotAllowed(res)
       },
     },
     {
       kind: 'exact',
       path: '/api/workbench/reminders/channel',
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         if (deps.channel === undefined) return writeJson(res, 503, { error: 'reminder channel unavailable' })
         const method = req.method ?? 'GET'
         if (method === 'GET') {
@@ -66,15 +66,15 @@ export function makeReminderRoutes(db: DatabaseSync, deps: ReminderRouteDeps = {
           await deps.channel.resolveTarget()
           return writeJson(res, 200, { ok: true, status: deps.channel.status() })
         }
-        return writeJson(res, 405, { error: 'method not allowed' })
+        return methodNotAllowed(res)
       },
     },
     {
       kind: 'exact',
       path: '/api/workbench/reminders/test',
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if (req.method !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if (req.method !== 'POST') return methodNotAllowed(res)
         if (deps.test === undefined) return writeJson(res, 503, { error: 'reminder channel unavailable' })
         const result = await deps.test()
         return writeJson(res, 200, result)
@@ -84,7 +84,7 @@ export function makeReminderRoutes(db: DatabaseSync, deps: ReminderRouteDeps = {
       kind: 'prefix',
       path: '/api/workbench/reminders',
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const segments = pathSegments(url, '/api/workbench/reminders')
         const method = req.method ?? 'GET'

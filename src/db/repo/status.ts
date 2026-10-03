@@ -8,6 +8,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { appendEvent } from './task-primitives.js'
 import { getTask, listTasks, listChildren, updateTask } from './tasks.js'
 import { nowIso, type TaskPatch, type TaskRow } from '../repo.js'
+import { withTransaction } from './shared.js'
 
 
 function isClosedStatus(statusCode: string): boolean {
@@ -215,11 +216,13 @@ export interface TaskReviewInput {
 
 export function createTaskReview(db: DatabaseSync, input: TaskReviewInput, at = nowIso()): string {
   const id = randomUUID()
-  db.prepare(`
-    INSERT INTO task_reviews (id, task_id, session_id, summary_md, lessons_json, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, input.taskId, input.sessionId ?? null, input.summaryMd, JSON.stringify(input.lessonsJson ?? []), at)
-  appendEvent(db, input.taskId, 'review_created', { actor: 'ai', note: `review:${id}`, at })
+  withTransaction(db, () => {
+    db.prepare(`
+      INSERT INTO task_reviews (id, task_id, session_id, summary_md, lessons_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, input.taskId, input.sessionId ?? null, input.summaryMd, JSON.stringify(input.lessonsJson ?? []), at)
+    appendEvent(db, input.taskId, 'review_created', { actor: 'ai', note: `review:${id}`, at })
+  })
   return id
 }
 

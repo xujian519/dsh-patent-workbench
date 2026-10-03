@@ -5,15 +5,18 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, appendEvent, type TaskSessionLinkInput } from '../repo.js'
+import { withTransaction } from './shared.js'
 
 
 export function linkTaskSession(db: DatabaseSync, input: TaskSessionLinkInput, at = nowIso()): void {
-  db.prepare(`
-    INSERT INTO task_sessions (task_id, session_id, role_code, workspace, note, created_at, last_activity_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(task_id, session_id, role_code) DO UPDATE SET last_activity_at = excluded.last_activity_at
-  `).run(input.taskId, input.sessionId, input.roleCode, input.workspace ?? null, input.note ?? null, at, at)
-  appendEvent(db, input.taskId, 'session_linked', { actor: 'system', note: `${input.roleCode}:${input.sessionId}`, at })
+  withTransaction(db, () => {
+    db.prepare(`
+      INSERT INTO task_sessions (task_id, session_id, role_code, workspace, note, created_at, last_activity_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(task_id, session_id, role_code) DO UPDATE SET last_activity_at = excluded.last_activity_at
+    `).run(input.taskId, input.sessionId, input.roleCode, input.workspace ?? null, input.note ?? null, at, at)
+    appendEvent(db, input.taskId, 'session_linked', { actor: 'system', note: `${input.roleCode}:${input.sessionId}`, at })
+  })
 }
 
 export function listTaskSessions(db: DatabaseSync, taskId: string): Array<Record<string, unknown>> {

@@ -15,9 +15,10 @@
  * - **不静默回落**：调用方拿到 `ok: false` 后必须把原因告诉用户（草稿确认进 `problems`，
  *   工具调用直接回错误字符串），**绝不**悄悄换成默认工作区。
  * - **WSL ↔ Windows 互转**：用户在 Windows 上可能贴 `/mnt/d/xxx`，在 WSL 里可能贴 `D:\xxx`。
- *   两种形态都要认（与 `openFileRoute.ts` 的互转保持同一口径）。
+ *   两种形态都要认（转换实现与 `api/openFileRoute.ts` 共用 `shared/hostPath.ts`，不再各写一套）。
  */
 import { existsSync, statSync, accessSync, constants } from 'node:fs'
+import { isWindowsDrivePath, windowsDriveToWsl, wslDriveToWindows } from './shared/hostPath.js'
 
 export interface WorkspaceCheckResult {
   ok: boolean
@@ -35,20 +36,24 @@ export interface WorkspaceCheckResult {
  */
 export function wslToWindows(input: string): string {
   if (process.platform !== 'win32') return input
-  const m = /^\/mnt\/([a-zA-Z])(\/.*)?$/.exec(input.trim())
-  if (m === null) return input
-  const drive = m[1].toUpperCase()
-  const rest = (m[2] ?? '').replace(/\//g, '\\')
-  return `${drive}:${rest === '' ? '\\' : rest}`
+  const trimmed = input.trim()
+  // 额外要求盘符后是 `/` 或字符串结尾，以免把 `/mnt/dx` 误判成 D 盘。
+  if (!/^\/mnt\/[a-zA-Z](\/|$)/.test(trimmed)) return input
+  return wslDriveToWindows(trimmed)
 }
 
-/** Windows 形态 → WSL 形态：`D:\code` → `/mnt/d/code`。 */
+/**
+ * Windows 形态 → WSL 形态：`D:\code` → `/mnt/d/code`。
+ *
+ * ⚠️ **必须带分隔符**：裸 `D:` / `C:relative` 原样返回。本函数用于**文件系统探测**，
+ * 把 `C:relative` 当成 `/mnt/c/relative` 会探到错误目录
+ * （`test/workspace-check.test.mjs` 钉住了这条；客户端的 `normalizeWindowsPathToWsl`
+ * 契约不同，故两者不合并）。
+ */
 export function windowsToWsl(input: string): string {
-  const m = /^([a-zA-Z]):[\\/](.*)$/.exec(input.trim())
-  if (m === null) return input
-  const drive = m[1].toLowerCase()
-  const rest = m[2].replace(/\\/g, '/')
-  return `/mnt/${drive}/${rest}`
+  const trimmed = input.trim()
+  if (!isWindowsDrivePath(trimmed)) return input
+  return windowsDriveToWsl(trimmed)
 }
 
 /**

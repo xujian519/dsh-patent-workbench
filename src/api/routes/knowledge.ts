@@ -7,7 +7,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { assertValidFileLink, createKnowledge, deleteKnowledgeWithRefs, getDictionary, getKnowledge, listKnowledge, updateKnowledge } from '../../db/repo.js'
-import { isLoopbackRequest, KNOWLEDGE_PREFIX, MAX_LOCAL_DOC_BYTES, pathSegments, readJsonBody, requireCode, toNativePath, writeJson } from './helpers.js'
+import { KNOWLEDGE_PREFIX, MAX_LOCAL_DOC_BYTES, badRequest, methodNotAllowed, pathSegments, readJsonBody, requireCode, requireLoopback, toNativePath, writeJson } from './helpers.js'
 
 export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
   return [
@@ -15,7 +15,7 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
       kind: 'prefix',
       path: KNOWLEDGE_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const segments = pathSegments(url, KNOWLEDGE_PREFIX)
         const method = req.method ?? 'GET'
@@ -43,7 +43,7 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
               size: info.size,
             })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
         if (segments.length === 0) {
@@ -83,10 +83,10 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
               })
               return writeJson(res, 201, { ok: true, knowledge: entry })
             } catch (error) {
-              return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+              return badRequest(res, error)
             }
           }
-          return writeJson(res, 405, { error: 'method not allowed' })
+          return methodNotAllowed(res)
         }
         const id = segments[0]
         if (method === 'GET' && segments.length === 1) {
@@ -141,7 +141,7 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
           try {
             entry = updateKnowledge(db, id, patch)
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
           if (entry === undefined) return writeJson(res, 404, { error: 'knowledge not found' })
           return writeJson(res, 200, { ok: true, knowledge: entry })

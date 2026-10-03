@@ -6,7 +6,7 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import { createDictionaryEntry, deleteDictionaryEntry, listDictionaries, updateDictionaryEntry } from '../db/repo.js'
-import { isLoopbackRequest, readJsonBody, writeJson } from './http.js'
+import { badRequest, methodNotAllowed, readJsonBody, requireLoopback, writeJson } from './http.js'
 
 const DICTIONARIES_PREFIX = '/api/workbench/dictionaries'
 
@@ -20,7 +20,7 @@ export function makeDictionaryRoute(db: DatabaseSync): WebRoute {
     kind: 'prefix',
     path: DICTIONARIES_PREFIX,
     handler: async (req, res) => {
-      if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+      if (!requireLoopback(req, res)) return
       const url = new URL(req.url ?? '/', 'http://localhost')
       const segments = pathSegments(url, DICTIONARIES_PREFIX)
       const method = req.method ?? 'GET'
@@ -43,10 +43,10 @@ export function makeDictionaryRoute(db: DatabaseSync): WebRoute {
             })
             return writeJson(res, 200, { ok: true, dictionary: entry })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
-        return writeJson(res, 405, { error: 'method not allowed' })
+        return methodNotAllowed(res)
       }
       if (segments.length >= 2) {
         const kind = decodeURIComponent(segments[0])
@@ -63,7 +63,7 @@ export function makeDictionaryRoute(db: DatabaseSync): WebRoute {
             })
             return writeJson(res, 200, { ok: true, dictionary: entry })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
         if (method === 'DELETE') {
@@ -71,10 +71,10 @@ export function makeDictionaryRoute(db: DatabaseSync): WebRoute {
             deleteDictionaryEntry(db, kind, code)
             return writeJson(res, 200, { ok: true })
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
-        return writeJson(res, 405, { error: 'method not allowed' })
+        return methodNotAllowed(res)
       }
       return writeJson(res, 400, { error: 'invalid path' })
     },

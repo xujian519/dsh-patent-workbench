@@ -6,7 +6,7 @@
  * 前端据此隐藏选择器 —— 保证"未选技能时行为与既有版本完全一致"这条底线。
  */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { isLoopbackRequest, writeJson } from './helpers.js'
+import { errorMessage, methodNotAllowed, requireLoopback, writeJson } from './helpers.js'
 import { normalizeSkillEntries, selectUserInvocable, type SkillsService } from '../skills.js'
 
 export const SKILLS_PATH = '/api/workbench/skills'
@@ -23,8 +23,8 @@ export function makeSkillRoutes(deps: SkillRouteDeps): WebRoute[] {
       kind: 'exact',
       path: SKILLS_PATH,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'GET') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'GET') return methodNotAllowed(res)
         const url = new URL(req.url ?? SKILLS_PATH, 'http://localhost')
         const service = deps.probe()
         if (service === undefined) return writeJson(res, 200, { ok: true, available: false, skills: [] })
@@ -38,7 +38,7 @@ export function makeSkillRoutes(deps: SkillRouteDeps): WebRoute[] {
             ok: true,
             available: false,
             skills: [],
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMessage(error),
           })
         }
       },

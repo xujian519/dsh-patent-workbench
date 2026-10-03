@@ -7,16 +7,21 @@
  * ⚠️ v1.15.1：请求围栏（`isLoopbackRequest` / `writeJson` / `readJsonBody`）已迁到
  * `src/api/http.ts`，这里**只做再导出**，让既有 `from './helpers.js'` 的调用点不必改动。
  * 原地再写一份实现正是"同一个语义两处实现"，由 `test/httpFence.test.mjs` 扫描禁止。
+ *
+ * 2026-10-03：403/405/400 的响应样板（`requireLoopback` / `methodNotAllowed` / `badRequest` /
+ * `errorMessage`）同样只有 `http.ts` 一份实现，这里一并再导出。
  */
 import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
+import { toNativePath as hostToNativePath } from '../../shared/hostPath.js'
+import { startOfLocalDay } from '../../shared/localDay.js'
 import {
   getDictionary, getTask, localDateString,
   type TaskInput,
 } from '../../db/repo.js'
 
-export { isLoopbackRequest, readJsonBody, writeJson } from '../http.js'
+export { badRequest, errorMessage, methodNotAllowed, readJsonBody, requireLoopback, writeJson } from '../http.js'
 
 /** 「预计耗时」落库时的合法区间（与 `shared/dailyPlanPolicy.ts#MAX_PLAN_MINUTES` 同值）。 */
 export const MIN_ESTIMATE_MINUTES = 1
@@ -60,37 +65,19 @@ export const MATTERS_PREFIX = '/api/workbench/matters'
 
 export const MAX_LOCAL_DOC_BYTES = 1024 * 1024
 
-/** 把 file:// URL 或绝对路径转成服务器本地文件路径。 */
-export function fileLinkToPath(link: string): string {
-  const trimmed = link.trim()
-  if (/^file:/i.test(trimmed)) {
-    const url = new URL(trimmed)
-    if (url.protocol !== 'file:') throw new Error('not a file URL')
-    let pathname = decodeURIComponent(url.pathname)
-    // file:///D:/... 在 URL.pathname 中会是 /D:/...，去掉盘符前多余的斜杠。
-    if (/^\/[A-Za-z]:[\\/]/.test(pathname)) pathname = pathname.slice(1)
-    return pathname
-  }
-  return trimmed
-}
+/** 把 `file://` URL 或绝对路径转成服务器本地文件路径（实现见 `shared/hostPath.ts`）。 */
+export { fileLinkToPath } from '../../shared/hostPath.js'
 
 /**
  * 根据宿主平台把用户输入的绝对路径归一化为服务器可读路径（WSL 下 D:\Code -> /mnt/d/Code）。
+ *
+ * 转换实现只有一份（`shared/hostPath.ts`），这里只补齐默认平台。
  *
  * @param link - `file://` URL 或绝对路径。
  * @param platform - 宿主平台（默认 `process.platform`；显式传入便于单测）。
  */
 export function toNativePath(link: string, platform: string = process.platform): string {
-  let path = fileLinkToPath(link)
-  if (platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(path)) {
-    const match = /^([A-Za-z]):[\\/]?(.*)$/.exec(path)
-    if (match !== null) {
-      const drive = match[1].toLowerCase()
-      const rest = (match[2] ?? '').replace(/\\/g, '/').replace(/^\/+/, '')
-      path = rest === '' ? `/mnt/${drive}` : `/mnt/${drive}/${rest}`
-    }
-  }
-  return path
+  return hostToNativePath(link, platform)
 }
 
 /**
@@ -120,8 +107,7 @@ export function requireCode(db: DatabaseSync, kind: string, code: string, field:
 }
 
 export function todayRange(now: Date): { start: string; end: string } {
-  const start = new Date(now)
-  start.setHours(0, 0, 0, 0)
+  const start = startOfLocalDay(now)
   const end = new Date(start)
   end.setDate(end.getDate() + 1)
   return { start: start.toISOString(), end: end.toISOString() }

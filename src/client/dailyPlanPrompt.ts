@@ -18,6 +18,7 @@ import {
   type PlanCandidate,
   type PlanCandidateDiagnostic,
 } from '../shared/dailyPlanPolicy.js'
+import { localDateString } from '../shared/localDay.js'
 
 export interface BuildPlanPromptInput {
   /** 目标日（YYYY-MM-DD）。 */
@@ -72,8 +73,7 @@ function dueLabel(candidate: PlanCandidate): string {
   const ms = Date.parse(candidate.effectiveDueAt)
   if (!Number.isFinite(ms)) return `截止无法解析（${candidate.effectiveDueAt}）`
   const date = new Date(ms)
-  const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-  return `截止 ${stamp}`
+  return `截止 ${localDateString(date)}`
 }
 
 export function buildPlanPrompt(input: BuildPlanPromptInput): PlanPromptPayload {

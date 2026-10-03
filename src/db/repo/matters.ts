@@ -26,7 +26,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { nowIso } from './shared.js'
+import { nowIso, safeJsonParse } from './shared.js'
 import { matterLogEventKey } from '../../shared/matterLog.js'
 
 /** 案卷阶段：逐字对齐 patent-matter 技能的六态（L1–L5）。 */
@@ -292,7 +292,7 @@ function parseMatter(row: RawMatterRow | undefined): MatterRow | undefined {
     attorney: row.attorney,
     workspacePath: row.workspace_path,
     closedAt: row.closed_at,
-    extra: JSON.parse(row.extra) as Record<string, unknown>,
+    extra: safeJsonParse<Record<string, unknown>>(row.extra, {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -544,8 +544,15 @@ export function createMatterNotice(db: DatabaseSync, input: MatterNoticeInput): 
   return parseNotice(db.prepare('SELECT * FROM matter_notices WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
-export function deleteMatterNotice(db: DatabaseSync, id: string): boolean {
-  return Number(db.prepare('DELETE FROM matter_notices WHERE id = ?').run(id).changes) > 0
+/**
+ * 删除一条官文记录。
+ *
+ * ⚠️ 必须带 `matterId`：路由是嵌套的（`DELETE /matters/:id/notices/:noticeId`），
+ * 只按 `noticeId` 删会让 `.../matters/A/notices/<属于 B 的 id>` 真的删掉 B 的记录 ——
+ * 路由语义与实际行为不符。
+ */
+export function deleteMatterNotice(db: DatabaseSync, matterId: string, id: string): boolean {
+  return Number(db.prepare('DELETE FROM matter_notices WHERE id = ? AND matter_id = ?').run(id, matterId).changes) > 0
 }
 
 function parseDeadline(row: Record<string, unknown>): MatterDeadlineRow {
@@ -559,7 +566,7 @@ function parseDeadline(row: Record<string, unknown>): MatterDeadlineRow {
     basis: (row.basis ?? null) as string | null,
     status: row.status as string,
     computedAt: row.computed_at as string,
-    computedFrom: JSON.parse(row.computed_from as string) as Record<string, unknown>,
+    computedFrom: safeJsonParse<Record<string, unknown>>(row.computed_from as string, {}),
   }
 }
 
@@ -608,12 +615,13 @@ export function replaceMatterDeadlines(db: DatabaseSync, matterId: string, rows:
 }
 
 /** 单条期限的状态更新（用户「已办理 / 已豁免」）。只认 pending/done/waived/overdue。 */
-export function setMatterDeadlineStatus(db: DatabaseSync, id: string, status: string): MatterDeadlineRow {
+/** 同 `deleteMatterNotice`：带 `matterId`，避免 `/matters/A/deadlines/<属于 B 的 id>` 改到 B。 */
+export function setMatterDeadlineStatus(db: DatabaseSync, matterId: string, id: string, status: string): MatterDeadlineRow {
   const allowed = ['pending', 'done', 'waived', 'overdue']
   if (!allowed.includes(status)) throw new Error(`期限状态非法，合法值：${allowed.join(' / ')}`)
-  const changed = db.prepare('UPDATE matter_deadlines SET status = ? WHERE id = ?').run(status, id)
+  const changed = db.prepare('UPDATE matter_deadlines SET status = ? WHERE id = ? AND matter_id = ?').run(status, id, matterId)
   if (Number(changed.changes) === 0) throw new Error(`期限记录不存在：${id}`)
-  return parseDeadline(db.prepare('SELECT * FROM matter_deadlines WHERE id = ?').get(id) as Record<string, unknown>)
+  return parseDeadline(db.prepare('SELECT * FROM matter_deadlines WHERE id = ? AND matter_id = ?').get(id, matterId) as Record<string, unknown>)
 }
 
 export interface MatterEventInput {

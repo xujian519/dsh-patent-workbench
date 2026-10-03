@@ -7,7 +7,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { DatabaseSync } from 'node:sqlite'
-import { breakerCooldownMs, readReminderPolicy, type ReminderPolicy } from './config.js'
+import { NOTIFY_RETRY_BACKOFF_MS, breakerCooldownMs, readReminderPolicy, type ReminderPolicy } from './config.js'
 import { formatDigest } from './policy.js'
 
 /** dsh-im 暴露的服务形状（结构化类型，便于测试注入假实现）。 */
@@ -252,7 +252,7 @@ export class WechatChannelAdapter {
       for (const entry of entries) this.deps.queue.remove(entry.id)
       return { sent: entries.length, merged: 1, failed: 0 }
     }
-    const retryAt = new Date(now.getTime() + (outcome.retryAfterMs ?? 15 * 60_000)).toISOString()
+    const retryAt = new Date(now.getTime() + (outcome.retryAfterMs ?? NOTIFY_RETRY_BACKOFF_MS)).toISOString()
     for (const entry of entries) this.deps.queue.markAttempt(entry.id, outcome.reason, retryAt)
     return { sent: 0, merged: 0, failed: entries.length, reason: outcome.reason }
   }

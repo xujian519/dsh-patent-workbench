@@ -13,9 +13,11 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso } from '../db/repo.js'
-import type { ReminderPolicy } from './config.js'
+import { safeJsonParse } from '../db/repo/shared.js'
+import { NOTIFY_RETRY_BACKOFF_MS, type ReminderPolicy } from './config.js'
 import { decideReminder, formatDigest, type ReminderCandidate, type ThrottleState } from './policy.js'
 import type { SendOutcome, WechatChannelAdapter } from './adapter.js'
+import { startOfLocalDay } from '../shared/localDay.js'
 
 export interface DraftNotifyEntry {
   id: string
@@ -107,7 +109,7 @@ export function listNotifiableDrafts(db: DatabaseSync, kinds: readonly string[])
     WHERE status_code = 'pending' AND deferred_at IS NULL AND notified_at IS NULL AND kind_code IN (${placeholders})
     ORDER BY created_at
   `).all(...kinds) as unknown as Array<{ id: string; kind_code: string; payload_json: string; session_id: string | null }>
-  return rows.map((row) => ({ id: row.id, kindCode: row.kind_code, payload: JSON.parse(row.payload_json) as Record<string, unknown>, sessionId: row.session_id }))
+  return rows.map((row) => ({ id: row.id, kindCode: row.kind_code, payload: safeJsonParse<Record<string, unknown>>(row.payload_json, {}), sessionId: row.session_id }))
 }
 
 /** 草稿关联的任务标题（验收申请草稿只存 taskId，通知里带上标题才有信息量）。 */
@@ -159,7 +161,14 @@ export function countDraftNotifiesSince(db: DatabaseSync, sinceIso: string): num
 export interface DraftNotifyDeps {
   db: DatabaseSync
   adapter: WechatChannelAdapter
-  isTargetConfigured: () => boolean
+  /**
+   * ⚠️ 这里**刻意没有** `isTargetConfigured`。
+   *
+   * 草稿通知的前置门只看"通道装没装"（`adapter.available()`）；投递目标由适配层在
+   * `send()` 时按需解析（进程刚起来时它的目标缓存是空的，在门里读缓存会让通知永远发不出去）。
+   * 字段不存在就不会被误用 —— 结构级断言见 `test/reminderWiring.test.mjs`。
+   * 任务提醒侧正相反（不看会静默跳过），两处语义刻意不同，见 `reminder/scheduler.ts`。
+   */
   throttleState: (policy: ReminderPolicy, now: Date) => ThrottleState
   now?: () => Date
 }
@@ -181,9 +190,8 @@ export async function scanDraftNotifications(deps: DraftNotifyDeps, policy: Remi
   if (drafts.length === 0) return result
 
   const now = deps.now?.() ?? new Date()
-  // 只用"通道是否装了"做前置门；**不用** isTargetConfigured()——那个读的是适配层的
-  // 目标缓存，进程刚起来时缓存为空会让通知永远发不出去（适配层其实会在 send() 时
-  // 按需解析目标）。真发不出去时 send() 会失败，下面照常入队退避，不会丢。
+  // 只用"通道是否装了"做前置门（目标由 send() 按需解析；理由见 DraftNotifyDeps 的注释）。
+  // 真发不出去时 send() 会失败，下面照常入队退避，不会丢。
   if (!deps.adapter.available()) {
     // 未装 dsh-im：保持"未通知"，前端照旧；装上后自然补推。
     result.unavailable = drafts.length
@@ -212,7 +220,7 @@ export async function scanDraftNotifications(deps: DraftNotifyDeps, policy: Remi
         markDraftNotified(deps.db, draft.id, now.toISOString())
         result.sent += 1
       } else {
-        enqueueDraftNotify(deps.db, { draftId: draft.id, kindCode: draft.kindCode, title, body, priorityCode, nextAttemptAt: new Date(nowMs + 15 * 60_000).toISOString(), at: now.toISOString() })
+        enqueueDraftNotify(deps.db, { draftId: draft.id, kindCode: draft.kindCode, title, body, priorityCode, nextAttemptAt: new Date(nowMs + NOTIFY_RETRY_BACKOFF_MS).toISOString(), at: now.toISOString() })
         result.queued += 1
       }
       continue
@@ -223,7 +231,7 @@ export async function scanDraftNotifications(deps: DraftNotifyDeps, policy: Remi
         ? nextQuietEnd(policy, now)
         : decision.reason === 'digest'
           ? nextDigestAt(policy, now)
-          : new Date(nowMs + 15 * 60_000)
+          : new Date(nowMs + NOTIFY_RETRY_BACKOFF_MS)
       enqueueDraftNotify(deps.db, { draftId: draft.id, kindCode: draft.kindCode, title, body, priorityCode, nextAttemptAt: retryAt.toISOString(), at: now.toISOString() })
       markDraftNotified(deps.db, draft.id, now.toISOString())
       result.queued += 1
@@ -264,7 +272,7 @@ export async function flushDraftNotifications(deps: DraftNotifyDeps, policy: Rem
         ? nextQuietEnd(policy, now)
         : decision.reason === 'digest'
           ? nextDigestAt(policy, now)
-          : new Date(nowMs + 15 * 60_000)
+          : new Date(nowMs + NOTIFY_RETRY_BACKOFF_MS)
       markDraftNotifyAttempt(deps.db, entry.id, decision.reason, retryAt.toISOString())
       continue
     }
@@ -276,7 +284,7 @@ export async function flushDraftNotifications(deps: DraftNotifyDeps, policy: Rem
     const entry = sendable[0]
     const outcome: SendOutcome = await deps.adapter.send({ title: entry.title, body: entry.body, priorityCode: entry.priorityCode })
     if (outcome.ok) { removeDraftNotify(deps.db, entry.id); result.sent += 1 } else {
-      markDraftNotifyAttempt(deps.db, entry.id, outcome.reason, new Date(nowMs + 15 * 60_000).toISOString())
+      markDraftNotifyAttempt(deps.db, entry.id, outcome.reason, new Date(nowMs + NOTIFY_RETRY_BACKOFF_MS).toISOString())
       result.failed += 1
     }
     return result
@@ -289,7 +297,7 @@ export async function flushDraftNotifications(deps: DraftNotifyDeps, policy: Rem
     result.sent += 1
     result.merged = sendable.length
   } else {
-    for (const entry of sendable) markDraftNotifyAttempt(deps.db, entry.id, outcome.reason, new Date(nowMs + 15 * 60_000).toISOString())
+    for (const entry of sendable) markDraftNotifyAttempt(deps.db, entry.id, outcome.reason, new Date(nowMs + NOTIFY_RETRY_BACKOFF_MS).toISOString())
     result.failed += sendable.length
   }
   return result
@@ -318,8 +326,7 @@ export function nextQuietEnd(policy: ReminderPolicy, now: Date): Date {
 
 /** 当天/次日汇总时刻。 */
 export function nextDigestAt(policy: ReminderPolicy, now: Date): Date {
-  const next = new Date(now)
-  next.setHours(0, 0, 0, 0)
+  const next = startOfLocalDay(now)
   next.setMinutes(minutesOfDay(policy.digestAt))
   if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1)
   return next

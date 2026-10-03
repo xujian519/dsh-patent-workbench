@@ -63,7 +63,6 @@ function deps(db, adapter, extra = {}) {
   return {
     db,
     adapter,
-    isTargetConfigured: () => true,
     throttleState: () => ({ sentLastHour: 0, sentToday: 0, circuitOpenUntil: null }),
     now: fixedNow,
     ...extra,
@@ -238,13 +237,20 @@ test('扫描：通道未就绪不标记已通知（恢复后仍能补推）', as
   })
 })
 
-test('扫描：目标缓存为空也要尝试发送（否则通知永远发不出去）', async () => {
+/**
+ * 门只由 `adapter.available()` 决定，**不看投递目标是否已解析**。
+ *
+ * 历史事故（v1.15.3）：这里曾用 `deps.isTargetConfigured` 当门，而它读的是适配层的目标缓存 ——
+ * 进程刚起来缓存为空，于是通知永远发不出去。修法是把那个字段整个删掉（`DraftNotifyDeps` 里
+ * 已经没有它），由 `send()` 按需解析目标；结构级断言见 `test/reminderWiring.test.mjs`。
+ * 这条用例守住行为面：只要通道装了就必须尝试发送。
+ */
+test('扫描：通道就绪就尝试发送（不拿"目标缓存是否已填"当门）', async () => {
   await withDb(async (db) => {
     const task = createTask(db, { title: 't', typeCode: 'code_impl', priorityCode: 'p1' })
     completionDraft(db, task.id)
     const adapter = fakeAdapter()
-    // isTargetConfigured=false 模拟"适配层还没解析出目标"；仍应尝试发送并由 send() 自行解析
-    const result = await scanDraftNotifications(deps(db, adapter, { isTargetConfigured: () => false }), policy({ quietHours: null }))
+    const result = await scanDraftNotifications(deps(db, adapter), policy({ quietHours: null }))
     assert.equal(result.sent, 1)
     assert.equal(adapter.sent.length, 1)
   })

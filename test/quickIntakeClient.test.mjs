@@ -374,16 +374,30 @@ test('快速录入里的技能选择**真的会进提示词**（不许再硬编�
   )
 })
 
-test('三个 AI 入口的选择器都接在同一处：快速录入与共享提示词弹窗共用 Skill/Persona/Model', () => {
+test('两个 AI 弹窗的选择器都接在同一处：快速录入与共享提示词共用 Skill/Persona/Model', () => {
   const index = readFileSync(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
-  const code = index.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
-  // 每个选择器都要在**两个**弹窗里各出现一次
+  /**
+   * H4-7 / H4-8：两张弹窗先后搬进了 `components/dialogs/`，于是"每个选择器挂在两个弹窗里各一次"
+   * 要在**三个文件**上求和（plan §5.4：迁移而不是删除）。意图不变：同一组选择器挂在两个弹窗里，
+   * 不是各写一份；`index.tsx` 里一个都不该再直接渲染。
+   */
+  const dialogs = ['QuickEntryModal', 'PromptModal'].map((name) =>
+    readFileSync(new URL(`../src/client/components/dialogs/${name}.tsx`, import.meta.url), 'utf8'))
+  const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  const code = strip(index)
+  const dialogCodes = dialogs.map(strip)
+  const countIn = (source, tag) => (source.match(new RegExp(tag, 'g')) ?? []).length
+  // 每个选择器都要在**两个**弹窗里各出现一次，且容器不再自己渲染任何一个
   for (const [label, tag] of [['角色', '<PersonaPicker'], ['技能', '<SkillPicker'], ['模型', '<ModelPicker']]) {
-    const count = (code.match(new RegExp(tag.replace('<', '<'), 'g')) ?? []).length
-    assert.equal(count, 2, `${label}选择器必须挂在两个弹窗里各一次（快速录入 + 共享提示词），实际 ${count} 次`)
+    assert.equal(countIn(code, tag), 0, `index.tsx 不该再自己渲染${label}选择器`)
+    for (const dialogCode of dialogCodes) {
+      assert.equal(countIn(dialogCode, tag), 1, `每张弹窗里${label}选择器恰好一个`)
+    }
+    assert.equal(dialogCodes.reduce((sum, dialogCode) => sum + countIn(dialogCode, tag), 0), 2,
+      `${label}选择器必须挂在两个弹窗里各一次（快速录入 + 共享提示词）`)
   }
-  // 顺序：角色 → 技能（AX-R07 的"角色在技能之前"，两个弹窗都要一致）
-  const promptModal = code.slice(code.indexOf('{promptModal !== null && ('), code.indexOf('wb-modal-actions', code.indexOf('{promptModal !== null && (')))
-  assert.ok(promptModal.indexOf('<PersonaPicker') < promptModal.indexOf('<SkillPicker'),
+  // 顺序：角色 → 技能（AX-R07 的"角色在技能之前"；判据随提示词弹窗搬进 PromptModal）
+  const promptModal = dialogCodes[1].slice(0, dialogCodes[1].indexOf('wb-modal-actions'))
+  assert.ok(promptModal.indexOf('<PersonaPicker') > 0 && promptModal.indexOf('<PersonaPicker') < promptModal.indexOf('<SkillPicker'),
     '共享提示词弹窗里角色必须在技能之前')
 })

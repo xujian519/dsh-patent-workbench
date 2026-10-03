@@ -18,22 +18,8 @@ import {
   addDailyPlanItem, deleteDailyPlan, getDailyPlan, updateDailyPlan, updateDailyPlanItem,
   type DailyPlanRow, type ManualPlanItemInput,
 } from '../../db/repo.js'
-import { isLoopbackRequest, pathSegments, PERIOD_DATE_RE, PLANS_PREFIX, readJsonBody, writeJson } from './helpers.js'
-
-/** 服务器本地日的 YYYY-MM-DD（与仓储层 `localDateString` 同口径，这里不 import 客户端模块）。 */
-function localDateString(now = new Date()): string {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-}
-
-/** 计划日 D 的本地日起止 epoch（候选的日界判定用显式区间，便于午夜/DST 测试）。 */
-export function localDayRange(date: string): { startMs: number; endMs: number } | undefined {
-  if (!PERIOD_DATE_RE.test(date)) return undefined
-  const [y, m, d] = date.split('-').map(Number)
-  const start = new Date(y, m - 1, d, 0, 0, 0, 0)
-  if (Number.isNaN(start.getTime())) return undefined
-  const end = new Date(y, m - 1, d + 1, 0, 0, 0, 0)
-  return { startMs: start.getTime(), endMs: end.getTime() }
-}
+import { PERIOD_DATE_RE, PLANS_PREFIX, badRequest, pathSegments, readJsonBody, requireLoopback, writeJson } from './helpers.js'
+import { localDateString } from '../../shared/localDay.js'
 
 /**
  * 计划回执形状：`readable=false` 时界面显示"不可计算"，`taskStatusCode` 让行内能
@@ -73,7 +59,7 @@ export function makePlanRoutes(db: DatabaseSync): WebRoute[] {
       kind: 'prefix',
       path: PLANS_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const segments = pathSegments(url, PLANS_PREFIX)
         const method = req.method ?? 'GET'
@@ -103,7 +89,7 @@ export function makePlanRoutes(db: DatabaseSync): WebRoute[] {
             })
             return writeJson(res, 200, planResponse(db, plan))
           } catch (error) {
-            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+            return badRequest(res, error)
           }
         }
 

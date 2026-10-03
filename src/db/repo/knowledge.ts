@@ -17,7 +17,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, getDraft, withDraftConfirm, type DraftRow } from '../repo.js'
-import { parseDraft, type RawDraftRow } from './shared.js'
+import { parseDraft, safeJsonParse, type RawDraftRow } from './shared.js'
 
 
 export interface KnowledgeInput {
@@ -92,7 +92,7 @@ export function assertValidFileLink(value: string | null | undefined): string | 
 
 function parseKnowledge(row: RawKnowledgeRow | undefined): KnowledgeRow | undefined {
   if (row === undefined) return undefined
-  const tags: unknown = JSON.parse(row.tags_json)
+  const tags = safeJsonParse<unknown>(row.tags_json, [])
   return {
     id: row.id,
     kindCode: row.kind_code,

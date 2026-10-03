@@ -27,6 +27,11 @@ const taskProgressComponent = read('src/client/components/TaskProgress.tsx')
 const taskProgressViewSource = read('src/client/taskProgressView.ts')
 const sharedProgress = read('src/shared/taskProgress.ts')
 const serviceChrome = read('src/index.ts')
+/**
+ * H4-6 把左栏任务块（筛选 + 排序 + 任务树）搬去了 `components/views/TasksView.tsx`。
+ * 列表树那条不变量因此在这里**迁移落点**（plan §5.4：迁移而不是删除），见下面那条测试。
+ */
+const tasksView = read('src/client/components/views/TasksView.tsx')
 
 /**
  * 剥掉注释再扫。
@@ -137,13 +142,33 @@ test('TaskProgress 独立组件存在，且列表行与详情都接线到它', (
   assert.match(taskProgressComponent, /export function ProgressBar\b/)
   assert.match(taskList, /import \{ TaskProgress \} from '\.\/TaskProgress\.js'/, '列表行必须用这个组件')
   assert.match(taskList, /<TaskProgress compact/, '列表行用 compact 形态')
-  assert.match(clientIndex, /<TaskProgress\b/, '详情页也用同一个组件')
+  /**
+   * 详情页的接线（H4-3 起**落点变了**）：原来扫 `index.tsx`，视图拆分后详情搬到了
+   * `components/views/TaskDetailPane.tsx`。按 H4 plan §5.4 的要求是**迁移而不是删除**，
+   * 所以这里改成"详情那一处必须存在 + `index.tsx` 里不许再有第二处"——
+   * 判据仍然是"只有一份详情实现"，而不再绑定"详情写在哪个文件"。
+   */
+  const detailPane = read('src/client/components/views/TaskDetailPane.tsx')
+  assert.match(detailPane, /<TaskProgress\b/, '详情页也用同一个组件')
+  assert.doesNotMatch(clientIndex, /<TaskProgress\b/, '详情只有一处：index.tsx 不该再直接渲染 TaskProgress')
 })
 
 test('列表行的进度数据来自**一次**待验收查询（不做 N+1）', () => {
   assert.match(clientIndex, /tasks\/pending-completions/, '待验收投影走一次性端点')
   assert.match(clientIndex, /pendingCompletionMap\(/, '折成 Map 后再分发到各行')
-  assert.match(clientIndex, /pending=\{pendingMap\}/, '列表树必须接到这份投影')
+  /**
+   * 列表树的落点（H4-6 起**变了**）：原来这一条直接扫 `index.tsx`，视图拆分后左栏任务块搬到了
+   * `components/views/TasksView.tsx`。按 H4 plan §5.4 的要求是**迁移而不是删除**，所以判据改成
+   * "投影必须走通 容器 → TasksView → TaskTreeRows 这条链，且列表树只有一处"。
+   * 用 `stripComments` 扫：这条里既有正向也有反向断言，注释里逐字引用反面写法是本仓常态。
+   */
+  const indexCode = stripComments(clientIndex)
+  const tasksViewCode = stripComments(tasksView)
+  assert.match(indexCode, /<TasksView\b/, '任务视图主体必须挂新的 TasksView（H4-6）')
+  assert.match(indexCode, /pending=\{pendingMap\}/, '容器必须把待验收投影传进任务视图')
+  assert.match(tasksViewCode, /<TaskTreeRows\b/, 'TasksView 里必须真的挂列表树')
+  assert.match(tasksViewCode, /pending=\{pending\}/, 'TasksView 必须把投影透传到列表树（不许中饱私囊）')
+  assert.doesNotMatch(indexCode, /<TaskTreeRows\b/, '列表树只有一处：index.tsx 不该再直接渲染')
   // 反向：不许在渲染里逐任务发请求
   assert.doesNotMatch(clientIndex, /tasks\/\$\{task\.id\}\/pending/, '不得逐行请求待验收')
 })

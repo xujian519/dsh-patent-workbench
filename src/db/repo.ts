@@ -12,13 +12,8 @@ export { effectiveDueAtForTask, effectiveWorkspacePathForTask, parseTask, append
 export type { RawTaskRow } from './repo/task-primitives.js'
 
 
-/** 服务器本地时区的 YYYY-MM-DD；每日计划按本地“天”划分。 */
-export function localDateString(date = new Date()): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
+/** 服务器本地时区的 YYYY-MM-DD；每日计划按本地“天”划分。唯一实现在 `shared/localDay.ts`。 */
+export { localDateString } from '../shared/localDay.js'
 
 export interface DictionaryEntry {
   kind: string

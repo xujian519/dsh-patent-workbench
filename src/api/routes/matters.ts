@@ -24,7 +24,6 @@
  * 绝不在插件里兜底一份期限口径（同一语义两处实现是禁区）。
  */
 import { readFile, stat } from 'node:fs/promises'
-import type { ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
@@ -45,7 +44,7 @@ const MATTER_LOG_FILENAME = '_matter-log.md'
 /** 单次导入的体积上限：日志是纯文本行记录，2 MiB 已远超真实规模（一万行约 0.5 MiB）。 */
 const MAX_MATTER_LOG_BYTES = 2 * 1024 * 1024
 import { buildDeadlineQuery, reportToDeadlineRows, type PatentDeadlineService } from '../../shared/patentDeadline.js'
-import { MATTERS_PREFIX, isLoopbackRequest, pathSegments, readJsonBody, writeJson } from './helpers.js'
+import { MATTERS_PREFIX, badRequest, errorMessage, methodNotAllowed, pathSegments, readJsonBody, requireLoopback, writeJson } from './helpers.js'
 
 /** 期限引擎（软探测）的注入口；未注入或探测为 undefined 时重算端点明确降级。 */
 export interface MatterRouteDeps {
@@ -56,11 +55,6 @@ export interface MatterRouteDeps {
   patentDeadline?: () => PatentDeadlineService | undefined
   /** 引擎标识，写进 `computed_from` 供追溯（默认 `@deepseek-ai/dsh-patent-deadline`）。 */
   engineId?: string
-}
-
-/** 把仓储层抛出的中文错误变成 400；不静默忽略非法值。 */
-function badRequest(res: ServerResponse, error: unknown): void {
-  writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
 }
 
 /**
@@ -83,8 +77,8 @@ function upcomingDeadlineRoute(db: DatabaseSync): WebRoute {
     kind: 'exact',
     path: '/api/workbench/matter-deadlines/upcoming',
     handler(req, res) {
-      if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-      if ((req.method ?? 'GET') !== 'GET') return writeJson(res, 405, { error: 'method not allowed' })
+      if (!requireLoopback(req, res)) return
+      if ((req.method ?? 'GET') !== 'GET') return methodNotAllowed(res)
       const url = new URL(req.url ?? '/', 'http://localhost')
       const rawDays = Number(url.searchParams.get('days') ?? '7')
       const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(365, Math.round(rawDays)) : 7
@@ -129,7 +123,7 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
       kind: 'prefix',
       path: MATTERS_PREFIX,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
+        if (!requireLoopback(req, res)) return
         const url = new URL(req.url ?? '/', 'http://localhost')
         const segments = pathSegments(url, MATTERS_PREFIX)
         const method = req.method ?? 'GET'
@@ -182,7 +176,7 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
               return badRequest(res, error)
             }
           }
-          return writeJson(res, 405, { error: 'method not allowed' })
+          return methodNotAllowed(res)
         }
 
         const id = segments[0]
@@ -215,10 +209,10 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
               }
             }
             if (segments.length === 3 && method === 'DELETE') {
-              const removed = deleteMatterNotice(db, segments[2])
+              const removed = deleteMatterNotice(db, id, segments[2])
               return writeJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: '官文记录不存在' })
             }
-            return writeJson(res, 405, { error: 'method not allowed' })
+            return methodNotAllowed(res)
           }
 
           if (section === 'deadlines') {
@@ -267,12 +261,12 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
             if (segments.length === 3 && method === 'PATCH' && segments[2] !== 'recompute') {
               if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })
               try {
-                return writeJson(res, 200, { ok: true, deadline: setMatterDeadlineStatus(db, segments[2], body.status as string) })
+                return writeJson(res, 200, { ok: true, deadline: setMatterDeadlineStatus(db, id, segments[2], body.status as string) })
               } catch (error) {
                 return badRequest(res, error)
               }
             }
-            return writeJson(res, 405, { error: 'method not allowed' })
+            return methodNotAllowed(res)
           }
 
           if (section === 'events') {
@@ -312,7 +306,7 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
               } catch (error) {
                 const code = (error as { code?: string }).code
                 if (code === 'ENOENT') return writeJson(res, 404, { error: `该案卷目录下没有 ${MATTER_LOG_FILENAME}：${logPath}` })
-                return writeJson(res, 400, { error: `读取 ${logPath} 失败：${error instanceof Error ? error.message : String(error)}` })
+                return writeJson(res, 400, { error: `读取 ${logPath} 失败：${errorMessage(error)}` })
               }
               const parsed = parseMatterLog(content)
               const result = projectMatterLogEvents(db, id, parsed.events)
@@ -346,7 +340,7 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
                 return badRequest(res, error)
               }
             }
-            return writeJson(res, 405, { error: 'method not allowed' })
+            return methodNotAllowed(res)
           }
 
           return writeJson(res, 404, { error: 'unknown sub-resource' })
@@ -391,7 +385,7 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
           const result = deleteMatter(db, id)
           return writeJson(res, result.deleted ? 200 : 404, result.deleted ? { ok: true, ...result } : { error: '案卷不存在' })
         }
-        return writeJson(res, 405, { error: 'method not allowed' })
+        return methodNotAllowed(res)
       },
     },
     // 跨案卷的"近 N 天到期"（今日视图用）—— 与单卷 CRUD 分开成独立路径，避免与 :id 抢段

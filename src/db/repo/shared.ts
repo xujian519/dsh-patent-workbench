@@ -6,6 +6,29 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 
+/**
+ * 在事务里跑 `fn`；**已经在事务里时直接执行**。
+ *
+ * 为什么必须嵌套感知：`createTask` 之类的写入既被直接调用，也会在 `withDraftConfirm`
+ * 的事务里被调用（确认草稿 → 建任务）。无条件 `BEGIN` 会让后者抛
+ * "cannot start a transaction within a transaction"（node:sqlite 实测）。
+ *
+ * 存在理由：实体写入与配套的 `task_events` 审计事件必须同生共死 ——
+ * 原先各处裸写，第二条失败就留下"事件与实体不一致"的库。
+ */
+export function withTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  if (db.isTransaction) return fn()
+  db.exec('BEGIN')
+  try {
+    const result = fn()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 export const nowIso = (): string => new Date().toISOString()
 
 export interface DraftRow {
@@ -34,13 +57,32 @@ export interface RawDraftRow {
   updated_at: string
 }
 
+/**
+ * 行内 JSON 列的**安全解析**：坏 JSON 不再让整批读请求失败。
+ *
+ * 为什么必须有：`task_drafts.payload_json` / `tasks.extra` 这类列在任何一次手改库、
+ * 半截写入或旧格式残留下都可能不是合法 JSON。原先各 repo 裸 `JSON.parse`，
+ * 一条脏行就让 `GET /tasks`、`GET /drafts` 整批 500，且报错里看不出是哪一行。
+ * 这里降级为 `fallback`，行本身仍然返回（不丢数据、不牵连其它行）。
+ *
+ * ⚠️ **迁移里不使用**：迁移遇到坏 JSON 应当响亮失败，静默降级会吞掉数据损坏信号。
+ */
+export function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
+  if (typeof raw !== 'string' || raw === '') return fallback
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
+
 export function parseDraft(row: RawDraftRow | undefined): DraftRow | undefined {
   if (row === undefined) return undefined
   return {
     id: row.id,
     kindCode: row.kind_code,
     sessionId: row.session_id,
-    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+    payload: safeJsonParse<Record<string, unknown>>(row.payload_json, {}),
     statusCode: row.status_code,
     deferredAt: row.deferred_at ?? null,
     deferCount: row.defer_count ?? 0,

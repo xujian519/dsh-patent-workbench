@@ -29,6 +29,16 @@ const promptSource = read('src/client/personaPrompt.ts')
 const librarySource = read('src/personas/library.ts')
 const sharedPersonaSource = read('src/shared/persona.ts')
 const componentSource = read('src/client/components/PersonaPicker.tsx')
+/**
+ * H4-7：快速录入弹窗（含它那一处 `PersonaPicker`）搬去了
+ * `components/dialogs/QuickEntryModal.tsx` —— 下面"两个入口都渲染同一个组件"因此
+ * 跨两个文件求和（plan §5.4：迁移而不是删除）。
+ */
+const quickDialogSource = read('src/client/components/dialogs/QuickEntryModal.tsx')
+/**
+ * H4-8：共享提示词弹窗也搬进了 `components/dialogs/`，它那一处 `PersonaPicker` 随之落户。
+ */
+const promptDialogSource = read('src/client/components/dialogs/PromptModal.tsx')
 
 /** 去掉注释：避免"注释里提到某个写法"被当成实现。 */
 function stripComments(source) {
@@ -93,9 +103,17 @@ test('AX-R07 七个 mode 共用同一角色选择路径：6 个走提示词弹�
   assert.match(code, /const personaChoice = promptInput\.persona \?\? INHERIT_PERSONA/)
   assert.match(code, /persona: clarifyOptions\.persona \?\? INHERIT_PERSONA/)
   assert.equal((code.match(/INHERIT_PERSONA/g) ?? []).length >= 3, true, '默认值必须是「未指定」而不是某个角色')
-  // 两个入口都渲染同一个组件
-  assert.equal((code.match(/<PersonaPicker/g) ?? []).length, 2, '提示词弹窗 + 快速录入弹窗各一个（同一个组件）')
-  assert.equal((code.match(/from '\.\/components\/PersonaPicker\.js'/g) ?? []).length, 1, '组件只有一个来源')
+  // 两个入口都渲染同一个组件（H4-7 快速录入、H4-8 共享提示词，两处都搬进了 `components/dialogs/`）
+  const quickDialogCode = stripComments(quickDialogSource)
+  const promptDialogCode = stripComments(promptDialogSource)
+  const personaUsages = (source) => (source.match(/<PersonaPicker/g) ?? []).length
+  assert.equal(personaUsages(code), 0, 'index.tsx 不再自己渲染 —— 两个入口都搬进了 dialogs/')
+  assert.equal(personaUsages(quickDialogCode), 1, '快速录入弹窗里恰好一处')
+  assert.equal(personaUsages(promptDialogCode), 1, '共享提示词弹窗里恰好一处')
+  assert.equal(personaUsages(quickDialogCode) + personaUsages(promptDialogCode), 2, '提示词弹窗 + 快速录入弹窗各一个（同一个组件）')
+  // 组件只有一个来源：两处 import 都指向同一个 `components/PersonaPicker.js`（不是 fork 出第二份）
+  assert.match(promptDialogCode, /from '\.\.\/PersonaPicker\.js'/, '共享提示词弹窗从共用组件导入')
+  assert.match(quickDialogCode, /from '\.\.\/PersonaPicker\.js'/, '快速录入弹窗从同一个共用组件导入')
 })
 
 test('AX-R07 技能选择器与角色选择器**不遮挡**：角色块无绝对定位，且渲染在技能块之前', () => {
@@ -105,11 +123,13 @@ test('AX-R07 技能选择器与角色选择器**不遮挡**：角色块无绝对
   assert.doesNotMatch(personaCss, /position:\s*(absolute|fixed)/, '角色选择器不得绝对定位（会遮挡技能栏）')
   assert.doesNotMatch(componentSource, /position:\s*(absolute|fixed)/)
   // 提示词弹窗里：PersonaPicker 在技能选择器之前（同一文档流，先角色后技能）
-  const modalAt = indexSource.indexOf('{promptModal !== null && (')
-  const personaAt = indexSource.indexOf('<PersonaPicker', modalAt)
-  const skillAt = indexSource.indexOf('<SkillPicker', modalAt)
-  assert.ok(modalAt > 0 && personaAt > modalAt, '提示词弹窗里必须有角色选择器')
+  // H4-8：这一整块搬进了 `components/dialogs/PromptModal.tsx`，判据随落点迁移（顺序不变）。
+  const personaAt = promptDialogSource.indexOf('<PersonaPicker')
+  const skillAt = promptDialogSource.indexOf('<SkillPicker')
+  assert.ok(personaAt > 0, '提示词弹窗里必须有角色选择器')
   assert.ok(skillAt > personaAt, `角色选择器必须渲染在技能选择器之前：persona@${personaAt} skill@${skillAt}`)
+  // 反向：这段顺序不再由 index.tsx 决定
+  assert.equal(indexSource.includes('<PersonaPicker'), false, 'index.tsx 不许再直接渲染角色选择器')
   // 角色块与技能块都不内联正文
   assert.doesNotMatch(stripComments(indexSource), /withPersonaPromptBlock\([^)]*body/)
 })

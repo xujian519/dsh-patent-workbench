@@ -12,6 +12,17 @@
  *
  * 现在只有一份实现，并由 `test/httpFence.test.mjs` 做源码级扫描钉住"不存在第二处实现"。
  *
+ * ## 响应样板也在这里（2026-10-03）
+ *
+ * 同一类的样板还有三处，一并收拢到本文件：
+ * - `requireLoopback`：回环围栏的**响应**（403 + 文案）原先 27 个端点各抄一份；
+ * - `methodNotAllowed`：405 字面量原先 27 处各写一遍；
+ * - `badRequest` / `errorMessage`：`error instanceof Error ? error.message : String(error)`
+ *   原先是 25 处逐字重复的表达式。
+ *
+ * 前两者是**安全/协议语义**：谁改了一处的状态码或文案，另外二十几处就悄悄落后且没有测试会红
+ * —— 与上面 3.5 节同一个 bug 类别。扫描钉住见 `test/httpFence.test.mjs`。
+ *
  * ## 两个安全头
  *
  * 所有 `/api/workbench/*` 响应都带 `cache-control: no-store` 与
@@ -52,6 +63,36 @@ export function workbenchResponseHeaders(): Record<string, string> {
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, workbenchResponseHeaders())
   res.end(JSON.stringify(body))
+}
+
+/**
+ * 回环围栏的**唯一**调用入口：非回环请求写 403 并返回 false。
+ *
+ * 用法：`if (!requireLoopback(req, res)) return`。
+ *
+ * 为什么不直接暴露 `isLoopbackRequest` 给端点用：那样每个端点都要自己拼一遍
+ * `writeJson(res, 403, { error: 'forbidden: loopback-only' })`——这句话原先抄了 27 遍。
+ * 这是安全围栏，任何一处被改成 401、或补一条头，另外 26 处都会悄悄落后。
+ */
+export function requireLoopback(req: IncomingMessage, res: ServerResponse): boolean {
+  if (isLoopbackRequest(req)) return true
+  writeJson(res, 403, { error: 'forbidden: loopback-only' })
+  return false
+}
+
+/** 405 的唯一实现（原先 27 处各写一遍同一字面量）。 */
+export function methodNotAllowed(res: ServerResponse): void {
+  writeJson(res, 405, { error: 'method not allowed' })
+}
+
+/** 异常 → 用户可见原因：`Error` 取 `message`，其余一律 `String()`（**路由层唯一实现**）。 */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** 校验/写入失败的 400：`{ error: 原因 }`（唯一实现）。 */
+export function badRequest(res: ServerResponse, error: unknown): void {
+  writeJson(res, 400, { error: errorMessage(error) })
 }
 
 export async function readJsonBody(req: IncomingMessage, maxBytes = 256 * 1024): Promise<Record<string, unknown> | undefined> {

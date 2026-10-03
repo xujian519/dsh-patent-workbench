@@ -6,7 +6,7 @@
  * 1. **连续提交两次**：用**真实的 `workbench_submit_knowledge` 工具**（同一会话 id）提交两条
  *    独立主题的知识，把两次原始回执逐字打出来；
  * 2. **到界面确认**：把**真实组件** `KnowledgeDraftBody`（弹窗里 `kindCode === 'knowledge'`
- *    那一块）渲染成 HTML → 在 headless Edge 里加载 → 断言"这是替换、不是新增"的提示
+ *    那一块）渲染成 HTML → 在 headless Chromium（路径由 `discoverBrowser()` 发现）里加载 → 断言"这是替换、不是新增"的提示
  *    **真的画出来了**（尺寸/可见性/文本），并截图；
  * 3. **检查实际入库内容**：调**真实的 `confirmKnowledgeDraft`**（HTTP 确认接口走的就是它）
  *    完成"用户点确认入库"，然后回读知识库：入库的是**第二次**的内容，第一次的内容
@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { discoverBrowser } from '../verify/browser.mjs'
 import { DatabaseSync } from 'node:sqlite'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -151,16 +152,13 @@ writeFileSync(PAGE, `<!doctype html><html data-dsh-personal-workbench-official><
   <div class="wb-dialog-body" id="after"><div class="tag">修后（同一次覆盖，历史已落库）</div>${afterHtml}</div>
 </div></div></div></body></html>`)
 
-const EDGE = [
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-].find((p) => existsSync(p))
-if (EDGE === undefined) {
-  console.error('SKIP: 未找到 Edge（界面层无法验证，其余断言已完成）')
+const browser = discoverBrowser()
+if (!browser.ok) {
+  console.error(`SKIP: 未找到浏览器：${browser.reason}（界面层无法验证，其余断言已完成）`)
 } else {
   const PORT = 9800 + Math.floor(Math.random() * 150)
   const profile = mkdtempSync(join(tmpdir(), 'kd-overwrite-'))
-  const child = spawn(EDGE, [
+  const child = spawn(browser.path, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
     '--window-size=1200,900', '--hide-scrollbars', 'about:blank',

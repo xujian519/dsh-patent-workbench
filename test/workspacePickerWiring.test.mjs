@@ -18,13 +18,30 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const INDEX = readFileSync(join(root, 'src/client/index.tsx'), 'utf8')
 const MODAL = readFileSync(join(root, 'src/client/components/LocalDocModal.tsx'), 'utf8')
 const PICKER = readFileSync(join(root, 'src/client/components/WorkspacePicker.tsx'), 'utf8')
+/**
+ * H4-7 / H4-8：三处 `WorkspacePicker` 里的两处（快速录入、新建任务、编辑任务）都搬去了
+ * `components/dialogs/`。下面的"三个入口各挂一次"因此**求和**判定（plan §5.4：迁移而不是删除）
+ * —— 意图仍是"少一个入口就只能手打路径"。
+ */
+const QUICK_DIALOG = readFileSync(join(root, 'src/client/components/dialogs/QuickEntryModal.tsx'), 'utf8')
+const NEW_TASK_DIALOG = readFileSync(join(root, 'src/client/components/dialogs/NewTaskModal.tsx'), 'utf8')
+const EDIT_TASK_DIALOG = readFileSync(join(root, 'src/client/components/dialogs/EditTaskModal.tsx'), 'utf8')
 
 const count = (source, pattern) => (source.match(pattern) ?? []).length
 
 test('#2: 三个入口各挂一次 WorkspacePicker（快速录入 / 新建任务 / 编辑任务）', () => {
-  assert.equal(count(INDEX, /<WorkspacePicker/g), 3,
-    '工作区选择器必须在三个入口各出现一次（少一个就有入口只能手打路径）')
+  const perEntry = [
+    ['index.tsx', count(INDEX, /<WorkspacePicker/g)],
+    ['QuickEntryModal.tsx', count(QUICK_DIALOG, /<WorkspacePicker/g)],
+    ['NewTaskModal.tsx', count(NEW_TASK_DIALOG, /<WorkspacePicker/g)],
+    ['EditTaskModal.tsx', count(EDIT_TASK_DIALOG, /<WorkspacePicker/g)],
+  ]
+  assert.deepEqual(perEntry, [
+    ['index.tsx', 0], ['QuickEntryModal.tsx', 1], ['NewTaskModal.tsx', 1], ['EditTaskModal.tsx', 1],
+  ], `工作区选择器必须在三个入口各出现一次（少一个就有入口只能手打路径）：${JSON.stringify(perEntry)}`)
+  assert.equal(count(INDEX, /<WorkspacePicker/g), 0, 'index.tsx 不再直接渲染选择器（三处都在弹窗里）')
   // 三个入口的 onBrowse 必须各自指出"选完写回哪" —— 否则浏览完不知道落到谁身上
+  // （快速录入 / 两张任务表单那三处从 H4-7 / H4-8 起是弹窗发的意图，写回哪仍由容器给出）
   for (const target of ["openDirPicker('quick')", "openDirPicker('form')", "openDirPicker('edit')"]) {
     assert.ok(INDEX.includes(target), `缺少 ${target}：浏览弹窗需要知道自己是从哪个入口打开的`)
   }
@@ -73,8 +90,16 @@ test('#2/W03: 列目录的请求形状只有一处（index.tsx 不许再拼那�
 })
 
 test('#2: 新建任务表单的工作区值仍以 workspacePath 进 FormData（提交路径没变）', () => {
-  assert.match(INDEX, /name="workspacePath"/, '表单提交读的仍是 workspacePath 字段名（改字段名等于改接口）')
+  /**
+   * H4-8 起字段名落在弹窗里（表单画法搬走了），但**提交读的还是容器**：
+   * 受控值 `formWorkspace` 住容器（浏览写回的口在这里），hidden 输入在弹窗里承接它。
+   */
+  assert.match(NEW_TASK_DIALOG, /name="workspacePath"/,
+    '表单提交读的仍是 workspacePath 字段名（改字段名等于改接口）')
+  assert.match(NEW_TASK_DIALOG, /<input type="hidden" name="workspacePath" value=\{workspace\} \/>/,
+    'hidden 输入必须把容器的受控值送进 FormData')
   assert.match(INDEX, /const \[formWorkspace, setFormWorkspace\]/, '表单里的工作区必须受控，否则「浏览…」写不进值')
   assert.match(INDEX, /if \(showForm\) setFormWorkspace\(''\)/,
     '每次打开新建表单都要清空 —— 否则上一次浏览选的目录会留在下一次')
+  assert.equal(INDEX.includes('name="workspacePath"'), false, '字段名不许在 index.tsx 再写一份（那是第二条提交路径）')
 })

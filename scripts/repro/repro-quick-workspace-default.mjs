@@ -23,14 +23,12 @@
  * `--expect` 与实测不符时以非零码退出（可当验收门禁用）。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { discoverBrowser } from '../verify/browser.mjs'
 
-const EDGE = [
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-].find((p) => existsSync(p))
+const browser = discoverBrowser()
 
 const args = process.argv.slice(2)
 const arg = (name, fallback = '') => {
@@ -47,8 +45,8 @@ if (TOKEN === '') {
   console.error('缺少 --token（从 ~/.dsh/logs/dsh-web.log 的 "dsh web: http://127.0.0.1:3080/?token=..." 取）')
   process.exit(2)
 }
-if (EDGE === undefined) {
-  console.error('找不到 Edge')
+if (!browser.ok) {
+  console.error(`找不到浏览器：${browser.reason}`)
   process.exit(2)
 }
 
@@ -120,7 +118,7 @@ function newCdpClient(wsUrl) {
 
 const port = await freePort()
 const profile = mkdtempSync(join(tmpdir(), 'wb-wsrepro-'))
-const child = spawn(EDGE, [
+const child = spawn(browser.path, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--hide-scrollbars', '--force-device-scale-factor=1', '--window-size=1440,900',
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank',
@@ -133,7 +131,7 @@ try {
   let version = null
   while (version === null) {
     try { version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json() } catch { version = null }
-    if (version === null && Date.now() > deadline) throw new Error('Edge 没在 25s 内打开 DevTools 端口')
+    if (version === null && Date.now() > deadline) throw new Error('浏览器没在 25s 内打开 DevTools 端口')
     if (version === null) await new Promise((r) => setTimeout(r, 200))
   }
   browserWs = version.webSocketDebuggerUrl

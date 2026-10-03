@@ -81,11 +81,6 @@ export function resolveDefaultPlanMinutes(taskEstimatedMinutes: unknown, setting
   return DEFAULT_PLAN_MINUTES
 }
 
-/** 从任务行取"建议投入"：合法预计耗时，否则默认。 */
-export function suggestedPlanMinutes(task: { estimatedMinutes?: number | null } | undefined, settingsDefault: unknown): number {
-  return resolveDefaultPlanMinutes(task?.estimatedMinutes ?? null, settingsDefault)
-}
-
 // ---------------------------------------------------------------------------
 // 计划项形状与解析
 // ---------------------------------------------------------------------------

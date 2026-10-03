@@ -1,8 +1,11 @@
 /**
- * 知识库样式选型打样冒烟：真浏览器（Edge headless + CDP）逐个打开 4 款打样页，
+ * 知识库样式选型打样冒烟：真浏览器（headless Chromium + CDP）逐个打开 4 款打样页，
  * 断言：无页面异常 / 无 console 错误、列表有行、修前/修后切换后 DOM 真的变了、
  * 修后才有分页（修前显示"没有分页"提示）、详情区可用。
  * 顺便把每款两种形态的截图落盘，供人选型时直接看。
+ *
+ * 浏览器路径由 `scripts/verify/browser.mjs` 发现（跨平台 + 认 `DSH_VERIFY_BROWSER`），
+ * 不在脚本里硬编码 Windows Edge 路径 —— 那样换一台机器（或 macOS/Linux）就静默跑不起来。
  *
  * 用法：node scripts/repro/smoke-kb-styles.mjs [--out <dir>]
  * 退出码 0 = 全绿；非 0 = 有断言失败。
@@ -12,12 +15,10 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { discoverBrowser } from '../verify/browser.mjs'
 
-const EDGE = [
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-].find((p) => existsSync(p))
-if (EDGE === undefined) { console.error('SKIP: 未找到 Edge'); process.exit(2) }
+const browser = discoverBrowser()
+if (!browser.ok) { console.error(`SKIP: ${browser.reason}`); process.exit(2) }
 
 const outIdx = process.argv.indexOf('--out')
 const OUT = resolve(outIdx >= 0 ? process.argv[outIdx + 1] : '_local-archive/kb-styles')
@@ -32,7 +33,7 @@ const STYLES = [
 
 const PORT = 9700 + Math.floor(Math.random() * 200)
 const profile = mkdtempSync(join(tmpdir(), 'kb-styles-'))
-const child = spawn(EDGE, [
+const child = spawn(browser.path, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1200,740', '--hide-scrollbars', 'about:blank',

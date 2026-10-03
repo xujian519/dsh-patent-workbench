@@ -158,8 +158,12 @@ test('matter_notices: 一案一份的官文重复登记被拒，可重复种类�
     assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01', designatedMonths: 0 }), /指定期限月数/)
     assert.throws(() => createMatterNotice(db, { matterId: 'no-such', noticeKind: 'grant-notice', dispatchDate: '2026-03-01' }), /案卷不存在/)
 
-    assert.equal(deleteMatterNotice(db, first.id), true)
-    assert.equal(deleteMatterNotice(db, first.id), false)
+    // 父资源 id 必须参与判据：`DELETE /matters/:id/notices/:noticeId` 的 `:id` 不能是"别的案卷"
+    const otherMatter = createMatter(db, baseMatter({ caseNumber: 'CN-2026-0099', title: '乙案' }))
+    assert.equal(deleteMatterNotice(db, otherMatter.id, first.id), false, '别的案卷 id 不能删到本案卷的官文')
+    assert.equal(listMatterNotices(db, matter.id).length, 3, '跨案卷删除必须无效：记录仍在')
+    assert.equal(deleteMatterNotice(db, matter.id, first.id), true)
+    assert.equal(deleteMatterNotice(db, matter.id, first.id), false)
   } finally {
     db.close()
   }
@@ -178,10 +182,14 @@ test('matter_deadlines: 重算保留用户已确认状态；非法日期/重复 
     assert.deepEqual(first[0].computedFrom, {})
 
     // 用户点了「已办理」
-    const done = setMatterDeadlineStatus(db, first[0].id, 'done')
+    const done = setMatterDeadlineStatus(db, matter.id, first[0].id, 'done')
     assert.equal(done.status, 'done')
-    assert.throws(() => setMatterDeadlineStatus(db, first[0].id, 'forgotten'), /期限状态非法/)
-    assert.throws(() => setMatterDeadlineStatus(db, 'no-such', 'done'), /不存在/)
+    assert.throws(() => setMatterDeadlineStatus(db, matter.id, first[0].id, 'forgotten'), /期限状态非法/)
+    assert.throws(() => setMatterDeadlineStatus(db, matter.id, 'no-such', 'done'), /不存在/)
+    // 父资源 id 必须参与判据（否则 `/matters/A/deadlines/<属于 B 的 id>` 会改到 B）
+    const otherMatter = createMatter(db, baseMatter({ caseNumber: 'CN-2026-0098', title: '丙案' }))
+    assert.throws(() => setMatterDeadlineStatus(db, otherMatter.id, first[0].id, 'waived'), /不存在/,
+      '别的案卷 id 不能改到本案卷的期限')
 
     // 重算：dueDate 更新，但已确认的 done 不被打回 pending
     const recomputed = replaceMatterDeadlines(db, matter.id, [

@@ -65,7 +65,7 @@ export interface PanelSnapshot {
   /**
    * 本地"我发起的开合意图"，**仅在 `stateReadable === false` 时作为回落**。
    *
-   * 对应代码里的 `open && !forcedClosed`：既没被用户强制关掉、本地也确实打开过。
+   * 对应代码里的本地开关 `open`：本地确实打开过。
    */
   readonly intentOpen: boolean
 }

@@ -18,7 +18,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import type { KnowledgeRecallManager } from '../knowledge-recall.js'
 import { listRecallLog, readSessionOff, type RecallLogEntry } from '../knowledge-recall-log.js'
-import { isLoopbackRequest, KNOWLEDGE_RECALL_PREFIX, readJsonBody, writeJson } from './routes/helpers.js'
+import { KNOWLEDGE_RECALL_PREFIX, methodNotAllowed, readJsonBody, requireLoopback, writeJson } from './routes/helpers.js'
 
 /** 一行人类可读的摘要（界面与 curl 都用它，避免两处各拼一遍）。 */
 export function formatRecallLogLine(entry: RecallLogEntry): string {
@@ -45,8 +45,8 @@ export function makeKnowledgeRecallRoutes(db: DatabaseSync, manager: KnowledgeRe
       kind: 'exact',
       path: `${KNOWLEDGE_RECALL_PREFIX}/log`,
       handler(req, res) {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'GET') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'GET') return methodNotAllowed(res)
         const url = new URL(req.url ?? '/', 'http://localhost')
         const sessionId = url.searchParams.get('session_id') ?? undefined
         const rawLimit = Number(url.searchParams.get('limit') ?? '50')
@@ -65,8 +65,8 @@ export function makeKnowledgeRecallRoutes(db: DatabaseSync, manager: KnowledgeRe
       kind: 'exact',
       path: `${KNOWLEDGE_RECALL_PREFIX}/status`,
       handler(req, res) {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'GET') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'GET') return methodNotAllowed(res)
         const url = new URL(req.url ?? '/', 'http://localhost')
         const sessionId = url.searchParams.get('session_id') ?? ''
         return writeJson(res, 200, {
@@ -81,8 +81,8 @@ export function makeKnowledgeRecallRoutes(db: DatabaseSync, manager: KnowledgeRe
       kind: 'exact',
       path: `${KNOWLEDGE_RECALL_PREFIX}/auto`,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'POST') return methodNotAllowed(res)
         const body = await readJsonBody(req)
         if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })
         if (typeof body.enabled !== 'boolean') return writeJson(res, 400, { error: 'enabled (boolean) is required' })
@@ -94,8 +94,8 @@ export function makeKnowledgeRecallRoutes(db: DatabaseSync, manager: KnowledgeRe
       kind: 'exact',
       path: `${KNOWLEDGE_RECALL_PREFIX}/session`,
       handler: async (req, res) => {
-        if (!isLoopbackRequest(req)) return writeJson(res, 403, { error: 'forbidden: loopback-only' })
-        if ((req.method ?? 'GET') !== 'POST') return writeJson(res, 405, { error: 'method not allowed' })
+        if (!requireLoopback(req, res)) return
+        if ((req.method ?? 'GET') !== 'POST') return methodNotAllowed(res)
         const body = await readJsonBody(req)
         if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''

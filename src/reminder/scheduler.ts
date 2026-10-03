@@ -26,6 +26,7 @@ import { readReminderPolicy, type ReminderPolicy } from './config.js'
 import { countDraftNotifiesSince, flushDraftNotifications, scanDraftNotifications, type DraftNotifyDeps, type DraftNotifyResult } from './draft-notify.js'
 import { decideReminder, formatDigest, type ReminderCandidate, type ThrottleState } from './policy.js'
 import type { SendOutcome, WechatChannelAdapter } from './adapter.js'
+import { startOfLocalDay } from '../shared/localDay.js'
 
 export interface SchedulerDeps {
   db: DatabaseSync
@@ -71,8 +72,7 @@ export class ReminderScheduler {
 
   private throttleState(policy: ReminderPolicy, now: Date): ThrottleState {
     const hourAgo = new Date(now.getTime() - 60 * 60_000).toISOString()
-    const dayStart = new Date(now)
-    dayStart.setHours(0, 0, 0, 0)
+    const dayStart = startOfLocalDay(now)
     const verdict = this.deps.adapter.circuitVerdict()
     return {
       // 草稿通知与到期提醒共用小时/日预算，避免两类通知各自刷满限额。
@@ -87,7 +87,6 @@ export class ReminderScheduler {
     return {
       db: this.deps.db,
       adapter: this.deps.adapter,
-      isTargetConfigured: this.deps.isTargetConfigured,
       throttleState: (policy, now) => this.throttleState(policy, now),
       now: this.deps.now,
     }

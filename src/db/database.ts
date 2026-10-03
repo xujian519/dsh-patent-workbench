@@ -19,11 +19,29 @@ export function defaultDbPath(): string {
   return join(homedir(), '.dsh', 'workbench', 'workbench.db')
 }
 
+/**
+ * 读库里的 schema 版本（不存在 = 0 = 新库）。
+ *
+ * ⚠️ 脏值必须**当场拒绝**，绝不能当成 0：
+ * `Number('…')` 对非数字串给 `NaN`，而 `migration.version <= NaN` 恒为 false ——
+ * 于是**全部迁移会从第一个开始重放**。在已有数据的库上重放，轻则撞"表已存在"让插件起不来，
+ * 重则按建表语句把历史数据改掉。这不是理论风险：手改过 meta、或旧版本写过别的形状，都会走到这里。
+ * 负数与小数同理会让判定错位（小数会让某一条迁移被跳过且版本号不前进）。
+ *
+ * 拒绝并说清原因，比默默重放安全；回滚点见数据目录下的 `backups/`。
+ */
 function readVersion(db: DatabaseSync): number {
   const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
     | { value: string }
     | undefined
-  return row === undefined ? 0 : Number(row.value)
+  if (row === undefined) return 0
+  const raw = row.value.trim()
+  if (raw === '') return 0
+  const version = Number(raw)
+  if (!Number.isInteger(version) || version < 0) {
+    throw new Error(`工作台数据库的 schema_version 不是合法版本号（读到 ${JSON.stringify(row.value)}）：拒绝按"版本 0"重放全部迁移。请从数据目录的 backups/ 恢复，或联系维护者。`)
+  }
+  return version
 }
 
 /**
