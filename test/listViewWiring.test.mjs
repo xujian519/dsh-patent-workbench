@@ -126,7 +126,15 @@ test('设置页：字典管理里有「知识库类型」（原先漏了这个�
 test('字典：知识库类型的**出厂 config 必须带颜色**（否则 Tab 圆点与徽标全落灰色兜底）', () => {
   const seed = readFileSync('src/db/seed.ts', 'utf8')
   const knowledgeSeeds = seed.match(/\{ kind: 'knowledge_kind'[^\n]*/g) ?? []
-  assert.equal(knowledgeSeeds.length, 4, 'knowledge_kind 种子 4 条')
+  /**
+   * ⚠️ 这里**不写死总数**：阶段 5 · 决策 5.2.2 把出厂分类从 4 类扩到 10 类，
+   * 而这条判据要守的是"每一条出厂分类都带颜色"，不是"恰好 4 条"。
+   */
+  assert.ok(knowledgeSeeds.length >= 4, `knowledge_kind 种子至少 4 条（实际 ${knowledgeSeeds.length}）`)
+  for (const code of ['note', 'lesson', 'decision', 'snippet',
+    'exam_standard', 'reply_strategy', 'search_experience', 'client_preference', 'notice_template', 'rejection_lesson']) {
+    assert.ok(knowledgeSeeds.some((line) => line.includes(`code: '${code}'`)), `出厂分类缺 ${code}`)
+  }
   for (const line of knowledgeSeeds) {
     assert.match(line, /config: \{ color: '#[0-9A-Fa-f]{6}' \}/, `种子缺颜色：${line.slice(0, 60)}`)
   }

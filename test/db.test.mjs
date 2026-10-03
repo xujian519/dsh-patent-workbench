@@ -126,6 +126,36 @@ test('confirmTaskDraft reports invalid subtask codes instead of silently droppin
   }
 })
 
+/**
+ * `seedDictionaries` 的三条实测行为（2026-10-03 验证，写在真正的决策点旁）。
+ *
+ * 为什么值得单独一条：迁移 20 的注释里写着"seedDictionaries 只对首次安装生效"，
+ * 而**代码不是这样**（每次开库 `INSERT OR IGNORE`）。更麻烦的是两句话都会让人做出
+ * 相反的决定：信注释 → 每加一个字典码都写一个迁移；信代码 → 直接改种子即可。
+ * 所以把真实行为钉住，谁改坏了当场红。
+ */
+test('seedDictionaries：存量库拿得到新增字典码，但不重新激活用户停用过的行、也不覆盖用户改过的名字', () => {
+  const db = openWorkbenchDb({ dbPath: ':memory:' })
+  try {
+    seedDictionaries(db)
+    const insert = db.prepare(`INSERT INTO dictionaries (kind, code, name, config, builtin, active, sort_order, created_at, updated_at)
+      VALUES ('knowledge_kind', 'zz_new_kind', '后加的', '{}', 0, 1, 999, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`)
+    void insert
+    // 造"存量库"：删掉一条出厂码 + 停用一条 + 改名一条
+    db.prepare("DELETE FROM dictionaries WHERE kind = 'knowledge_kind' AND code = 'snippet'").run()
+    db.prepare("UPDATE dictionaries SET active = 0 WHERE kind = 'knowledge_kind' AND code = 'note'").run()
+    db.prepare("UPDATE dictionaries SET name = '我的笔记' WHERE kind = 'knowledge_kind' AND code = 'decision'").run()
+
+    seedDictionaries(db)
+
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM dictionaries WHERE kind = 'knowledge_kind' AND code = 'snippet'").get().n, 1, '删掉的出厂码会被种回来（存量库能拿到新增码）')
+    assert.equal(db.prepare("SELECT active FROM dictionaries WHERE kind = 'knowledge_kind' AND code = 'note'").get().active, 0, '用户停用过的行不许被重新激活')
+    assert.equal(db.prepare("SELECT name FROM dictionaries WHERE kind = 'knowledge_kind' AND code = 'decision'").get().name, '我的笔记', '用户改过的名字不许被覆盖')
+  } finally {
+    db.close()
+  }
+})
+
 test('db migrations, dictionaries and task tree', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-db-'))
   try {
@@ -133,6 +163,20 @@ test('db migrations, dictionaries and task tree', () => {
     seedDictionaries(db)
     const dicts = db.prepare('SELECT kind, COUNT(*) AS c FROM dictionaries GROUP BY kind ORDER BY kind').all()
     assert.ok(dicts.some((d) => d.kind === 'type' && d.c >= 8))
+    /**
+     * 知识库分类（阶段 5 · 决策 5.2.2）：专利域 6 类出厂项。
+     * 颜色不是装饰 —— Tab 圆点、行前缀点、类型徽标都取 `config.color`，缺了就统一落灰，
+     * 用户看到的是"设计稿有颜色、装盘后全灰"（迁移 16 修过一次的同一类问题）。
+     */
+    const knowledgeKinds = db.prepare("SELECT code, name, json_extract(config, '$.color') AS color FROM dictionaries WHERE kind = 'knowledge_kind' AND active = 1 ORDER BY sort_order").all()
+    const byCode = new Map(knowledgeKinds.map((row) => [row.code, row]))
+    for (const [code, name] of [['note', '笔记'], ['lesson', '经验教训'], ['decision', '决策记录'], ['snippet', '片段/模板'],
+      ['exam_standard', '审查尺度'], ['reply_strategy', '答复策略'], ['search_experience', '检索经验'],
+      ['client_preference', '客户偏好'], ['notice_template', '官文模板'], ['rejection_lesson', '驳回教训']]) {
+      assert.equal(byCode.get(code)?.name, name, `知识库分类 ${code} 应为「${name}」`)
+    }
+    for (const row of knowledgeKinds) assert.match(String(row.color ?? ''), /^#[0-9A-Fa-f]{6}$/, `${row.code} 必须带颜色（否则徽标全灰）`)
+    assert.equal(new Set(knowledgeKinds.map((row) => row.color)).size, knowledgeKinds.length, '同一 kind 内的颜色必须互不相同（否则用户分不清）')
     const parent = createTask(db, { title: 'parent', typeCode: 'code_impl', priorityCode: 'p1' })
     const child = createTask(db, { title: 'child', typeCode: 'personal', priorityCode: 'p2', parentId: parent.id })
     assert.equal(listChildren(db, parent.id).length, 1)

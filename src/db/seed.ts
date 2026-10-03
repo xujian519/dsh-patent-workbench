@@ -65,6 +65,20 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
   { kind: 'knowledge_kind', code: 'lesson', name: '经验教训', sortOrder: 20, config: { color: '#E7634C' } },
   { kind: 'knowledge_kind', code: 'decision', name: '决策记录', sortOrder: 30, config: { color: '#8B7BE8' } },
   { kind: 'knowledge_kind', code: 'snippet', name: '片段/模板', sortOrder: 40, config: { color: '#2E9B7B' } },
+  /**
+   * 专利域分类（阶段 5 · 决策 5.2.2，2026-10-03）。**纯数据**，用户可在
+   * 「设置 → 字典管理 → 知识库类型」里改名/改色/停用 —— 名字与颜色都不是产品逻辑。
+   *
+   * 为什么用 snake_case 而不是中文码：`dictionaries.code` 有校验 `/^[a-z][a-z0-9_]*$/`
+   *（`repo/dictionaries.ts`），中文码进不去；而 code 是**稳定标识**（召回过滤、工具入参、
+   * 日志都拿它），名字才是给人看的，所以名字用中文。
+   */
+  { kind: 'knowledge_kind', code: 'exam_standard', name: '审查尺度', sortOrder: 50, config: { color: '#C4553D' } },
+  { kind: 'knowledge_kind', code: 'reply_strategy', name: '答复策略', sortOrder: 60, config: { color: '#3D7FB0' } },
+  { kind: 'knowledge_kind', code: 'search_experience', name: '检索经验', sortOrder: 70, config: { color: '#6E9E3F' } },
+  { kind: 'knowledge_kind', code: 'client_preference', name: '客户偏好', sortOrder: 80, config: { color: '#B07CC6' } },
+  { kind: 'knowledge_kind', code: 'notice_template', name: '官文模板', sortOrder: 90, config: { color: '#C08A2E' } },
+  { kind: 'knowledge_kind', code: 'rejection_lesson', name: '驳回教训', sortOrder: 100, config: { color: '#4C9E9E' } },
 
   /**
    * `recurrence` 出厂字典（不重复/每天/每周/每月）已随重复任务域删除
@@ -81,6 +95,19 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
   { kind: 'reminder_method', code: 'os', name: '系统通知', sortOrder: 20, config: { allowedV1: false } },
 ]
 
+/**
+ * 出厂字典。**每次开库都跑**（`index.ts#apply` 紧接着 `openWorkbenchDb`），
+ * `INSERT OR IGNORE` 语义，三件事已实测（2026-10-03，`node scripts/repro` 一次性验证）：
+ *
+ * 1. **存量库会拿到新增的 code** —— 删掉一行再 seed 会回来；所以往这里加字典项
+ *    不需要额外迁移。
+ * 2. **不会重新激活用户停用过的行**（`active=0` 保持 0）—— 这正是"停用"该有的语义。
+ * 3. **不覆盖用户改过的名字/颜色/排序**（行已存在 → IGNORE）。
+ *
+ * ⚠️ 迁移 20 的注释里写着"seedDictionaries 只对首次安装生效"——**那句话与代码不符**
+ *（上面第 1 条就是反例）。它当时想说的应该是第 2、3 条：对**必须存在**的 code
+ *（例如引擎要校验的值域），迁移里显式插入更稳妥，因为用户可能把那条停用过。
+ */
 export function seedDictionaries(db: DatabaseSync, now: string = new Date().toISOString()): void {
   const insert = db.prepare(`
     INSERT OR IGNORE INTO dictionaries
