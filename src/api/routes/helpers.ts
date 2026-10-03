@@ -18,7 +18,7 @@ import {
 
 export { isLoopbackRequest, readJsonBody, writeJson } from '../http.js'
 
-/** 「预计耗时」落库时的合法区间。上界与 `dailyCapacityMinutes` 一致。 */
+/** 「预计耗时」落库时的合法区间（与 `shared/dailyPlanPolicy.ts#MAX_PLAN_MINUTES` 同值）。 */
 export const MIN_ESTIMATE_MINUTES = 1
 export const MAX_ESTIMATE_MINUTES = 1440
 
@@ -26,11 +26,11 @@ export const MAX_ESTIMATE_MINUTES = 1440
  * 「预计耗时」的落库夹取（**唯一的服务端实现**）。
  *
  * 为什么必须有：PATCH 原先只判 `typeof body.estimatedMinutes === 'number'` 就原样落库，
- * 而容量算法把 `≤0` 视为"没填"、把 `>1440` 夹到 1440 —— 于是库里能出现 99999，
- * 界面却按默认 30 算：**同一个字段两个口径**。设置项 `dailyCapacityMinutes` 一直有夹取，
- * 这个字段漏了（fresh-eyes 审查第 2 条）。
+ * 而判定层把 `≤0` 视为"没填"、把 `>1440` 夹到 1440 —— 于是库里能出现 99999，
+ * 界面却按默认 30 算：**同一个字段两个口径**。任务估时字段漏了夹取
+ * （fresh-eyes 审查第 2 条）。
  *
- * 口径与客户端 `src/client/capacity.ts#clampEstimatedMinutes` **逐条同构**：
+ * 口径与客户端 `src/client/dailyPlanCandidates.ts#clampEstimatedMinutes` **逐条同构**：
  * - 有限整数且 ≥1 → `min(1440, 值)`；
  * - `0` / 负 / 非有限 / 小数 / 非数字（含 `"90"` 这种字符串）→ `null`（= 没填）。
  *

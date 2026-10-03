@@ -1,5 +1,5 @@
 /**
- * 「每日计划投入 / 当日候选 / 今日容量」的**唯一权威口径**
+ * 「每日计划投入 / 当日候选」的**唯一权威口径**
  * （纯模块：零 React / 零 DOM / 零 Node I/O / 零 SQLite）。
  *
  * ## 为什么需要
@@ -15,11 +15,11 @@
  *
  * - **服务端**：`db/repo/plans.ts`（校验/合并/守卫）、`tools.ts`（提案 minutes 快照）、
  *   `api/routes/plans.ts`（PUT/POST/PATCH）。
- * - **客户端**：`client/capacity.ts`（容量账本）、`client/index.tsx`（AI 排序入口的候选）。
+ * - **客户端**：`client/dailyPlanCandidates.ts`（接线层）、`client/index.tsx`（AI 排序入口的候选）。
  *
- * 需求 §5.1 明令"AI 排序、手动添加、容量未排入区都消费同一全集，不各自重复 filter"。
+ * 需求 §5.1 明令"AI 排序、手动添加都消费同一全集，不各自重复 filter"。
  * 所以候选判定 `planCandidates()` 只在这里实现一份；`test/dailyPlanPolicy.test.mjs` 与
- * `test/capacityWiring.test.mjs`（源码扫描）一起把它钉住。
+ * `test/planCandidatesWiring.test.mjs`（源码扫描）一起把它钉住。
  *
  * ## 依赖方向
  *
@@ -32,12 +32,12 @@ import { isOpenTask } from './taskProgress.js'
 
 /** 计划投入的下界（0 表示"没投入"是非法输入，缺省才走默认值）。 */
 export const MIN_PLAN_MINUTES = 1
-/** 计划投入的上界（与 `dailyCapacityMinutes` / `estimatedMinutes` 一致）。 */
+/** 计划投入的上界（与 `estimatedMinutes` 一致）。 */
 export const MAX_PLAN_MINUTES = 1440
 /** 任务的预计耗时也取不到时的兜底计划投入（与设置项 `defaultEstimateMinutes` 的缺省一致）。 */
 export const DEFAULT_PLAN_MINUTES = 30
 
-/** AI 提示词里最多列多少条候选（需求 §5.1；UI 手动池与账本**不截断**）。 */
+/** AI 提示词里最多列多少条候选（需求 §5.1；UI 手动池**不截断**）。 */
 export const PLAN_PROMPT_CANDIDATE_LIMIT = 30
 
 export type PlanMinutesCheck = { ok: true; value: number } | { ok: false; reason: string }
@@ -116,9 +116,9 @@ export type PlanItemsParse =
  *
  * "静默丢件是禁区"（项目硬约束）：一项读不出来时，把它从数组里剔掉会让用户看到
  * "计划里少了一条，又没人说"。所以坏项**原样进 `diagnostics`**、不进 `items`，
- * 但整体仍标记为可读（其余合法项照常展示与计容量）。
+ * 但整体仍标记为可读（其余合法项照常展示）。
  *
- * 只有**整串**不是 JSON / 不是数组时才算"计划数据无法解析"（容量必须显示"不可计算"
+ * 只有**整串**不是 JSON / 不是数组时才算"计划数据无法解析"（界面必须显示"不可计算"
  * 而不是假装 0）。
  */
 export function parsePlanItems(raw: unknown): PlanItemsParse {
@@ -732,225 +732,6 @@ function dueSortKey(raw: string | null): number {
   if (raw === null) return Number.MAX_SAFE_INTEGER
   const ms = Date.parse(raw)
   return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER
-}
-
-// ---------------------------------------------------------------------------
-// 今日容量（从计划快照派生；唯一实现）
-// ---------------------------------------------------------------------------
-
-/** 账本一行的来源（逐字对应用户能看到的标签）。 */
-export type CapacityRowSource =
-  | 'plan-manual'
-  | 'plan-ai'
-  | 'plan-imported'
-
-export interface CapacityPlanRow {
-  taskId: string
-  order: number
-  title: string
-  /** 计划投入快照（**权威数字**，不随任务估时变化）。 */
-  minutes: number
-  effortDone: boolean
-  band: 'p0' | 'p1' | 'p2' | 'p3'
-  statusCode: string
-  /** 库里已经查不到这个 taskId（"任务不存在"：保留 title/minutes，不能操作）。 */
-  taskMissing: boolean
-  /** 任务已归档/完成/取消：计划记录仍然是历史投入，**不自动减掉**。 */
-  taskClosed: boolean
-  source: CapacityRowSource
-}
-
-export interface CapacityUnscheduledRow {
-  taskId: string
-  title: string
-  band: 'p0' | 'p1' | 'p2' | 'p3'
-  rank: number
-  statusCode: string
-  /** 建议投入 = 当前估时/默认；**不是**已有投入，也不进"已排"合计。 */
-  suggestedMinutes: number
-  usedDefaultEstimate: boolean
-  dueToday: boolean
-  overdue: boolean
-  inProgress: boolean
-}
-
-export interface CapacityLedger {
-  /**
-   * 计划数据是否可解析。`false` 时 `planned=0` 但**界面必须显示"不可计算"**，
-   * 不能把它当作"今天没有计划"（需求 §4.2/§5.2）。
-   */
-  readable: boolean
-  /** 不可解析时的中文原因（`readable=false` 时非空）。 */
-  reason: string | null
-  /** 已排 = 该日所有有效计划项的 `minutes` 快照之和（含已结束、已关闭、缺失任务的历史投入）。 */
-  planned: number
-  /** 已结束的计划投入分钟（`effortDone=true` 的那部分）。 */
-  doneMinutes: number
-  /** 未结束的计划投入分钟。 */
-  remainingMinutes: number
-  /** 可投入（设置的每日容量）。 */
-  capacityMinutes: number
-  /** 余 = max(0, 可投入 − 已排)。 */
-  free: number
-  /** 已排 > 可投入。 */
-  over: boolean
-  /** 条形分母 = max(可投入, 已排, 1)。 */
-  total: number
-  byPriority: Record<'p0' | 'p1' | 'p2' | 'p3', number>
-  plannedCount: number
-  bySource: Record<CapacityRowSource, number>
-  plannedItems: CapacityPlanRow[]
-  /** 未排入候选（完整集合，不截断）。 */
-  unscheduled: CapacityUnscheduledRow[]
-  /** 未排入条数与建议投入合计（界面"未排入：N 条 / X 分钟"直接用）。 */
-  unscheduledCount: number
-  unscheduledSuggestedMinutes: number
-  /** 脏数据诊断（缺 minutes、坏项等）——必须显示，不许静默。 */
-  diagnostics: string[]
-}
-
-export interface ComputeCapacityLedgerInput {
-  /** 全量任务（含归档/关闭）：未排入候选需要它，历史计划项的"任务不存在"也由它判定。 */
-  tasks: readonly PlanCandidateTask[]
-  /** 该日计划项（已解析）。无计划传 `[]`。 */
-  planItems: ReadonlyArray<{
-    taskId: string
-    order: number
-    title?: string
-    minutes: unknown
-    effortDone?: boolean
-  }>
-  /** 该日计划是否存在（不存在 ≠ 不可解析）。 */
-  planExists: boolean
-  /** 计划数据是否可解析；`false` 时 `reason` 必填。 */
-  planReadable: boolean
-  /** 不可解析原因。 */
-  reason?: string | null
-  /** 计划来源（`daily_plans.source_code`），用于账本"来源"列。 */
-  sourceCode?: string | null
-  dailyCapacityMinutes: number
-  defaultEstimateMinutes: number
-  includeOverdue: boolean
-  dayStartMs: number
-  dayEndMs: number
-}
-
-/**
- * 今日容量的**唯一权威实现**（需求 §5.2）。
- *
- * 口径（与旧版"按到期任务求和"**根本不同**，这是 ADR 0002 的落地）：
- * - 已排 = 该日**所有有效计划项**的 `minutes` 快照之和。包括 `effortDone`、
- *   任务 done/cancelled/archived/已删除的历史投入 —— 非计划项**永不**自动计入；
- * - 无计划 → 已排 0，未排入候选可见（**不回退**到到期任务求和）；
- * - 未排入 = 候选全集 − 计划 taskId；建议投入来自当前估时/默认，**不与已排混算**；
- * - 计划 JSON 不可解析 → `readable=false`（界面显示"不可计算"），不假装 0。
- */
-export function computeCapacityLedger(input: ComputeCapacityLedgerInput): CapacityLedger {
-  const capacityMinutes = safeCapacityNumber(input.dailyCapacityMinutes, 0)
-  const planByTask = new Map<string, CapacityPlanRow>()
-  const forCandidates: Array<{ taskId: string; order: number; minutes?: number }> = []
-  const diagnostics: string[] = []
-  const bySource: Record<CapacityRowSource, number> = { 'plan-manual': 0, 'plan-ai': 0, 'plan-imported': 0 }
-  const source: CapacityRowSource = input.sourceCode === 'ai'
-    ? 'plan-ai'
-    : input.sourceCode === 'manual'
-      ? 'plan-manual'
-      : input.sourceCode === null || input.sourceCode === undefined
-        ? 'plan-manual'
-        : 'plan-imported'
-
-  const taskById = new Map(input.tasks.map((task) => [task.id, task]))
-  const plannedItems: CapacityPlanRow[] = []
-  const byPriority: Record<'p0' | 'p1' | 'p2' | 'p3', number> = { p0: 0, p1: 0, p2: 0, p3: 0 }
-  let planned = 0
-  let doneMinutes = 0
-
-  if (input.planReadable) {
-    const seen = new Set<string>()
-    input.planItems.forEach((item, index) => {
-      if (seen.has(item.taskId)) {
-        diagnostics.push(`第 ${index + 1} 项（${item.taskId}）与前面的项重复，账本只计一次`)
-        return
-      }
-      seen.add(item.taskId)
-      const check = checkPlanMinutes(item.minutes)
-      if (!check.ok) {
-        // 缺 minutes 的历史项：给默认值显示，但**必须**说清楚这不是快照。
-        diagnostics.push(`第 ${index + 1} 项（${item.taskId}）缺合法 minutes：${check.reason}；容量按默认 ${DEFAULT_PLAN_MINUTES} 分钟展示`)
-      }
-      const minutes = check.ok ? check.value : DEFAULT_PLAN_MINUTES
-      const task = taskById.get(item.taskId)
-      const row: CapacityPlanRow = {
-        taskId: item.taskId,
-        order: item.order,
-        title: item.title !== undefined && item.title !== '' ? item.title : (task?.title ?? item.taskId),
-        minutes,
-        effortDone: item.effortDone === true,
-        band: candidateBand(task?.priorityCode ?? 'p3'),
-        statusCode: task?.statusCode ?? 'missing',
-        taskMissing: task === undefined,
-        taskClosed: task !== undefined && !isOpenTask({ statusCode: task.statusCode, archived: archivedFlag(task.archived) }),
-        source,
-      }
-      plannedItems.push(row)
-      planByTask.set(item.taskId, row)
-      forCandidates.push({ taskId: item.taskId, order: item.order, minutes })
-      planned += minutes
-      if (row.effortDone) doneMinutes += minutes
-      byPriority[row.band] += minutes
-      bySource[source] += 1
-    })
-  }
-
-  const candidateResult = planCandidates({
-    tasks: input.tasks,
-    planItems: forCandidates,
-    dayStartMs: input.dayStartMs,
-    dayEndMs: input.dayEndMs,
-    includeOverdue: input.includeOverdue,
-    defaultEstimateMinutes: input.defaultEstimateMinutes,
-  })
-
-  const unscheduled: CapacityUnscheduledRow[] = candidateResult.unscheduled.map((candidate) => ({
-    taskId: candidate.taskId,
-    title: candidate.title,
-    band: candidate.band,
-    rank: candidate.rank,
-    statusCode: candidate.statusCode,
-    suggestedMinutes: candidate.suggestedMinutes,
-    usedDefaultEstimate: candidate.usedDefaultEstimate,
-    dueToday: candidate.dueToday,
-    overdue: candidate.overdue,
-    inProgress: candidate.inProgress,
-  }))
-
-  const unscheduledSuggestedMinutes = unscheduled.reduce((sum, row) => sum + row.suggestedMinutes, 0)
-  const free = Math.max(0, capacityMinutes - planned)
-  return {
-    readable: input.planReadable,
-    reason: input.planReadable ? null : (input.reason ?? '计划数据无法解析'),
-    planned,
-    doneMinutes,
-    remainingMinutes: planned - doneMinutes,
-    capacityMinutes,
-    free,
-    over: planned > capacityMinutes,
-    total: Math.max(capacityMinutes, planned, 1),
-    byPriority,
-    plannedCount: plannedItems.length,
-    bySource,
-    plannedItems,
-    unscheduled,
-    unscheduledCount: unscheduled.length,
-    unscheduledSuggestedMinutes,
-    diagnostics: [...diagnostics, ...candidateResult.diagnostics.map((item) => item.message)],
-  }
-}
-
-/** 可投入时长的合法化：非有限值退回 0，再夹进 0–1440。 */
-function safeCapacityNumber(value: number, fallback: number): number {
-  const raw = typeof value === 'number' && Number.isFinite(value) ? value : fallback
-  return Math.min(MAX_PLAN_MINUTES, Math.max(0, Math.round(raw)))
 }
 
 // ---------------------------------------------------------------------------

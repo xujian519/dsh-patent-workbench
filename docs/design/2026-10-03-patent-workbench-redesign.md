@@ -1,6 +1,6 @@
 # 专利工作台改造方案（dsh-personal-workbench → dsh-patent-workbench）
 
-> 状态：**阶段 2 已完成**（阶段 0 定案与阶段 1 改名、阶段 2 案卷均已落地；阶段 3 起待做）。
+> 状态：**阶段 4 进行中**（阶段 0–3 已落地；阶段 4 分 A–E 五片，A/B/C 已完成）。
 > 相关既有工作（另一仓库）：
 >
 > - `deepseek-harness/docs/dsh-workbench-integration-design.md`（2026-09-03 工作台↔专利案件集成，Phase 1–5）
@@ -15,7 +15,7 @@
 | 1 改名 | ✅ | `dsh-patent-workbench`：包名 / cordis id / PANEL_NAME / 模块 id / 仓库 URL / README；**刻意保留** DOM 前缀 `data-dsh-personal-workbench-*` 与数据目录 `~/.dsh/workbench/`（提交 `662f335`） |
 | 2 领域字典 + matters | ✅ | 迁移 20：`matters` / `matter_notices` / `matter_deadlines` / `matter_events` + `knowledge_entries.matter_id` + 四类领域字典；`db/repo/matters.ts`（CRUD + 校验）与 `api/routes/matters.ts`（REST）；`test/matters.test.mjs` 9 例 |
 | 3 期限引擎接入 | ◐ | **DSH Patent 侧已完成**（`deepseek-harness` 分支 `feat/patent-deadline-service`）：`patent-deadline` 新增 `provideService` / `exposeTool` 两个 Config 开关，profile 根域多注册一行即发布 `patentDeadline` 服务（不是新建包）；工作台侧已完成软探测 + `shared/patentDeadline.ts`（案卷/官文 → 引擎入参、报告 → 期限行，唯一映射处）+ `POST /api/workbench/matters/:id/deadlines/recompute`，引擎缺失时 409 明确降级。**待做**：期限看板 UI（归到阶段 5）与实机装盘 |
-| 4 删除通用功能 | ⬜ | 点子 / 容量 / 日报周报 / 重复任务 + `DROP TABLE`（D4） |
+| 4 删除通用功能 | ◐ | 分片执行（D4）：**A 片**删日报/周报（`6ea289f`，−544 行，工具 17→16）；**B 片**删点子/点子王（`a15dc51`，34 文件 −2326 行，工具 16→14）；**C 片**删容量账本（`client/capacity.ts` → `dailyPlanCandidates.ts`、`CapacityRulePanel`、`dailyCapacityMinutes` 设置、迁移 21 的两个 meta 键）。**留存的**：`daily_plans` + AI 智能排序、`estimatedMinutes`、`dailyCapacityIncludeOverdue`（改名 `planIncludeOverdue`）。**待做**：D 片重复任务、E 片迁移 22（`DROP TABLE` ×4 + 字典停用） |
 | 5 知识库加法 + UI | ⬜ | `matter_id` 关联、新 kind、本案卷优先；案件视图 / 期限看板 |
 | 6 bridge 收口 | ⬜ | `workbench_link_patent_case` → `_matter-log.md` → `matter_events` 只读投影 |
 

@@ -25,7 +25,7 @@ function localDateString(now = new Date()): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-/** 计划日 D 的本地日起止 epoch（容量/候选的日界判定用显式区间，便于午夜/DST 测试）。 */
+/** 计划日 D 的本地日起止 epoch（候选的日界判定用显式区间，便于午夜/DST 测试）。 */
 export function localDayRange(date: string): { startMs: number; endMs: number } | undefined {
   if (!PERIOD_DATE_RE.test(date)) return undefined
   const [y, m, d] = date.split('-').map(Number)

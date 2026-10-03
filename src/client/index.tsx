@@ -22,7 +22,7 @@ import {
   type TaskTreeNode,
 } from './taskFilterSort.js'
 import { isWslStylePath, joinPath, normalizeWindowsPathToWsl } from './workspacePath.js'
-import { DEFAULT_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES, capacityDayRange, capacityTodayKey, computeTodayCapacity, todayPlanCandidates } from './capacity.js'
+import { DEFAULT_ESTIMATE_MINUTES, MAX_ESTIMATE_MINUTES, planDayRange, planDayKey, todayPlanCandidates } from './dailyPlanCandidates.js'
 import { resolveDayPanelTab } from '../shared/dailyPlanPolicy.js'
 import { DayPanel, type DayTab } from './components/DayPanel.js'
 import { useDayPanelModel } from './dayPanelModel.js'
@@ -77,7 +77,6 @@ import {
   DEFAULT_SORT_DIR, buildListPage, normalizePageSize, normalizeSortDir, normalizeSortKey, toContentItem,
 } from './listPresentation.js'
 import { PlanPanel } from './components/PlanPanel.js'
-import { CapacityRulePanel, capacityAriaLabel } from './components/CapacityRulePanel.js'
 import {
   clientFileLinkToPath, draftKindLabel, eventIcon, eventLabel, fmtTime, localDateString,
   roleLabel, sameDay, shortId, startOfDay, startOfWeek, toLocalInput,
@@ -150,10 +149,10 @@ function estimateRangeMessage(defaultMinutes: number): string {
   return `耗时必须是 1–1440 之间的整数（留空表示用默认 ${defaultMinutes} 分钟）`
 }
 
-/** 容量两项偏好的兜底值（与 `capacity.ts` 的常量同值：一处读书、一处落库，必须一致）。 */
+/** 两项偏好的兜底值（与 `dailyPlanCandidates.ts` 的常量同值：一处读书、一处落库，必须一致）。 */
 const SETTINGS_FALLBACK = {
   defaultEstimateMinutes: DEFAULT_ESTIMATE_MINUTES,
-  dailyCapacityIncludeOverdue: false,
+  planIncludeOverdue: false,
 } as const
 
 /**
@@ -161,7 +160,7 @@ const SETTINGS_FALLBACK = {
  *
  * 为什么必须有它（**装盘后实测踩到，不是假想**）：装盘完成、宿主还没重启的那段时间里，
  * 宿主仍在跑**旧的服务端代码**，`GET /api/workbench/settings` 的响应里**没有**
- * `defaultEstimateMinutes` / `dailyCapacityIncludeOverdue`。此时直接 `setSettings(r.settings)`
+ * `defaultEstimateMinutes` / `planIncludeOverdue`。此时直接 `setSettings(r.settings)`
  * 会把新键冲成 `undefined`，界面就显示成
  * 「预计耗时：默认 **undefined** 分钟（未单独设置）」—— 一句暴露给用户的怪话，
  * 而且看起来像产品 bug（真机脚本第一次跑就把它逮住了）。
@@ -172,7 +171,7 @@ function withSettingsFallback(settings: WorkbenchSettings): WorkbenchSettings {
   return {
     ...settings,
     defaultEstimateMinutes: settings.defaultEstimateMinutes ?? SETTINGS_FALLBACK.defaultEstimateMinutes,
-    dailyCapacityIncludeOverdue: settings.dailyCapacityIncludeOverdue ?? SETTINGS_FALLBACK.dailyCapacityIncludeOverdue,
+    planIncludeOverdue: settings.planIncludeOverdue ?? SETTINGS_FALLBACK.planIncludeOverdue,
   }
 }
 
@@ -422,11 +421,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     /** 本次已经建出来的那条（"就删掉这条新建的"用得上）。 */
     newTaskId: string
   } | null>(null)
-  const [settings, setSettings] = useState<WorkbenchSettings>({ defaultWorkspace: '', autoCreateTypeFolders: true, desktopNotify: true, dailyCapacityMinutes: 390, quickWorkspaceRecent: [], autoKnowledgeRecall: true, defaultEstimateMinutes: DEFAULT_ESTIMATE_MINUTES, dailyCapacityIncludeOverdue: false, personaExternalDir: '', personaFavorites: [], personaDisabledIds: [] })
-  /** 今日容量里「可投入时长」的行内编辑态（null = 只读展示） */
-  const [capacityEdit, setCapacityEdit] = useState<string | null>(null)
-  /** 「规则与账本」面板是否展开（纯展示态，不影响任何计算）。 */
-  const [capacityExpanded, setCapacityExpanded] = useState(false)
+  const [settings, setSettings] = useState<WorkbenchSettings>({ defaultWorkspace: '', autoCreateTypeFolders: true, desktopNotify: true, quickWorkspaceRecent: [], autoKnowledgeRecall: true, defaultEstimateMinutes: DEFAULT_ESTIMATE_MINUTES, planIncludeOverdue: false, personaExternalDir: '', personaFavorites: [], personaDisabledIds: [] })
   /**
    * 系统通知的可用性三态（v1.15.7）。
    *
@@ -1358,7 +1353,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       await sessionRef.session.rename(sessionTitle).catch(() => undefined)
       /**
        * 当日候选：**唯一实现**在 `shared/dailyPlanPolicy.ts#planCandidates()`（经
-       * `client/capacity.ts#todayPlanCandidates` 接线，见下面的 `planCandidateInfo` memo）。
+       * `client/dailyPlanCandidates.ts#todayPlanCandidates` 接线，见下面的 `planCandidateInfo` memo）。
        *
        * 旧实现内联了一份 filter + `.slice(0, 30)`：它只看"有效截止 < 当日 24:00"，
        * 于是**截止在几天后的长任务压根进不了候选**，AI 看不到就排不出来（用户实测的
@@ -1837,8 +1832,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         // 改父任务（v1.14.0）：null = 移到顶层。服务端 repo 层会做存在性 + 防环校验，
         // 失败返回 400 中文原因（下面的 catch 会把它显示成 toast），不是 500。
         parentId: editDraft.parentId === '' ? null : editDraft.parentId,
-        // 「预计耗时」与「全天任务」（v1.15.1）：前者直接决定今日容量的「已排」，
-        // 后者只影响展示与重复锚点（不改变容量计算）。
+        // 「预计耗时」与「全天任务」（v1.15.1）：前者参与当日候选的排序与展示，
+        // 后者只影响展示与重复锚点（不改变任何判定）。
         estimatedMinutes,
         allDay: editDraft.allDay,
       }
@@ -1847,8 +1842,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       await patchTask(selected.task.id, payload)
       /**
        * 乐观更新：`patchTask` 成功后**立刻**把这一条在本地 tasks 里改掉，
-       * 不刷新页面就能看到「已排」跟着变（用户验收标准第 2 条：
-       * "改完立即影响今日容量" = 乐观更新 + 立即重算，不是"刷新后生效"）。
+       * 不刷新页面就能看到预计耗时跟着变（用户验收标准第 2 条：
+       * "改完立即生效" = 乐观更新 + 立即重算，不是"刷新后生效"）。
        * 幂等：同 id 字段合并，重复保存结果一致；`patchTask` 内部随后 refresh 对账，
        * 服务端值与乐观值一致时不会产生可见跳动。
        */
@@ -1994,7 +1989,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * （模板不是今天要做的事；实例由 createTask 生成时不带 recurrenceCode，照常可排）。
    */
   const planCandidateInfo = useMemo(() => {
-    const todayKey = capacityTodayKey(now)
+    const todayKey = planDayKey(now)
     const pinnedKey = pickedAnchor
     const planOf = (date: string): DailyPlanView | null => (date === todayKey ? todayPlan : (date === pinnedKey ? pickedPlan : null))
     const candidatesFor = (date: string) => todayPlanCandidates({
@@ -2002,7 +1997,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       // 不带 recurrenceCode，因此照常可排）。
       tasks: tasks.filter((t) => t.recurrenceCode === null || t.recurrenceCode === 'none'),
       plan: planOf(date),
-      includeOverdue: settings.dailyCapacityIncludeOverdue,
+      includeOverdue: settings.planIncludeOverdue,
       defaultEstimateMinutes: settings.defaultEstimateMinutes,
       now,
     })
@@ -2021,8 +2016,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         })
       },
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替（见 capacity 的同样注释）
-  }, [tasks, todayPlan, pickedPlan, pickedAnchor, settings.dailyCapacityIncludeOverdue, settings.defaultEstimateMinutes, capacityTodayKey(now)])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替（见 planDayKey 的注释）
+  }, [tasks, todayPlan, pickedPlan, pickedAnchor, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
 
   /**
    * 今日候选的截断提示（**同一次判定**的产物，不再算一遍）。
@@ -2031,67 +2026,43 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * 否则用户会以为这 30 条就是全部（需求 §5.1、AX-C02）。
    */
   const todayPromptInfo = useMemo(() => {
-    const payload = planCandidateInfo.promptFor(capacityTodayKey(now))
+    const payload = planCandidateInfo.promptFor(planDayKey(now))
     return { truncated: payload.truncated, notice: payload.notice, omitted: payload.omitted, total: payload.total }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  }, [planCandidateInfo, capacityTodayKey(now)])
+  }, [planCandidateInfo, planDayKey(now)])
 
   /** 今日手动"添加任务"的候选行（**同一份** `planCandidates` 输出，不另写过滤）。 */
   const todayPlanCandidateRows = useMemo(() => todayPlanCandidates({
     tasks: tasks.filter((t) => t.recurrenceCode === null || t.recurrenceCode === 'none'),
     plan: todayPlan,
-    includeOverdue: settings.dailyCapacityIncludeOverdue,
+    includeOverdue: settings.planIncludeOverdue,
     defaultEstimateMinutes: settings.defaultEstimateMinutes,
     now,
   }).candidates.map((candidate) => ({ id: candidate.taskId, title: candidate.title })),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  [tasks, todayPlan, settings.dailyCapacityIncludeOverdue, settings.defaultEstimateMinutes, capacityTodayKey(now)])
+  [tasks, todayPlan, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
 
   /** 日历选中日的同一份提示（切到该日时显示"另有 N 条未列出"）。 */
   const pickedPromptInfo = useMemo(() => {
     const payload = planCandidateInfo.promptFor(pickedAnchor)
     return { truncated: payload.truncated, notice: payload.notice, omitted: payload.omitted, total: payload.total }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  }, [planCandidateInfo, pickedAnchor, capacityTodayKey(now)])
+  }, [planCandidateInfo, pickedAnchor, planDayKey(now)])
 
   /** 日历选中日手动"添加任务"的候选行（同上，同一份候选函数）。 */
   const pickedPlanCandidateRows = useMemo(() => todayPlanCandidates({
     tasks: tasks.filter((t) => t.recurrenceCode === null || t.recurrenceCode === 'none'),
     plan: pickedPlan,
-    includeOverdue: settings.dailyCapacityIncludeOverdue,
+    includeOverdue: settings.planIncludeOverdue,
     defaultEstimateMinutes: settings.defaultEstimateMinutes,
     now,
   }).candidates.map((candidate) => ({ id: candidate.taskId, title: candidate.title })),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- now 用日键代替
-  [tasks, pickedPlan, settings.dailyCapacityIncludeOverdue, settings.defaultEstimateMinutes, capacityTodayKey(now)])
+  [tasks, pickedPlan, settings.planIncludeOverdue, settings.defaultEstimateMinutes, planDayKey(now)])
   const clearTodayPlan = async (): Promise<void> => {
     await api(`/api/workbench/plans/${localDateString()}`, { method: 'DELETE' })
     await refresh()
   }
-
-  /**
-   * 今日容量（唯一权威源 = 纯函数模块 `capacity.ts`）。
-   *
-   * 三条别改回去的接线细节：
-   * 1. **`now` 不能进依赖数组** —— 它是渲染体内每帧新建的对象，放进去等于 memo 每帧失效
-   *    （跨天刷新才有必要重算，同一帧里 now 变了也不会引起重渲染）。
-   *    依赖改成 `capacityTodayKey(now)`（YYYY-MM-DD 本地日字符串，跨天才变）。
-   * 2. **传全量列表、函数内自己过滤**：`archivedTasks` 只有打开"查看归档"时才加载，
-   *    它为空数组不影响结果（归档任务本就不进容量），也不会出现"同一语义两处算"。
-   * 3. 逾期口径与默认耗时的**唯一来源是 settings**，页面不另存副本、不自己算一遍。
-   */
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- 依赖用下面的日字符串代替 now，见注释 1
-  const capacity = useMemo(
-    () => computeTodayCapacity({
-      tasks: [...tasks, ...archivedTasks],
-      plan: todayPlan === null ? null : { ...todayPlan, readable: todayPlan.readable !== false },
-      dailyCapacityMinutes: settings.dailyCapacityMinutes,
-      defaultEstimateMinutes: settings.defaultEstimateMinutes,
-      includeOverdue: settings.dailyCapacityIncludeOverdue,
-      now,
-    }),
-    [tasks, archivedTasks, todayPlan, settings.dailyCapacityMinutes, settings.defaultEstimateMinutes, settings.dailyCapacityIncludeOverdue, capacityTodayKey(now)],
-  )
 
   /**
    * 「一键排入」——**唯一入口**是 `POST /plans/:date/items`（服务端原子追加）。
@@ -2147,49 +2118,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       throw e
-    }
-  }
-
-  /**
-   * 逾期口径开关（「今日容量 → 规则」面板与设置页**写同一个 settings 键**）。
-   *
-   * 为什么两处共用一个回调：`dailyCapacityIncludeOverdue` 的唯一权威源是 settings
-   * （服务端 meta）。若面板自己存一份 state，就会出现"面板开关是开的、容量按关的算"
-   * 这种假控件 —— 本项目已经因为"两个权威源"翻过车。
-   * 保存失败回滚（把 settings 改回去），不静默失败。
-   */
-  const saveIncludeOverdue = async (next: boolean): Promise<void> => {
-    const previous = settings.dailyCapacityIncludeOverdue
-    if (next === previous) return
-    setSettings((prev) => ({ ...prev, dailyCapacityIncludeOverdue: next }))
-    try {
-      await api('/api/workbench/settings', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ dailyCapacityIncludeOverdue: next }),
-      })
-      setNotice(next ? '逾期任务会计入今日容量' : '逾期任务不再计入今日容量')
-    } catch (e) {
-      setSettings((prev) => ({ ...prev, dailyCapacityIncludeOverdue: previous }))
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  /** 保存「每天可投入时长」（分钟）；<30 视为无效，恢复默认 390。 */
-  const saveDailyCapacity = async (): Promise<void> => {    const raw = capacityEdit === null ? '' : capacityEdit.trim()
-    setCapacityEdit(null)
-    const parsed = Number(raw)
-    const next = Number.isFinite(parsed) && parsed >= 30 ? Math.min(1440, Math.round(parsed)) : 390
-    if (next === settings.dailyCapacityMinutes) return
-    try {
-      await api<{ settings: { dailyCapacityMinutes: number } }>('/api/workbench/settings', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ dailyCapacityMinutes: next }),
-      })
-      setSettings((prev) => ({ ...prev, dailyCapacityMinutes: next }))
-      setNotice(`每天可投入时长已设为 ${next} 分钟`)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -2982,77 +2910,9 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 <div className="wb-stat"><b>{bootstrap?.stats.total ?? 0}</b><span>总数</span></div>
               </div>
 
-              {/*
-                今日容量（v1.15.1）：把"今天投得进多少时间"及其**算法**显式化。
-                这里只负责画：算全在 `computeTodayCapacity`（纯函数），
-                口径偏好只在 `settings`（见 CapacityRulePanel 的注释）。
-              */}
-              <div className="wb-cap">
-                <div className="wb-cap-head">
-                  <h3>今日容量</h3>
-                  <div className="wb-cap-meta">
-                    <span>已排 <b>{capacity.planned}</b> min</span>
-                    <span>
-                      可投入{' '}
-                      <b>
-                        {capacityEdit === null
-                          ? <span className="wb-cap-edit" title="点击修改每天可投入时长" onClick={() => setCapacityEdit(String(settings.dailyCapacityMinutes))}>{settings.dailyCapacityMinutes}</span>
-                          : <input
-                              autoFocus
-                              type="number"
-                              min={30}
-                              max={1440}
-                              step={30}
-                              value={capacityEdit}
-                              style={{ width: 64, font: 'inherit', fontVariantNumeric: 'tabular-nums' }}
-                              onChange={(e) => setCapacityEdit(e.target.value)}
-                              onBlur={() => void saveDailyCapacity()}
-                              onKeyDown={(e) => { if (e.key === 'Enter') void saveDailyCapacity(); if (e.key === 'Escape') setCapacityEdit(null) }}
-                            />}
-                      </b>{' '}
-                      min
-                    </span>
-                    <span>余 <b>{capacity.free}</b> min</span>
-                  </div>
-                </div>
-                <div className="wb-cap-bar" role="img" aria-label={capacityAriaLabel(capacity)}>
-                  {(['p0', 'p1', 'p2', 'p3'] as const).map((code) => capacity.byPriority[code] > 0
-                    ? <i key={code} className={code} style={{ width: `${(capacity.byPriority[code] / capacity.total) * 100}%` }} title={`${code} · ${capacity.byPriority[code]} min`} />
-                    : null)}
-                  {capacity.free > 0 && <i className="free" style={{ width: `${(capacity.free / capacity.total) * 100}%` }} title={`空闲 · ${capacity.free} min`} />}
-                </div>
-                {/**
-                  * 容量图例 + 「规则」按钮**同一行**（2026-10-01 用户要求）。
-                  *
-                  * ⚠️ `CapacityRulePanel` 的**内联模式**只把那个按钮渲染进这一行；
-                  * 它的展开体（规则清单 / 账本 / 未排入）由 CSS 拿到**全宽的下方**
-                  * （`.wb-cap-rule[data-inline=1] { display: contents }`）。
-                  * 早期版本把整块塞进这一行 —— 一展开，长内容就被挤在这条窄行里，
-                  * 按钮位置也跟着跳（用户原话："打开、收起规则 的按钮还不在同一个位置"）。
-                  */}
-                <div className="wb-cap-legend" data-cap-expanded={capacityExpanded ? '1' : '0'}>
-                  <span className="wb-cap-legend-item"><i style={{ background: 'var(--wb-p0)' }} />紧急 <b>{capacity.byPriority.p0}</b></span>
-                  <span className="wb-cap-legend-item"><i style={{ background: 'var(--wb-p1)' }} />高 <b>{capacity.byPriority.p1}</b></span>
-                  <span className="wb-cap-legend-item"><i style={{ background: 'var(--wb-p2)' }} />普通 <b>{capacity.byPriority.p2}</b></span>
-                  <span className="wb-cap-legend-item"><i style={{ background: 'var(--wb-p3)' }} />低 <b>{capacity.byPriority.p3}</b></span>
-                  <span className="wb-cap-legend-item"><i style={{ background: 'color-mix(in srgb, var(--wb-ok) 36%, transparent)' }} />空闲 <b>{capacity.free}</b></span>
-                  <CapacityRulePanel
-                    capacity={capacity}
-                    dailyCapacityMinutes={settings.dailyCapacityMinutes}
-                    defaultEstimateMinutes={settings.defaultEstimateMinutes}
-                    includeOverdue={settings.dailyCapacityIncludeOverdue}
-                    onIncludeOverdueChange={(next) => void saveIncludeOverdue(next)}
-                    expanded={capacityExpanded}
-                    onExpandedChange={setCapacityExpanded}
-                    onAddToPlan={addTaskToPlan}
-                    addingTaskId={addingPlanTaskId}
-                    inlineToggle
-                  />
-                </div>
-              </div>
               {/**
                 * 今日 = 日期面板的 **today 实例**（ADR0001 口径冻结 / D15）。
-                * 上面两张卡（统计 + 容量）是今日视图独有的，面板本身与日历共用一份。
+                * 上面那张统计卡是今日视图独有的，面板本身与日历共用一份。
                 */}
               <DayPanel
                 {...dayPanelProps}
@@ -3343,7 +3203,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                         </div>
                       )}
                       <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>截止：{selected.task.effectiveDueAt === null ? '无' : fmtTime(selected.task.effectiveDueAt)}{selected.task.dueAt === null && selected.task.effectiveDueAt !== null ? '（继承父任务）' : ''}</div>
-                      {/* 预计耗时（v1.15.1）：直接决定今日容量的「已排」，所以未填时必须说清"按默认算"。 */}
+                      {/* 预计耗时（v1.15.1）：参与当日候选排序，所以未填时必须说清"按默认算"。 */}
                       <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>预计耗时：{selected.task.estimatedMinutes === null ? `默认 ${settings.defaultEstimateMinutes} 分钟（未单独设置）` : `${selected.task.estimatedMinutes} 分钟`}{selected.task.allDay ? ' · 全天' : ''}</div>
                       <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>AI 工作区：{selected.task.effectiveWorkspacePath ?? (settings.defaultWorkspace || '默认工作区未设置')}{selected.task.workspacePath === null && selected.task.effectiveWorkspacePath !== null ? '（继承父任务）' : ''}</div>
                       <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>
@@ -3859,7 +3719,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 <input name="allDay" type="checkbox" />
                 全天任务
               </span>
-              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示与重复锚点，不改变容量计算</span>
+              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示与重复锚点，不改变候选排序</span>
             </label>
             {/**
               * 批次2 #2：与快速录入、编辑任务**同一个组件**（两种选法：已有工作区下拉 + 浏览文件夹）。
@@ -3919,10 +3779,10 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 <input type="checkbox" checked={editDraft.allDay} onChange={(e) => setEditDraft((prev) => prev === null ? prev : { ...prev, allDay: e.target.checked })} />
                 全天任务
               </span>
-              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示与重复锚点，不改变容量计算</span>
+              <span style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>只影响显示与重复锚点，不改变候选排序</span>
             </label>
             <p className="wb-hint" style={{ gridColumn: '1 / -1', margin: '0 0 4px' }}>
-              {`耗时改完立即影响今日容量的「已排」；留空 = 按默认 ${settings.defaultEstimateMinutes} 分钟计入。`}
+              {`耗时参与当日候选排序；留空 = 按默认 ${settings.defaultEstimateMinutes} 分钟计入。`}
             </p>
             <div className="full">
               <WorkspacePicker
@@ -4401,8 +4261,7 @@ function WorkbenchPanelIcon({ size }: PanelIconProps): JSX.Element {
  * `main` 是**键槽**：`activePanelId` 一变，宿主就卸载旧键的子树、挂载新键的子树。
  * 我们把这个 App（里面除了面板还装着**待确认草稿弹框**）放进 `main` 的后果：
  * 关掉面板 = 整个 App 卸载 = 弹框消失（用户实测"只能回到工作台页面才看得到弹框"），
- * 而且每次开合都重建整棵树，依赖 `useEffect` 拉数据的「今日容量」会在重建窗口里
- * 渲染成空壳。
+ * 而且每次开合都重建整棵树，依赖 `useEffect` 拉数据的部分会在重建窗口里渲染成空壳。
  *
  * `shell.overlay` 是框架级浮层（list/root，**始终挂载**，契约明说 entries 可自行
  * opt back into pointer events），正好是这种"跨页面常驻"内容的归属地。

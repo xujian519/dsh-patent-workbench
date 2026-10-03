@@ -122,7 +122,7 @@ export function judgeTests(summary, allowed) {
  * | 约定 | 成功行 | 用在 |
  * |---|---|---|
  * | A | `✅ 46/46 条变异都被断言抓到（还原后仍全绿）` | knowledge-recall / knowledge-draft / model-picker / quick-workspace |
- * | B | `变异探针：17/17 条变异都变红` | capacity / listview |
+ * | B | `变异探针：17/17 条变异都变红` | 各 `probe-*-mutations.mjs` |
  *
  * 另有三种形态**都不算通过**：
  * - `❌ 3/10 条变异没有被断言发现` → 有存活（门禁在工作，但判据有洞）

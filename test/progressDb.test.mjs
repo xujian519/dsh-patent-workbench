@@ -81,7 +81,7 @@ test('迁移 19：旧任务（含 done）一律 progress=0，原字段不变，�
 
     migrate(db)
 
-    assert.equal(SCHEMA_VERSION, 20)
+    assert.equal(SCHEMA_VERSION, 21)
     for (const id of ['t-todo', 't-doing', 't-done']) {
       const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
       assert.equal(row.progress_percent, 0, `${id} 的旧进度必须是 0（不反推）`)
@@ -363,12 +363,56 @@ test('listPendingCompletions: 一次查询给出全部待验收；deferred 仍�
   }
 })
 
-test('openWorkbenchDb 全新库即 schema 20，且旧客户端省略 progressPercent 仍可读写', () => {
+/**
+ * 迁移 21：容量功能删除后的 meta 键收拾（决策 4）。
+ *
+ * 为什么必须有这条：这个迁移动的是**用户看不见的键**，写错了不会崩，只会静默地
+ * 把用户的选择丢掉 —— 那正是最难发现的一类失败。两条都必须钉住：
+ * 改名要**搬走值**（而不是删旧键让开关回落到缺省 false），删键要真删。
+ */
+test('迁移 21：daily_capacity_include_overdue 改名成 plan_include_overdue（值照搬），daily_capacity_minutes 删除', () => {
+  const db = openLegacyDb(20)
+  try {
+    db.prepare("INSERT INTO meta (key, value) VALUES ('daily_capacity_include_overdue', '1') ON CONFLICT(key) DO UPDATE SET value = '1'").run()
+    db.prepare("INSERT INTO meta (key, value) VALUES ('daily_capacity_minutes', '555') ON CONFLICT(key) DO UPDATE SET value = '555'").run()
+
+    migrate(db)
+
+    const meta = new Map(db.prepare('SELECT key, value FROM meta').all().map((row) => [row.key, row.value]))
+    assert.equal(meta.get('plan_include_overdue'), '1', '用户的选择必须被搬到新键上（不是回落到缺省 false）')
+    assert.equal(meta.has('daily_capacity_include_overdue'), false, '旧键必须消失（否则两个键各有各的口径）')
+    assert.equal(meta.has('daily_capacity_minutes'), false, '容量读数已不存在，这个键没有任何读取方')
+    assert.equal(meta.get('schema_version'), '21')
+
+    // 幂等：再跑一次不报错、内容不变
+    const snapshot = JSON.stringify(db.prepare('SELECT key, value FROM meta ORDER BY key').all())
+    migrate(db)
+    assert.equal(JSON.stringify(db.prepare('SELECT key, value FROM meta ORDER BY key').all()), snapshot)
+  } finally {
+    db.close()
+  }
+})
+
+test('迁移 21：两个键同时存在时也不因 UNIQUE 冲突而炸（OR REPLACE 的用意）', () => {
+  const db = openLegacyDb(20)
+  try {
+    db.prepare("INSERT INTO meta (key, value) VALUES ('daily_capacity_include_overdue', '1') ON CONFLICT(key) DO UPDATE SET value = '1'").run()
+    db.prepare("INSERT INTO meta (key, value) VALUES ('plan_include_overdue', '0') ON CONFLICT(key) DO UPDATE SET value = '0'").run()
+    migrate(db)
+    const meta = new Map(db.prepare('SELECT key, value FROM meta').all().map((row) => [row.key, row.value]))
+    assert.equal(meta.get('plan_include_overdue'), '1', '旧键带值搬过来（用户在原开关上做过的选择优先）')
+    assert.equal(meta.get('schema_version'), '21')
+  } finally {
+    db.close()
+  }
+})
+
+test('openWorkbenchDb 全新库即 schema 21，且旧客户端省略 progressPercent 仍可读写', () => {
   const db = openWorkbenchDb({ dbPath: ':memory:' })
   try {
     seedDictionaries(db)
     const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
-    assert.equal(Number(version.value), 20)
+    assert.equal(Number(version.value), 21)
     const task = createTask(db, { title: '任务', typeCode: 'code_impl', priorityCode: 'p1' })
     // 老调用点（不带 progressPercent 的 patch）照常工作，进度保持原值
     setTaskProgress(db, task.id, 40)

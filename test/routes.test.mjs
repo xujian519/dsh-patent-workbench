@@ -865,15 +865,15 @@ test('settings：最近手动选择的工作区是整表替换（能置顶 / 能
 })
 
 /**
- * ── [容量] 预计耗时的服务端夹取（v1.15.1）────────────────────────────────────
+ * ── [估时] 预计耗时的服务端夹取（v1.15.1）────────────────────────────────────
  *
  * 背景（fresh-eyes 审查第 2 条）：PATCH 原先只判 `typeof === 'number'` 就原样落库，
- * 而容量算法把 `≤0` 视为"没填"、把 `>1440` 夹到 1440 —— 库里能出现 99999，
- * 界面却按默认 30 算：**同一个字段两个口径**。设置项 `dailyCapacityMinutes` 一直有夹取，
- * 这个字段漏了。
+ * 而判定层把 `≤0` 视为"没填"、把 `>1440` 夹到 1440 —— 库里能出现 99999，
+ * 界面却按默认 30 算：**同一个字段两个口径**。
  *
- * 用例名统一带 `[容量]` 前缀：本文件是多个会话都会追加的共享大文件，
+ * 用例名统一带 `[估时]` 前缀：本文件是多个会话都会追加的共享大文件，
  * 前缀能让"谁加的用例"一眼分得清（见 docs/design/2026-09-17-parallel-session-handover.md）。
+ * 前缀本叫 `[容量]`，容量功能 2026-10-03 删除后改成 `[估时]`（估时字段本身保留）。
  */
 const PATCH_ESTIMATE_CASES = [
   { input: 90, expected: 90, why: '区间内原样' },
@@ -888,7 +888,7 @@ const PATCH_ESTIMATE_CASES = [
 ]
 
 for (const { input, expected, why } of PATCH_ESTIMATE_CASES) {
-  test(`[容量] PATCH /tasks/:id 的 estimatedMinutes 夹取：${JSON.stringify(input)} → ${JSON.stringify(expected)}（${why}）`, async () => {
+  test(`[估时] PATCH /tasks/:id 的 estimatedMinutes 夹取：${JSON.stringify(input)} → ${JSON.stringify(expected)}（${why}）`, async () => {
     await withServer(async ({ db, request }) => {
       const task = createTask(db, { title: 'estimate clamp', typeCode: 'code_impl', priorityCode: 'p2' })
       const res = await request('PATCH', `/api/workbench/tasks/${task.id}`, { estimatedMinutes: input })
@@ -901,7 +901,7 @@ for (const { input, expected, why } of PATCH_ESTIMATE_CASES) {
   })
 }
 
-test('[容量] 新建任务同样走夹取（POST 与 PATCH 不许两套口径）', async () => {
+test('[估时] 新建任务同样走夹取（POST 与 PATCH 不许两套口径）', async () => {
   await withServer(async ({ db, request }) => {
     const res = await request('POST', '/api/workbench/tasks', {
       title: 'created with estimate', typeCode: 'code_impl', priorityCode: 'p2', estimatedMinutes: 99999, allDay: true,
@@ -914,17 +914,17 @@ test('[容量] 新建任务同样走夹取（POST 与 PATCH 不许两套口径�
   })
 })
 
-test('[容量] 两个新设置键：缺省值、写入回读、越界夹取', async () => {
+test('[估时] 两个设置键：缺省值、写入回读、越界夹取', async () => {
   await withServer(async ({ request }) => {
     const initial = await request('GET', '/api/workbench/settings')
     assert.equal(initial.body.settings.defaultEstimateMinutes, 30, '默认耗时缺省 30')
-    assert.equal(initial.body.settings.dailyCapacityIncludeOverdue, false, '逾期口径缺省关')
+    assert.equal(initial.body.settings.planIncludeOverdue, false, '逾期口径缺省关')
 
-    const written = await request('POST', '/api/workbench/settings', { defaultEstimateMinutes: 60, dailyCapacityIncludeOverdue: true })
+    const written = await request('POST', '/api/workbench/settings', { defaultEstimateMinutes: 60, planIncludeOverdue: true })
     assert.equal(written.body.settings.defaultEstimateMinutes, 60, '写入后回读')
-    assert.equal(written.body.settings.dailyCapacityIncludeOverdue, true)
+    assert.equal(written.body.settings.planIncludeOverdue, true)
 
-    // 夹取：下界 5、上界 1440（与容量口径同一区间）
+    // 夹取：下界 5、上界 1440
     const low = await request('POST', '/api/workbench/settings', { defaultEstimateMinutes: 1 })
     assert.equal(low.body.settings.defaultEstimateMinutes, 5, '1 夹到 5')
     const high = await request('POST', '/api/workbench/settings', { defaultEstimateMinutes: 99999 })
@@ -935,7 +935,7 @@ test('[容量] 两个新设置键：缺省值、写入回读、越界夹取', as
     // 不传就不动：设置页是"整表回传"的，漏字段不许把用户的值冲掉
     const kept = await request('POST', '/api/workbench/settings', { defaultWorkspace: 'D:\\Code\\x' })
     assert.equal(kept.body.settings.defaultEstimateMinutes, 62, '不传就不动它')
-    assert.equal(kept.body.settings.dailyCapacityIncludeOverdue, true, '布尔开关同理')
+    assert.equal(kept.body.settings.planIncludeOverdue, true, '布尔开关同理')
   })
 })
 
@@ -1030,15 +1030,16 @@ test('[角色] 默认（未配置外部根、无收藏）就能看到随包的�
   })
 })
 
-test('[容量] 客户端与服务端的 estimatedMinutes 夹取必须同口径（跨模块等价性，防两处漂移）', async () => {  /**
+test('[估时] 客户端与服务端的 estimatedMinutes 夹取必须同口径（跨模块等价性，防两处漂移）', async () => {
+  /**
    * 为什么需要这条：客户端与宿主是**两个编译容器**（客户端不进宿主产物），
    * 所以 `clampEstimateForStorage`（服务端）与 `clampEstimatedMinutes`（客户端）
    * 是两份同构实现。两份实现对同一批输入必须给同一个结果 ——
-   * 不一致就会出现"设置页说 90 分钟、容量条按 30 算"这种双口径，而且**两边测试各自全绿**。
+   * 不一致就会出现"设置页说 90 分钟、候选排序按 30 算"这种双口径，而且**两边测试各自全绿**。
    * 这条断言就是钉住它们不许漂移的钉子。
    */
   const { clampEstimateForStorage } = await import('../lib/api/routes/helpers.js')
-  const { clampEstimatedMinutes } = await import('../lib/client/capacity.js')
+  const { clampEstimatedMinutes } = await import('../lib/client/dailyPlanCandidates.js')
   const probes = [90, 1, 1440, 1441, 99999, 0, -1, -5, 0.5, 1.5, 60.4, Number.NaN, Number.POSITIVE_INFINITY, '90', '', null, undefined, true, {}, []]
   for (const value of probes) {
     assert.deepEqual(

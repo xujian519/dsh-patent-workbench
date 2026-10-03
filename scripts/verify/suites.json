@@ -192,16 +192,8 @@
   ],
   "deprecated": [
     {
-      "path": "scripts/repro/compare-capacity-before-after.mjs",
-      "reason": "T2 起口径已变（旧容量 = 按到期任务求和）。文件头已标 ⚠️ 已过时；保留不删，禁止进入验收链。"
-    },
-    {
-      "path": "scripts/repro/verify-capacity-fixed-dataset.mjs",
-      "reason": "T2 起口径已变（旧容量口径）。保留不删，禁止进入验收链。"
-    },
-    {
       "path": "scripts/repro/harness-real-browser.mjs",
-      "reason": "T2 起口径已变（旧容量口径）；浏览器判据的现役实现是 scripts/verify/cdp.mjs + 白名单套件。保留不删。"
+      "reason": "T2 起口径已变（旧容量口径）；2026-10-03 容量功能删除后，`--case capacity` 那一批已从脚本里移除，只剩仍然现行的知识库批。浏览器判据的现役实现是 scripts/verify/cdp.mjs + 白名单套件。保留不删。"
     }
   ]
 }

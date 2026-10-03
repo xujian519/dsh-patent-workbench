@@ -73,7 +73,7 @@ test('AX-T02: 行内「排入今日」不自己发请求（组件只回调，写
       `${name} 里不许拼请求：行内动作只能回调，写入口是 index.tsx 的 addTaskToPlan（`+"`POST /plans/:date/items`"+`）`)
   }
   assert.ok(count(INDEX, /addTaskToPlan/g) >= 3,
-    '定义 + 容量未排入区 + 行内「排入今日」必须复用同一个 addTaskToPlan（不一致就会多出一条写路径）')
+    '定义 + 行内「排入今日」必须复用同一个 addTaskToPlan（不一致就会多出一条写路径）')
   assert.equal(/onScheduleToday[\s\S]{0,200}?localDateString\(\)[\s\S]{0,80}?\/items/.test(PANEL), false,
     '组件里不许出现"自己算今天 + 自己请求"的写法')
 })

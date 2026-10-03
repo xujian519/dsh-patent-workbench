@@ -53,7 +53,7 @@ export interface DailyPlanRow {
    * 存一份快照会变成假的告警。`items_json` 整体不可解析时这里给"无法解析"。
    */
   diagnostics: string[]
-  /** `items_json` 整体不可解析（容量必须显示"不可计算"而不是 0）。 */
+  /** `items_json` 整体不可解析（界面必须显示"不可计算"而不是 0）。 */
   readable: boolean
 }
 
@@ -146,7 +146,7 @@ function parseDailyPlan(row: RawDailyPlanRow | undefined): DailyPlanRow | undefi
   }
   if (!parsed.readable) {
     // 坏数据**原样保留**（一个字节都不动）：这里只是把它读成"不可解析"，
-    // 让 GET / 容量显示"不可计算 + 原因"，而不是假装没有计划或自作主张清空。
+    // 让 GET / 显示"不可计算 + 原因"，而不是假装没有计划或自作主张清空。
     return { ...base, items: [], diagnostics: [`计划 ${row.plan_date} 的 ${parsed.reason}，无法解析（原数据未改动）`], readable: false }
   }
   return { ...base, items: parsed.items, diagnostics: parsed.diagnostics.map((text) => `计划 ${row.plan_date}：${text}`), readable: true }

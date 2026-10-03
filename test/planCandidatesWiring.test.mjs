@@ -2,21 +2,23 @@
  * 接线不变量（源码级扫描）—— T2/D09、AX-C06、AX-G02。
  *
  * 本项目最大的 bug 类别是"同一个语义被独立计算多次"：本次改造把「当日候选」
- * 收进 `src/shared/dailyPlanPolicy.ts`，而它有三个消费点（AI 排序 / 手动池 /
- * 容量未排入区）。**"不存在第二处实现"只能用扫描证明**，所以这里逐条钉住：
+ * 收进 `src/shared/dailyPlanPolicy.ts`，而它有两个消费点（AI 排序 / 手动池）。
+ * **"不存在第二处实现"只能用扫描证明**，所以这里逐条钉住：
  *
  * 1. 候选判定只有 `planCandidates` 一份实现；
  * 2. `index.tsx` 不再内联"今天到期/doing/无截止"那套 filter，也不再 `.slice(0, 30)`；
  * 3. 30 条上限只有 `selectPromptCandidates` 一份，且 `dailyPlanPrompt.ts` 不自己 slice；
- * 4. `client/capacity.ts` 变成薄接线：不求和、不判 open、不内联默认耗时；
- * 5. 容量组件不自己 reduce，面板拿到的候选就是共享函数的输出。
+ * 4. `client/dailyPlanCandidates.ts` 是薄接线：不求和、不判 open、不内联默认耗时。
  *
  * 绝不断言行号（本项目明确禁止脆行号断言），只按符号与调用点断言。
+ *
+ * 历史：上一版叫 `capacityWiring.test.mjs`，还额外钉住"容量账本组件只吃 props"等条。
+ * 容量功能已按决策 4 删除（2026-10-03），候选判定本身完整保留，故本文件随之改名收窄。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { MAX_ESTIMATE_MINUTES, DEFAULT_ESTIMATE_MINUTES } from '../lib/client/capacity.js'
+import { MAX_ESTIMATE_MINUTES, DEFAULT_ESTIMATE_MINUTES } from '../lib/client/dailyPlanCandidates.js'
 
 /**
  * ⚠️ 行尾归一化：Windows 检出是 CRLF，而下面所有片段/正则是按 `\n` 写的。
@@ -24,10 +26,9 @@ import { MAX_ESTIMATE_MINUTES, DEFAULT_ESTIMATE_MINUTES } from '../lib/client/ca
  */
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
 const indexSource = read('src/client/index.tsx')
-const capacitySource = read('src/client/capacity.ts')
+const candidatesSource = read('src/client/dailyPlanCandidates.ts')
 const policySource = read('src/shared/dailyPlanPolicy.ts')
 const promptSource = read('src/client/dailyPlanPrompt.ts')
-const panelSource = read('src/client/components/CapacityRulePanel.tsx')
 const planPanelSource = read('src/client/components/PlanPanel.tsx')
 
 /** 去掉注释：避免"注释里提到某个写法"被当成代码里的实现/第二处实现。 */
@@ -43,7 +44,7 @@ test('AX-G02 候选判定只有一份实现：dailyPlanPolicy.ts 导出，client
   assert.match(policySource, /export function planCandidates\(/, '权威实现必须在共享模块里')
   assert.equal((policySource.match(/export function planCandidates\(/g) ?? []).length, 1)
   // 客户端不许再定义自己的候选函数
-  assert.doesNotMatch(capacitySource, /export function planCandidates\(/)
+  assert.doesNotMatch(candidatesSource, /export function planCandidates\(/)
   assert.doesNotMatch(indexSource, /function planCandidates\(/)
 })
 
@@ -52,16 +53,16 @@ test('AX-G02 index.tsx 不再内联"今天到期/doing/无截止"那套候选 fi
   // 旧实现的特征：按 effectiveDueAt 与 planDayEnd 比较、以及"今天且无截止"这条腿
   assert.doesNotMatch(code, /planDayEnd\.getTime\(\)/, '不许再内联按截止过滤的候选公式')
   assert.doesNotMatch(code, /planCandidates\b(?!Info|For)/, '不许再内联名为 planCandidates 的过滤结果')
-  assert.match(code, /todayPlanCandidates\(/, '候选必须走共享函数（经 client/capacity.ts 接线）')
+  assert.match(code, /todayPlanCandidates\(/, '候选必须走共享函数（经 client/dailyPlanCandidates.ts 接线）')
 })
 
 test('AX-C02 30 条上限只有一份：selectPromptCandidates；调用点不许自己 slice', () => {
   assert.match(policySource, /export function selectPromptCandidates\(/)
   // 共享模块里除"定义"外**只允许**在 planCandidates 附近出现；客户端不许再实现一遍
-  assert.doesNotMatch(stripComments(capacitySource), /selectPromptCandidates/)
+  assert.doesNotMatch(stripComments(candidatesSource), /selectPromptCandidates/)
   assert.match(promptSource, /selectPromptCandidates\(/, '提示词模块必须复用共享的截断口径')
   assert.doesNotMatch(stripComments(promptSource), /\.slice\(0, *30\)/, '提示词模块不许自己截断')
-  assert.doesNotMatch(stripComments(capacitySource), /slice\(0, *30\)/, '容量接线不许截断候选')
+  assert.doesNotMatch(stripComments(candidatesSource), /slice\(0, *30\)/, '候选接线不许截断候选')
   assert.doesNotMatch(stripComments(indexSource), /slice\(0, *30\)/, 'index.tsx 不许再静默截断候选')
   assert.equal((stripComments(policySource).match(/\.slice\(0, safeLimit\)/g) ?? []).length, 1, '截断只许有一处')
 })
@@ -87,22 +88,13 @@ test('AX-C02 截断提示必须同时出现在提示词与发起窗口（不宣�
   assert.match(dayPanel, /role="status"/, '提示要带 role=status（无障碍与判据都要）')
 })
 
-test('AX-C06 客户端容量接线是薄的：不求和、不判 open、不内联默认耗时', () => {
-  const code = stripComments(capacitySource)
+test('AX-C06 客户端候选接线是薄的：不求和、不判 open、不内联默认耗时', () => {
+  const code = stripComments(candidatesSource)
   assert.doesNotMatch(code, /if \(task\.archived === true\) continue/, '归档过滤必须在共享函数里')
   assert.doesNotMatch(code, /statusCode === 'done'/, 'open 判定必须复用共享函数')
   assert.doesNotMatch(code, /estimatedMinutes \?\? 30/, '默认投入取值必须在共享函数里')
-  assert.doesNotMatch(code, /\breduce\(/, '容量接线不许自己求和')
-  assert.match(code, /computeCapacityLedger\(/, '唯一实现是共享模块的 computeCapacityLedger')
-})
-
-test('AX-C06 容量组件只吃 props：不 reduce、不自己判今天到期', () => {
-  const code = stripComments(panelSource)
-  assert.doesNotMatch(code, /\.reduce\(/, '面板不许再算合计')
-  assert.doesNotMatch(code, /effectiveDueAt/, '面板不许自己判到期/逾期')
-  assert.doesNotMatch(code, /estimatedMinutes/, '面板不许自己取估时')
-  assert.match(code, /capacity\.plannedItems/, '账本直接渲染纯函数给的明细')
-  assert.match(code, /capacity\.unscheduled/, '未排入区直接渲染纯函数给的候选')
+  assert.doesNotMatch(code, /\breduce\(/, '候选接线不许自己求和')
+  assert.match(code, /planCandidates\(/, '唯一实现是共享模块的 planCandidates')
 })
 
 test('AX-C06 手动池（PlanPanel）不再内联候选过滤，吃父级喂的 candidateTasks', () => {
@@ -112,11 +104,9 @@ test('AX-C06 手动池（PlanPanel）不再内联候选过滤，吃父级喂的 
   assert.doesNotMatch(code, /effectiveDueAt/, '不许再自己判到期')
 })
 
-test('AX-C06 三个调用点都指向同一份候选：AI 排序 / 手动池 / 未排入区', () => {
+test('AX-C06 各调用点都指向同一份候选：AI 排序 / 今日手动池 / 选中日手动池', () => {
   const code = stripComments(indexSource)
-  // 未排入区在 CapacityRulePanel 里由 capacity.unscheduled 渲染（父级用 computeTodayCapacity 算）
-  assert.match(code, /computeTodayCapacity\(/)
-  // 手动池候选
+  // 今日手动池候选
   assert.match(code, /todayPlanCandidateRows/)
   assert.match(code, /pickedPlanCandidateRows/)
   // AI 排序提示词
@@ -128,40 +118,12 @@ test('AX-C06 三个调用点都指向同一份候选：AI 排序 / 手动池 / �
 // 口径不变量
 // ---------------------------------------------------------------------------
 
-test('容量 memo 依赖日键而不是 `now` 对象（放进去等于每帧失效）', () => {
-  const start = indexSource.indexOf('computeTodayCapacity(')
-  assert.ok(start > 0)
-  const end = indexSource.indexOf('}),', start)
-  const depsStart = indexSource.indexOf('[', end)
-  const depsEnd = indexSource.indexOf(']', depsStart)
-  const deps = indexSource.slice(depsStart, depsEnd)
-  assert.match(deps, /capacityTodayKey\(now\)/)
-  assert.doesNotMatch(deps, /,\s*now\s*,/)
-  assert.match(deps, /todayPlan/, '计划变了必须重算容量（已排来自计划快照）')
-})
-
-test('容量 memo 喂的是**全量**任务列表（归档过滤在共享函数里）', () => {
-  const start = indexSource.indexOf('computeTodayCapacity(')
-  const end = indexSource.indexOf('}),', start)
-  const call = indexSource.slice(start, end)
-  assert.match(call, /tasks: \[\.\.\.tasks, \.\.\.archivedTasks\]/)
-  assert.match(call, /plan: todayPlan === null \? null : \{ \.\.\.todayPlan/)
-})
-
 test('一分钟口径只有一处：DEFAULT / MAX 与共享模块同值', () => {
   assert.equal(DEFAULT_ESTIMATE_MINUTES, 30)
   assert.equal(MAX_ESTIMATE_MINUTES, 1440)
   assert.match(policySource, /export const DEFAULT_PLAN_MINUTES = 30/)
   assert.match(policySource, /export const MAX_PLAN_MINUTES = 1440/)
-  assert.match(capacitySource, /DEFAULT_ESTIMATE_MINUTES = DEFAULT_PLAN_MINUTES/)
-})
-
-test('逾期开关只影响候选：容量函数的 planned 与它无关（源码级：ledger 入参里没有开关就改不了已排）', () => {
-  const code = stripComments(policySource)
-  // computeCapacityLedger 内已排只累加计划项 minutes，includeOverdue 只传给 planCandidates
-  assert.match(code, /planned \+= minutes/)
-  assert.match(code, /const candidateResult = planCandidates\(\{/)
-  assert.equal((code.match(/planned \+= minutes/g) ?? []).length, 1, '已排只允许累加一次（在计划项循环里）')
+  assert.match(candidatesSource, /DEFAULT_ESTIMATE_MINUTES = DEFAULT_PLAN_MINUTES/)
 })
 
 /**
@@ -182,5 +144,5 @@ test('AX-C07 编辑耗时的四个接线点都在（保存 payload / 编辑框�
   assert.match(code, /estimated !== null && \(!Number\.isFinite\(estimated\) \|\| estimated < 1 \|\| estimated > MAX_ESTIMATE_MINUTES\)/,
     '客户端必须就地校验非法耗时 —— 否则只能靠服务端 400 猜')
   assert.match(code, /\{ \.\.\.task, estimatedMinutes, allDay: editDraft\.allDay \}/,
-    '乐观更新必须把新耗时写回列表 —— 否则要刷新页面才看到「已排」变')
+    '乐观更新必须把新耗时写回列表 —— 否则要刷新页面才看到变化')
 })

@@ -44,7 +44,7 @@ const SECTIONS: Array<{ key: Section; label: string }> = [
   /**
    * ⚠️ 「角色库」是**独立页签**（2026-10-01 用户要求）。
    *
-   * 原先它挤在「通用」里，位置在"AI 会话工作区"和"今日容量"之间 —— 三件事概念上无关，
+   * 原先它挤在「通用」里，位置在"AI 会话工作区"和每日计划口径设置之间 —— 三件事概念上无关，
    * 却共享一列 500px 宽的窄栏：角色列表（每组标题 + 每行名称/描述/来源 + 两个按钮）
    * 在那样的宽度里必然"全挤在一起"。用户原话："设置页面的角色库是否应该是单独的一个页面，
    * 而不是挤在通用页面里面"。
@@ -243,15 +243,13 @@ export function SettingsModal(props: SettingsModalProps): ReactNode {
           {section === 'general' && (
             <section>
               {/*
-                「今日容量」的口径偏好（v1.15.1）。
-                这两个值直接决定任务页顶部那个数字（已排 / 余），所以必须**可见可改** ——
-                写死在代码里就变成了又一个用户无法解释、也无法纠正的数字。
-                规则全文在任务页的「规则」面板里（CapacityRulePanel），这里只放两个开关，
-                并各写一句"它会怎样影响读数"。
+                「当日候选」的排序口径（v1.15.1；2026-10-03 容量功能删除后改标题）。
+                这两个值直接决定任务页候选列表里出现什么、按什么排序，所以必须**可见可改**
+                —— 写死在代码里就变成了又一个用户无法解释、也无法纠正的数字。
               */}
-              <h5 style={{ marginTop: 18 }}>今日容量</h5>
+              <h5 style={{ marginTop: 18 }}>今日候选</h5>
               <div className="wb-field">
-                <span>默认耗时（任务没填「预计耗时」时按它计入，分钟）</span>
+                <span>默认耗时（任务没填「预计耗时」时按它当作投入，分钟）</span>
                 <input
                   type="number"
                   min={5}
@@ -270,15 +268,14 @@ export function SettingsModal(props: SettingsModalProps): ReactNode {
               <label className="wb-switch-row">
                 <input
                   type="checkbox"
-                  checked={settings.dailyCapacityIncludeOverdue}
-                  onChange={(e) => onSettingsChange({ ...settings, dailyCapacityIncludeOverdue: e.target.checked })}
+                  checked={settings.planIncludeOverdue}
+                  onChange={(e) => onSettingsChange({ ...settings, planIncludeOverdue: e.target.checked })}
                 />
                 <span>
-                  把逾期任务计入今日容量
+                  把逾期任务列入今日候选
                   <span className="wb-switch-desc">
-                    默认关闭：逾期是历史欠账，混进"今天要做的事"会让「已排」失去意义。
-                    打开后，未完成且截止时间早于今天 0 点的任务也会计入（读数会明显变大）。
-                    任务页的「今日容量 → 规则」面板里有同样的开关，两处写同一个设置。
+                    默认关闭：逾期是历史欠账，混进"今天要做的事"会让候选失去意义。
+                    打开后，未完成且截止时间早于今天 0 点的任务也会进候选池（AI 排序与手动添加都是）。
                   </span>
                 </span>
               </label>

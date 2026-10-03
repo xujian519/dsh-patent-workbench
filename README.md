@@ -28,7 +28,7 @@
 - 🧠 **每个任务关联多个 AI 会话**：澄清 / 咨询 / 拆解 / 执行 / 复盘
 - 🎭 **专家人格（角色库）**：三级来源（用户库 > 外部目录 > 内置 15 篇）；会话前选定，正文按需加载、不进提示词
 - ✅ **「AI 申请完成 → 用户验收」闭环**；进度是显式值，AI 不能靠进度把任务标完成（ADR 0003/0004）
-- 🗓️ **每日计划 + 容量账本**：AI 排序提案 → 确认才生效；「今日投入结束」≠ 任务完成（ADR 0007）
+- 🗓️ **每日计划**：AI 排序提案（按优先级/到期/预计耗时排候选）→ 确认才生效；「今日投入结束」≠ 任务完成（ADR 0007）
 - 🎯 **会话前选 Skill / 模型 / 角色**，提示词自动注入「加载这些技能」
 - ⏰ **到期提醒**：页内横幅 + 系统通知；可选微信通道（需 `@xmanrui/dsh-im`）
 - 🔒 **数据只在本机** `~/.dsh/workbench`，不上传任何服务器
@@ -58,14 +58,14 @@ dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 1. 侧栏点「工作台」打开面板；
 2. 「快速录入」说一句话 → AI 澄清 → 确认建任务；
 3. 任务详情点「AI 执行」→ 在会话里干活 → 完成后回面板**验收**；
-4. 「今日」看待办与容量，需要时点「AI 智能排序」排今天的顺序；「日历」按天回看与排期。
+4. 「今日」看待办，需要时点「AI 智能排序」排今天的顺序；「日历」按天回看与排期。
 
 ## 兼容性
 
 | 项 | 要求 | 拿不到时 |
 |---|---|---|
 | **面板本体**（官方槽位 + `layout.selectPanel`） | **DSH `0.1.5-rc.1+`** | **面板整块不启动**并打一条可读日志（刻意不降级） |
-| 服务端能力：任务/日历/知识库/点子、提醒、`workbench_*` 工具 | `0.1.0-rc.6+` | — |
+| 服务端能力：任务/日历/知识库/案卷/期限、提醒、`workbench_*` 工具 | `0.1.0-rc.6+` | — |
 | 会话绑定 `sessions.retain()` | `0.1.7-rc.2+` | 旧宿主自动回落 `sessions.binding()` |
 | Skill 选择器 | 宿主 `skills` 注册表 | 选择器隐藏 |
 | 微信提醒 | 可选插件 `@xmanrui/dsh-im` | 静默降级为页内提醒 + 系统通知 |
@@ -94,7 +94,7 @@ pnpm build && pnpm dev:install   # 装盘到本机 profile（装完重启 dsh we
 | [`scripts/release-preflight.mjs`](scripts/release-preflight.mjs) | **发布门禁一键跑**：typecheck → 单测 → 全探针（每步 build）→ PII 两面 → 版本/文档；`--phase post` 做 tarball 与 sha1 对账、用户视角安装、Release 复核 |
 | [`scripts/dev-verify.mjs`](scripts/dev-verify.mjs) | 研发版本验收链：构建 → 装盘 → 隔离实例重启 → 浏览器套件 → 证据包 |
 | [`docs/issues/`](docs/issues/) | 滚动维护的已知问题与待办 |
-| [`docs/adr/`](docs/adr/) | 已冻结的口径决策（容量、进度、角色、验收链、每日投入） |
+| [`docs/adr/`](docs/adr/) | 已冻结的口径决策（进度、角色、验收链、每日投入） |
 
 ## 版本历史
 
@@ -158,7 +158,7 @@ turn DSH into a calendar + hierarchical task list + AI assistant workbench. All 
 - 🧠 Multiple AI sessions per task: clarify / consult / breakdown / execute / review
 - 🎭 **Personas**: three-tier library (user > external dir > 15 built-ins), picked per session, loaded on demand (never inlined into the prompt)
 - ✅ "AI requests completion → you accept" loop; progress is an explicit value the AI cannot use to complete a task
-- 🗓️ Daily plan + capacity ledger: AI proposes an order, only your confirmation applies it; "done for today" ≠ task completed
+- 🗓️ Daily plan: AI proposes an order (candidates ranked by priority/due/estimate), only your confirmation applies it; "done for today" ≠ task completed
 - 🎯 Pick Skill / model / persona before each AI session; prompt gets a "load these skills" instruction
 - ⏰ Due reminders (in-panel banner + system notification), optional WeChat channel via `@xmanrui/dsh-im`
 - 🔒 Local-only storage at `~/.dsh/workbench`

@@ -255,8 +255,6 @@ export interface WorkbenchSettings {
   defaultWorkspace: string
   autoCreateTypeFolders: boolean
   desktopNotify: boolean
-  /** 每天可投入时长（分钟），用于「今日容量」对比；缺省 390（6.5 小时） */
-  dailyCapacityMinutes: number
   /**
    * 快速录入（澄清）里「最近用过的工作区」路径，最新的在前（最多 5 条）。
    *
@@ -274,20 +272,20 @@ export interface WorkbenchSettings {
    */
   autoKnowledgeRecall: boolean
   /**
-   * 任务没填「预计耗时」时按多少分钟计入今日容量（缺省 30，夹 5–1440）。
+   * 任务没填「预计耗时」时按多少分钟当作它的投入（缺省 30，夹 5–1440）。
    *
-   * 为什么做成偏好而不是常量：容量读数直接受它影响，用户必须能看见并调整
-   * "系统凭什么替我估 30 分钟"；写死在代码里就变成了又一个不可解释的数字。
+   * 为什么做成偏好而不是常量：它是**当日候选与 AI 排序的兜底数字**，用户必须能看见
+   * 并调整"系统凭什么替我估 30 分钟"；写死在代码里就变成了又一个不可解释的数字。
    */
   defaultEstimateMinutes: number
   /**
-   * 「逾期的未完成任务」是否计入今日容量（缺省**关**）。
+   * 「逾期的未完成任务」是否列入当日候选（缺省**关**）。
    *
-   * 为什么默认关：逾期是历史欠账，混进"今天要做的事"会让读数失去意义。
+   * 为什么默认关：逾期是历史欠账，混进"今天要做的事"会让候选失去意义。
    * 但用户可能就是想看清"债主上门"的总量，所以给开关而不是写死。
-   * 开关状态与规则文案一起呈现（见 `CapacityRulePanel`），避免"数字变了但不知道谁改的"。
+   * 开关状态与候选列表同时呈现（见设置页的「今日候选」分区），避免"列表变了但不知道谁改的"。
    */
-  dailyCapacityIncludeOverdue: boolean
+  planIncludeOverdue: boolean
   /**
    * 外部角色目录（D11/§6.3）：可配置的一等角色来源，如 `（外部角色目录）`。
    *

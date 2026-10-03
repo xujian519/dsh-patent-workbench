@@ -195,7 +195,7 @@ export function PlanPanel({
   }, [measureOverflow, plan.items, plan.summary])
   /**
    * 计划数据无法解析：显式说出来，**不假装是一份空计划**。
-   * 容量那边同样会显示"不可计算"（同一个 `readable` 判定）。
+   * 候选池那边同样会显示"不可计算"（同一个 `readable` 判定）。
    */
   if (plan.readable === false) {
     return (

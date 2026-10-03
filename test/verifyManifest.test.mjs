@@ -243,7 +243,17 @@ test('AX-V01：仓库真实白名单自洽（每一条必需套件要么现役�
       assert.fail(`套房 ${entry.id} 的 status 不该是 ${entry.status}`)
     }
   }
-  assert.ok(manifest.deprecated.length >= 3, 'T2 标过时的三个 scripts/repro 脚本必须在作废清单里（保留不删）')
+  /**
+   * T2 曾把三个 `scripts/repro` 脚本标成过时（都是旧容量口径的产物）。
+   * 2026-10-03 容量功能整体删除（决策 4）后，其中两个**只为了旧容量口径而存在**，
+   * 已随功能一起删除（没有可保留的语义了）；只剩 `harness-real-browser.mjs`
+   * —— 它还带着**仍然现行**的知识库批，所以保留不删。
+   */
+  assert.deepEqual(manifest.deprecated.map((entry) => entry.path), ['scripts/repro/harness-real-browser.mjs'],
+    '作废清单只剩 harness（另外两条容量脚本已随容量功能删除）')
+  assert.ok(manifest.deprecated.every((entry) => typeof entry.reason === 'string' && entry.reason.length > 0), '每条作废登记必须写原因')
+  assert.ok(manifest.deprecated.every((entry) => !manifest.suites.some((suite) => suite.repoPath === entry.path)),
+    '作废脚本仍然禁止进任何执行链（不许同时出现在 suites 里）')
 
   const result = runCheck({ root: REPO })
   assert.equal(result.exitCode, 0, `仓库白名单必须自洽：${result.problems.join(' | ')}`)

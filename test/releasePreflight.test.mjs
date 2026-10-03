@@ -54,7 +54,7 @@ const REAL_PROBE_UNRELIABLE = `
   ✖ test\\modelPickerDegrade.test.mjs (41.1989ms)
 `
 
-/** 约定 B（capacity / listview）：成功时打印 `变异探针：N/M 条变异都变红`。 */
+/** 约定 B（历史上是 listview 等探针）：成功时打印 `变异探针：N/M 条变异都变红`。 */
 const REAL_PROBE_OK_CONVENTION_B = `
 基线 ok（全绿）
 
@@ -144,7 +144,7 @@ test('探针：有存活样本识别为不通过，并报出存活数', () => {
 })
 
 test('探针：**约定 B** 的汇总行（`变异探针：17/17 条变异都变红`）也要认出来', () => {
-  const p = parseProbeResult({ id: 'probe-listview-mutations', exitCode: 0, stdout: REAL_PROBE_OK_CONVENTION_B })
+  const p = parseProbeResult({ id: 'probe-knowledge-draft-overwrite-mutations', exitCode: 0, stdout: REAL_PROBE_OK_CONVENTION_B })
   assert.equal(p.caughtAll, true, '认不出约定 B 会把绿的判成红（第一次跑就踩了）')
   assert.equal(p.caught, 17)
   assert.equal(p.total, 17)
@@ -153,7 +153,7 @@ test('探针：**约定 B** 的汇总行（`变异探针：17/17 条变异都变
 
 test('探针：约定 B 的失败形态（N<M）→ 存活数 = 差', () => {
   const p = parseProbeResult({
-    id: 'probe-listview-mutations', exitCode: 1,
+    id: 'probe-knowledge-draft-overwrite-mutations', exitCode: 1,
     stdout: '变异探针：15/17 条变异都变红\n防线有洞：\n  - 某条 :: 仍然全绿 ✗\n',
   })
   assert.equal(p.caughtAll, false)
@@ -168,10 +168,10 @@ test('探针：完全不认识的输出 → 判不通过（宁可误报，不许
 })
 
 test('探针：失效（找不到替换片段）既不算通过，也不算"已知盲点"', () => {
-  const p = parseProbeResult({ id: 'probe-capacity-mutations', exitCode: 1, stdout: REAL_PROBE_STALE })
+  const p = parseProbeResult({ id: 'probe-knowledge-recall-mutations', exitCode: 1, stdout: REAL_PROBE_STALE })
   assert.equal(p.stale, true)
   assert.equal(p.caughtAll, false)
-  const v = judgeProbes([p], [{ probe: 'probe-capacity-mutations', reason: '登记过的盲点' }])
+  const v = judgeProbes([p], [{ probe: 'probe-knowledge-recall-mutations', reason: '登记过的盲点' }])
   assert.equal(v.ok, false, '探针失效说明门禁不在工作，不能靠"登记过盲点"放过')
   assert.match(v.failures.join('\n'), /必须先修探针/)
 })
@@ -189,19 +189,19 @@ test('探针：一个都没跑 ⇒ 失败', () => {
 })
 
 test('探针：登记过的盲点仍然存活 → 作为欠账放过；出现新盲点 → 失败', () => {
-  const known = parseProbeResult({ id: 'probe-capacity-mutations', exitCode: 1, stdout: REAL_PROBE_SURVIVORS })
+  const known = parseProbeResult({ id: 'probe-knowledge-recall-mutations', exitCode: 1, stdout: REAL_PROBE_SURVIVORS })
   const fresh = parseProbeResult({ id: 'probe-brand-new', exitCode: 1, stdout: REAL_PROBE_SURVIVORS })
-  const ok = judgeProbes([known], [{ probe: 'probe-capacity-mutations', reason: 'M19 存活' }])
+  const ok = judgeProbes([known], [{ probe: 'probe-knowledge-recall-mutations', reason: '登记过的存活变异' }])
   assert.equal(ok.ok, true)
   assert.equal(ok.debts.length, 1)
-  const bad = judgeProbes([known, fresh], [{ probe: 'probe-capacity-mutations', reason: 'M19 存活' }])
+  const bad = judgeProbes([known, fresh], [{ probe: 'probe-knowledge-recall-mutations', reason: '登记过的存活变异' }])
   assert.equal(bad.ok, false)
   assert.match(bad.failures.join('\n'), /probe-brand-new/)
 })
 
 test('探针：登记过的盲点这次全红了 → 失败（请把名单删掉）', () => {
-  const p = parseProbeResult({ id: 'probe-capacity-mutations', exitCode: 0, stdout: REAL_PROBE_OK })
-  const v = judgeProbes([p], [{ probe: 'probe-capacity-mutations', reason: 'M19 存活' }])
+  const p = parseProbeResult({ id: 'probe-knowledge-recall-mutations', exitCode: 0, stdout: REAL_PROBE_OK })
+  const v = judgeProbes([p], [{ probe: 'probe-knowledge-recall-mutations', reason: '登记过的存活变异' }])
   assert.equal(v.ok, false)
   assert.match(v.failures.join('\n'), /盲点已消除/)
 })

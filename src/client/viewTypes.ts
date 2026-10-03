@@ -49,7 +49,7 @@ export interface Task {
 export interface DailyPlanItemView { taskId: string; order: number; title: string; note: string; minutes?: number; effortDone?: boolean; taskStatusCode?: string }
 /**
  * 一份每日计划。`readable=false` 表示 `items_json` 整体无法解析：
- * 容量必须显示"不可计算"而不是 0，界面也不得假装这份计划可用（requirements §4.2/§5.2）。
+ * 读不出计划项时必须显示"不可计算"而不是 0，界面也不得假装这份计划可用（requirements §4.2/§5.2）。
  */
 export interface DailyPlanView {
   id: string

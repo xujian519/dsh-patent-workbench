@@ -145,7 +145,7 @@ export function PersonaAdmin({ saving }: { saving: boolean }): JSX.Element {
                   {/**
                     * 来源标签**只留来源**，不再重复分组名：
                     * 分组名已经在上面那个章节标题里了，行内再写一遍是同一事实的第二处展示
-                    * （与容量区那段被删掉的"已排…"提示是同一个道理）。
+                    * （与本页那段被删掉的读数提示是同一个道理）。
                     */}
                   <div className="wb-persona-source">{personaSourceLabel(persona.source)}</div>
                 </div>

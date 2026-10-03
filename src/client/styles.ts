@@ -39,7 +39,7 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
       点击直接穿透到 DSH 侧栏；同时从 --wb-sidebar-w（运行时量出的侧栏宽度）开始铺，
       视觉上也不压住侧栏。改造前的覆盖层贴在会话列里，左侧栏一直是可用的。
    2. **开合只切 display，不卸载组件** —— 草稿弹框要跨页面常驻，
-      依赖 useEffect 拉数据的区块（今日容量）也不能被反复重建。 */
+      依赖 useEffect 拉数据的区块也不能被反复重建。 */
 .wb-panel-host {
   /* 左边界 = 运行时量出的侧栏宽度（--wb-sidebar-w，见 index.tsx 的 syncSidebarWidth）。
      ⚠️ 兜底值**不能是 0**（v1.14.54 真实事故）：一旦量宽失败，left: 0 会让面板从视口
@@ -774,124 +774,6 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 [data-dsh-personal-workbench-view] .wb-stat b { font-size: 24px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 [data-dsh-personal-workbench-view] .wb-stat span { font-size: 11.5px; }
 
-/* 今日容量条（新增元素：把"今天投得进多少时间"显式化） */
-[data-dsh-personal-workbench-view] .wb-cap {
-  border: 1px solid var(--wb-line); border-radius: var(--wb-r-2); background: var(--wb-surface);
-  box-shadow: var(--wb-sh-1); padding: 13px 14px; margin-bottom: 12px;
-}
-[data-dsh-personal-workbench-view] .wb-cap-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
-[data-dsh-personal-workbench-view] .wb-cap-head h3 { margin: 0; font-size: 12.5px; font-weight: 650; }
-[data-dsh-personal-workbench-view] .wb-cap-meta {
-  margin-left: auto; display: flex; gap: 12px; font-size: 11.5px; color: var(--wb-ink-3);
-  font-variant-numeric: tabular-nums;
-}
-[data-dsh-personal-workbench-view] .wb-cap-meta b { color: var(--wb-ink-1); font-weight: 650; }
-[data-dsh-personal-workbench-view] .wb-cap-edit { border-bottom: 1px dashed var(--wb-line); cursor: pointer; }
-[data-dsh-personal-workbench-view] .wb-cap-bar {
-  display: flex; gap: 2px; height: 9px; border-radius: 999px; overflow: hidden;
-  background: color-mix(in srgb, var(--wb-ink-1) 9%, transparent);
-}
-[data-dsh-personal-workbench-view] .wb-cap-bar i { display: block; height: 100%; border-radius: 2px; }
-[data-dsh-personal-workbench-view] .wb-cap-bar i.p0 { background: var(--wb-p0); }
-[data-dsh-personal-workbench-view] .wb-cap-bar i.p1 { background: var(--wb-p1); }
-[data-dsh-personal-workbench-view] .wb-cap-bar i.p2 { background: var(--wb-p2); }
-[data-dsh-personal-workbench-view] .wb-cap-bar i.p3 { background: var(--wb-p3); }
-[data-dsh-personal-workbench-view] .wb-cap-bar i.free { background: color-mix(in srgb, var(--wb-ok) 36%, transparent); }
-[data-dsh-personal-workbench-view] .wb-cap-legend { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 11.5px; color: var(--wb-ink-2); flex-wrap: wrap; }
-[data-dsh-personal-workbench-view] .wb-cap-legend span { display: inline-flex; align-items: center; gap: 5px; }
-[data-dsh-personal-workbench-view] .wb-cap-legend i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
-[data-dsh-personal-workbench-view] .wb-cap-legend b { color: var(--wb-ink-1); font-weight: 650; font-variant-numeric: tabular-nums; }
-
-/* ── 今日容量：规则与账本（v1.15.1）──────────────────────────────────────────
-   目标：用户看到的每个数字都能在账本里找到出处，且规则写在界面上而不是只写在代码里。
-   小屏可滚动（不挤坏上面的容量条 —— 布局类缺陷由 harness 的像素断言守）。 */
-[data-dsh-personal-workbench-view] .wb-cap-rule { margin-top: 10px; border-top: 1px dashed var(--wb-line); padding-top: 8px; }
-[data-dsh-personal-workbench-view] .wb-cap-rule-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-[data-dsh-personal-workbench-view] .wb-cap-rule-toggle {
-  background: none; border: 1px solid var(--wb-line); border-radius: var(--wb-r-1, 6px);
-  color: var(--wb-ink-2); font: inherit; font-size: 11.5px; padding: 2px 8px; cursor: pointer; flex: none;
-  /* 两态等宽：内容是固定的「箭头 + 规则」，宽度不随开合变化 */
-  display: inline-flex; align-items: center; gap: 3px;
-}
-[data-dsh-personal-workbench-view] .wb-cap-rule-toggle:hover { color: var(--wb-ink-1); border-color: var(--wb-ink-3); }
-/* 箭头按展开态旋转：
-   Icon name="chevron" 的字形是**左向**（‹），所以折叠态先转 -90° 变成"下"（⌄），
-   展开态再转 +90° 变成"上"（⌃）。两态之间正好差 180°，且**字形与占位都不变**，
-   按钮盒子尺寸因此逐像素一致。 */
-[data-dsh-personal-workbench-view] .wb-cap-rule-arrow { display: inline-flex; transform: rotate(-90deg); transition: transform .15s ease; }
-[data-dsh-personal-workbench-view] .wb-cap-rule[data-cap-expanded='1'] .wb-cap-rule-arrow { transform: rotate(90deg); }
-
-/**
- * 内联模式：把「规则」块**拆开**——头部那个开关留在容量图例那一行，展开体拿到全宽下方。
- *
- * 'display: contents' 让 '.wb-cap-rule' 这个壳不生成盒子，它的两个孩子直接成为图例 flex 行的成员：
- * 头部（含开关）就落在图例行里，展开体（'flex-basis:100%'）被挤到下一行、横跨整幅宽度。
- * 这比"把整块塞进图例行"正确得多：早期版本一展开，长内容全挤在那条窄行里，
- * 连带把开关推来推去（用户原话："打开、收起规则的按钮还不在同一个位置"）。
- */
-[data-dsh-personal-workbench-view] .wb-cap-legend {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  font-size: 11.5px; color: var(--wb-ink-2); font-variant-numeric: tabular-nums;
-}
-[data-dsh-personal-workbench-view] .wb-cap-legend .wb-cap-legend-item { display: inline-flex; align-items: center; gap: 4px; }
-/**
- * 展开时图例项**保留占位、只是看不见**（visibility:hidden，不是 display:none）。
- *
- * 为什么不能用 display:none：那样整行会变窄，右推的按钮就**从右端滑到左端**
- * （2026-10-01 实测：折叠态按钮 x=593，展开态变成 x=313 —— 正是用户说的
- * "打开、收起规则的按钮不在同一个位置"）。保留占位后按钮横向位置一个像素都不动。
- * 语义上也没问题：图例是"容量条的分段说明"，展开规则时把它视觉上让位即可。
- */
-[data-dsh-personal-workbench-view] .wb-cap-legend[data-cap-expanded='1'] .wb-cap-legend-item { visibility: hidden; }
-[data-dsh-personal-workbench-view] .wb-cap-legend .wb-cap-rule { display: contents; margin: 0; border: 0; padding: 0; }
-[data-dsh-personal-workbench-view] .wb-cap-legend .wb-cap-rule-sum { display: none; }
-/* 按钮永远贴在**右端**：两态（含展开态图例项被让位）位置都一致 */
-[data-dsh-personal-workbench-view] .wb-cap-legend .wb-cap-rule-head { display: inline-flex; align-items: center; gap: 0; flex: none; margin-left: auto; }
-[data-dsh-personal-workbench-view] .wb-cap-legend .wb-cap-rule-body { flex-basis: 100%; margin-top: 6px; }
-[data-dsh-personal-workbench-view] .wb-cap-rule-sum { font-size: 11.5px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
-[data-dsh-personal-workbench-view] .wb-cap-rule-sum b { color: var(--wb-ink-1); font-weight: 650; }
-[data-dsh-personal-workbench-view] .wb-cap-rule-body { margin-top: 9px; display: flex; flex-direction: column; gap: 10px; }
-[data-dsh-personal-workbench-view] .wb-cap-rules {
-  margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.75; color: var(--wb-ink-2);
-}
-[data-dsh-personal-workbench-view] .wb-cap-rules b { color: var(--wb-ink-1); font-weight: 650; }
-[data-dsh-personal-workbench-view] .wb-cap-audit-wrap, [data-dsh-personal-workbench-view] .wb-cap-overdue, [data-dsh-personal-workbench-view] .wb-cap-unscheduled {
-  border: 1px solid var(--wb-line); border-radius: var(--wb-r-2); overflow: hidden;
-}
-[data-dsh-personal-workbench-view] .wb-cap-audit-title, [data-dsh-personal-workbench-view] .wb-cap-overdue-head {
-  font-size: 11.5px; font-weight: 650; color: var(--wb-ink-2);
-  padding: 7px 10px; background: color-mix(in srgb, var(--wb-ink-1) 4%, transparent);
-}
-[data-dsh-personal-workbench-view] .wb-cap-overdue-head b { color: var(--wb-warn, #d9a03f); font-weight: 650; }
-[data-dsh-personal-workbench-view] .wb-cap-audit-empty { font-size: 11.5px; color: var(--wb-ink-3); padding: 9px 10px; }
-[data-dsh-personal-workbench-view] .wb-cap-audit { width: 100%; border-collapse: collapse; font-size: 11.5px; }
-[data-dsh-personal-workbench-view] .wb-cap-audit th {
-  text-align: left; font-weight: 600; color: var(--wb-ink-3); padding: 5px 10px;
-  border-bottom: 1px solid var(--wb-line);
-}
-[data-dsh-personal-workbench-view] .wb-cap-audit td { padding: 5px 10px; border-bottom: 1px solid color-mix(in srgb, var(--wb-line) 60%, transparent); vertical-align: top; }
-[data-dsh-personal-workbench-view] .wb-cap-audit tr:last-child td { border-bottom: none; }
-[data-dsh-personal-workbench-view] .wb-cap-audit td.t { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-[data-dsh-personal-workbench-view] .wb-cap-audit td.p, [data-dsh-personal-workbench-view] .wb-cap-audit td.m { font-variant-numeric: tabular-nums; white-space: nowrap; }
-[data-dsh-personal-workbench-view] .wb-cap-audit td.s { display: flex; flex-wrap: wrap; gap: 4px; }
-[data-dsh-personal-workbench-view] .wb-cap-audit .tag {
-  font-size: 10.5px; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
-  border: 1px solid var(--wb-line); color: var(--wb-ink-3);
-}
-[data-dsh-personal-workbench-view] .wb-cap-audit-total {
-  font-size: 11.5px; font-weight: 650; color: var(--wb-ink-1);
-  padding: 7px 10px; border-top: 1px solid var(--wb-line);
-  background: color-mix(in srgb, var(--wb-ink-1) 4%, transparent);
-}
-[data-dsh-personal-workbench-view] .wb-cap-switch {
-  display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--wb-ink-2); cursor: pointer;
-}
-[data-dsh-personal-workbench-view] .wb-cap-switch input { flex: none; }
-[data-dsh-personal-workbench-view] .wb-cap-switch .hint {
-  width: 15px; height: 15px; border-radius: 999px; border: 1px solid var(--wb-line);
-  display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: var(--wb-ink-3); cursor: help;
-}
-[data-dsh-personal-workbench-view] .wb-cap-foot { font-size: 11px; color: var(--wb-ink-3); }
 
 /* 卡片 / 列表 / 计划：统一边框强度与阴影，行分割线改发丝 */
 [data-dsh-personal-workbench-view] .wb-card {

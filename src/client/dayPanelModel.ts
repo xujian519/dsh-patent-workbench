@@ -17,7 +17,7 @@
  *   **不在这里再写一遍过滤公式**。
  */
 import { useCallback, useMemo } from 'react'
-import { capacityDayRange } from './capacity.js'
+import { planDayRange } from './dailyPlanCandidates.js'
 import { buildTaskTree, filterTaskTree, type TaskTreeNode } from './taskFilterSort.js'
 import { sameDay } from './format.js'
 import {
@@ -124,9 +124,9 @@ export function useDayPanelModel(input: DayPanelModelInput): DayPanelModel {
     () => dayPanelTabMembers({
       tasks,
       planItems: (plan?.items ?? []).map((item) => ({ taskId: item.taskId })),
-      ...capacityDayRange(isTodayView ? todayDate : pickedDate),
+      ...planDayRange(isTodayView ? todayDate : pickedDate),
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 用日键代替 Date（同 capacityTodayKey 的做法）
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 用日键代替 Date（同 planDayKey 的做法）
     [tasks, plan, day],
   )
   const plannedIds = useMemo(() => new Set(members.plan.map((entry) => entry.taskId)), [members])

@@ -3,7 +3,7 @@
  *
  * 判据（B 层：真实鼠标 + DOM 重读 + 截图）：
  * - AX-T03：从「今日」进入与从「日历选中今天」进入得到**同一个面板** ——
- *   同一组页签（计划/逾期/未排期/已完成/报告）、同一批行（标题 + 来源徽标逐一相同）；
+ *   同一组页签（计划/逾期/未排期/已完成）、同一批行（标题 + 来源徽标逐一相同）；
  * - AX-T04：逐条标来源（每行都有 `[data-task-source]`，取值只可能是到期/计划/进行中的组合）；
  * - AX-T05：旧口径的补丁文案「另有 N 个进行中任务未设置截止时间，暂列今天」**不再出现**，
  *   而「已完成」页签在**今日**视图里也拿得到（这是收敛带来的收益，原需求 #5）。
@@ -62,7 +62,6 @@ const READ_PANEL = `
     rows,
     legacyNote: document.body.innerText.includes('暂列今天'),
     statsCard: document.querySelector('.wb-stats') !== null,
-    capCard: document.querySelector('.wb-cap') !== null,
   };
 `
 
@@ -86,22 +85,22 @@ try {
   await waitFor(async () => (await browser.evaluate(`return document.querySelector('[data-day-tabs]') !== null;`)) === true,
     { timeoutMs: 12000, description: '今日视图的日期面板页签' }).catch(() => undefined)
   const today = await browser.evaluate(READ_PANEL)
-  report.today = { hasTabs: today.hasTabs, tabs: today.tabs, rowCount: today.rows.length, statsCard: today.statsCard, capCard: today.capCard }
+  report.today = { hasTabs: today.hasTabs, tabs: today.tabs, rowCount: today.rows.length, statsCard: today.statsCard }
   suite.note(`今日面板：${JSON.stringify(report.today)}`)
   await browser.screenshot(`${suite.dir}/01-今日面板.png`)
 
   suite.check({
-    id: '今日有日期面板的五个任务页签（计划 / 逾期 / 未排期 / 已完成 / 报告）—— 原需求 #5 的「已完成页签」由此获得',
+    id: '今日有日期面板的四个任务页签（计划 / 逾期 / 未排期 / 已完成）—— 原需求 #5 的「已完成页签」由此获得',
     axId: 'AX-T03', layer: 'B',
-    ok: today.hasTabs === true && today.tabs.length === 5
-      && ['计划', '逾期', '未排期', '已完成', '报告'].every((label) => today.tabs.some((t) => t.includes(label))),
+    ok: today.hasTabs === true && today.tabs.length === 4
+      && ['计划', '逾期', '未排期', '已完成'].every((label) => today.tabs.some((t) => t.includes(label))),
     detail: `tabs=${JSON.stringify(today.tabs)}`,
   })
   suite.check({
-    id: '今日独有的统计卡与容量条仍在（收敛后今日只是该面板的 today 实例）',
+    id: '今日独有的统计卡仍在（收敛后今日只是该面板的 today 实例）',
     axId: 'AX-T03', layer: 'B',
-    ok: today.statsCard === true && today.capCard === true,
-    detail: `stats=${today.statsCard} cap=${today.capCard}`,
+    ok: today.statsCard === true,
+    detail: `stats=${today.statsCard}`,
   })
   suite.check({
     id: '旧口径的补丁文案「另有 N 个进行中任务…暂列今天」已删（该来源已进口径）',
@@ -206,7 +205,7 @@ try {
   await waitFor(async () => (await browser.evaluate(`return document.querySelector('[data-day-tabs]') !== null;`)) === true,
     { timeoutMs: 12000, description: '日历视图的日期面板页签' }).catch(() => undefined)
   const cal = await browser.evaluate(READ_PANEL)
-  report.calendar = { hasTabs: cal.hasTabs, tabs: cal.tabs, rowCount: cal.rows.length, statsCard: cal.statsCard, capCard: cal.capCard }
+  report.calendar = { hasTabs: cal.hasTabs, tabs: cal.tabs, rowCount: cal.rows.length, statsCard: cal.statsCard }
   suite.note(`日历面板（选中今天）：${JSON.stringify(report.calendar)}`)
   await browser.screenshot(`${suite.dir}/02-日历选中今天.png`)
 
@@ -219,10 +218,10 @@ try {
     detail: `tabs相同=${sameTabs} 行相同=${sameRows} 今日${today.rows.length}行 / 日历${cal.rows.length}行`,
   })
   suite.check({
-    id: '日历视图不带今日独有的两张卡（统计/容量属于今日实例）',
+    id: '日历视图不带今日独有的统计卡（它属于今日实例）',
     axId: 'AX-T03', layer: 'B',
-    ok: cal.statsCard === false && cal.capCard === false,
-    detail: `stats=${cal.statsCard} cap=${cal.capCard}`,
+    ok: cal.statsCard === false,
+    detail: `stats=${cal.statsCard}`,
   })
   await browser.screenshot(`${suite.dir}/03-并排依据.png`)
 
@@ -268,7 +267,7 @@ try {
     id: '过去日期：不显示「逾期」/「未排期」，页签兜底到「计划」（state 停在逾期也不许假空）',
     axId: 'AX-T03', layer: 'B',
     ok: pastHow !== null && pastState.tabs.length === 3
-      && pastState.tabs.every((t) => ['计划', '已完成', '报告'].includes(t.label))
+      && pastState.tabs.every((t) => ['计划', '已完成'].includes(t.label))
       && pastState.active === 'plan',
     detail: JSON.stringify(report.pastDay),
   })

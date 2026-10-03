@@ -4,7 +4,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 20
+export const SCHEMA_VERSION = 21
 
 export interface Migration {
   version: number
@@ -521,7 +521,7 @@ export const MIGRATIONS: Migration[] = [
        *    未知 taskId 的项照样保留（只补 minutes，不定标题）。
        * 3. **坏数据不猜不删**：`items_json` 不是 JSON / 不是数组 / 项不是对象时，
        *    **原串一个字节都不动**，并输出一条带 `planDate` 的诊断（进度链路的
-       *    `GET /plans` 与容量读取会据此报「计划数据无法解析」而不是假装 0）。
+       *    `GET /plans` 与候选池会据此报「计划数据无法解析」而不是假装 0）。
        */
       db.exec(`ALTER TABLE tasks ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0 CHECK(progress_percent BETWEEN 0 AND 99)`)
 
@@ -596,7 +596,7 @@ export const MIGRATIONS: Migration[] = [
        *
        * 背景（决策 1，见 docs/design/2026-10-03-patent-workbench-redesign.md）：
        * 2026-09-03 的集成用"案件 = 根任务、L1–L5 = 子任务"表达案卷（bridge 工具
-       * workbench_link_patent_case），但任务语义（今日/容量/优先级/重复）不适配案卷，
+       * workbench_link_patent_case），但任务语义（今日/优先级/重复）不适配案卷，
        * 且案卷有大量专属字段（申请号/公开号/申请日/优先权/技术领域/IPC/代理师…）。
        * 现改为 matters 一等实体，bridge 降级为 `_matter-log.md` → `matter_events` 的只读投影。
        *
@@ -740,6 +740,31 @@ export const MIGRATIONS: Migration[] = [
           insert.run(kind, code, name, JSON.stringify({ color }), (index + 1) * 10, at, at)
         })
       }
+    },
+  },
+  {
+    version: 21,
+    name: 'drop-capacity-meta',
+    up(db) {
+      /**
+       * 专利工作台阶段 4：容量功能删除（决策 4，见
+       * docs/design/2026-10-03-patent-workbench-redesign.md）。
+       *
+       * 本迁移只处理 **meta 键**，碰不到任何表结构（点子/容量的 DROP TABLE 在下一个迁移）：
+       *
+       * 1. `daily_capacity_include_overdue` → `plan_include_overdue`。
+       *    这个开关本身**留下来了** —— 它的真实语义是"逾期任务要不要进当日候选池"，
+       *    保留的日报计划（AI 智能排序、手动添加）都在用它，只是旧名字里的 capacity
+       *    随功能消失了。改名而不是丢弃，是为了**保住用户的选择**：直接 DELETE 会让
+       *    开关静默回到缺省 false，用户看到的是"我的设置自己变回去了"。
+       *    用 `OR REPLACE` 是为了幂等 + 两个键同时存在时不因 UNIQUE 冲突而整个迁移报错
+       *    （未出现过的前提下两者只会有一个）。
+       *
+       * 2. `daily_capacity_minutes`（每天可投入时长，缺省 390）
+       *    —— 随「今日容量」读数一起消失，已没有任何读取方，直接删。
+       */
+      db.prepare("UPDATE OR REPLACE meta SET key = 'plan_include_overdue' WHERE key = 'daily_capacity_include_overdue'").run()
+      db.prepare("DELETE FROM meta WHERE key = 'daily_capacity_minutes'").run()
     },
   },
 ]

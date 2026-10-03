@@ -9,7 +9,12 @@
  * 证据分层（与 acceptance.md 一致）：
  * - 仓储层（真 SQLite，`:memory:`）：草稿确认 / 全量编辑 / 原子追加 / 项级更新；
  * - HTTP 层（真 server + fetch）：路由语义（404 vs 400、过去只读、未来不得结束）；
- * - 容量层：读回的 minutes 快照与 `computeCapacityLedger` 一致（**证明容量真从计划派生**）。
+ * - 计划层：读回的 minutes 快照直接来自持久化计划项（**证明"投入"是真存在计划里的**）。
+ *
+ *   2026-10-03 更新：原先这一层是"跑 `computeCapacityLedger` 取 `planned`"。
+ *   容量账本已按决策 4 整体删除（见 docs/design/2026-10-03-patent-workbench-redesign.md），
+ *   于是改成**直读计划项并求和** —— 这些测试要证的本来就是"计划项被真持久化了"，
+ *   直读比再过一层账本少一个间接层，判据没放宽。
  *
  * ⚠️ **每个测试都开一份全新的内存库**（不是共用一份）：计划是按日期唯一的，
  * 共用库会让"今天"这个日期在多个测试间互相污染 —— 那正是最难查的一类假失败。
@@ -28,7 +33,7 @@ import {
   addDailyPlanItem, confirmDailyPlanDraft, createDraft, createTask, deleteDailyPlan, getDailyPlan,
   localDateString, updateDailyPlan, updateDailyPlanItem, updateTask,
 } from '../lib/db/repo.js'
-import { computeCapacityLedger } from '../lib/shared/dailyPlanPolicy.js'
+import { planCandidates } from '../lib/shared/dailyPlanPolicy.js'
 
 const iso = (d) => d.toISOString()
 const today = () => localDateString()
@@ -51,7 +56,7 @@ const dayRange = (date) => {
 }
 
 /**
- * 每个测试一份隔离环境：内存库 + 真 HTTP server + 便捷的 `request` / `ledger`。
+ * 每个测试一份隔离环境：内存库 + 真 HTTP server + 便捷的 `request` / 计划读取口。
  * `withEnv` 在 finally 里关服务与库（不留下句柄，也就不会出现"临时目录删不掉"）。
  */
 async function withEnv(fn) {
@@ -84,34 +89,35 @@ async function withEnv(fn) {
     return { status: res.status, body: text === '' ? null : JSON.parse(text) }
   }
   const newTask = (title, extra = {}) => createTask(db, { title, typeCode: 'code_impl', priorityCode: 'p2', ...extra })
-  const ledgerFor = (date) => {
+  /** 任务行 → 候选判定要的形状（`effectiveDueAt` 直接取 `due_at`：这里不测继承）。 */
+  const taskRefs = () => db.prepare('SELECT id, parent_id, title, status_code, priority_code, due_at, estimated_minutes, archived, created_at FROM tasks').all().map((row) => ({
+    id: row.id,
+    parentId: row.parent_id,
+    title: row.title,
+    statusCode: row.status_code,
+    priorityCode: row.priority_code,
+    effectiveDueAt: row.due_at,
+    estimatedMinutes: row.estimated_minutes,
+    archived: row.archived === 1,
+    createdAt: row.created_at,
+  }))
+  /** 该日的计划项（**直读持久化快照**，不经过任何派生层）。 */
+  const planItemsFor = (date) => {
     const plan = getDailyPlan(db, date)
-    const rows = db.prepare('SELECT id, parent_id, title, status_code, priority_code, due_at, estimated_minutes, archived, created_at FROM tasks').all()
-    return computeCapacityLedger({
-      tasks: rows.map((row) => ({
-        id: row.id,
-        parentId: row.parent_id,
-        title: row.title,
-        statusCode: row.status_code,
-        priorityCode: row.priority_code,
-        effectiveDueAt: row.due_at,
-        estimatedMinutes: row.estimated_minutes,
-        archived: row.archived === 1,
-        createdAt: row.created_at,
-      })),
-      planItems: (plan?.items ?? []).map((item) => ({ taskId: item.taskId, order: item.order, title: item.title, minutes: item.minutes, effortDone: item.effortDone })),
-      planExists: plan !== undefined,
-      planReadable: plan?.readable !== false,
-      reason: plan?.diagnostics[0] ?? null,
-      sourceCode: plan?.sourceCode ?? null,
-      dailyCapacityMinutes: 390,
-      defaultEstimateMinutes: 30,
-      includeOverdue: true,
-      ...dayRange(date),
-    })
+    return { plan, items: plan?.items ?? [], readable: plan?.readable !== false, reason: plan?.diagnostics?.[0] ?? null }
   }
+  /** 该日「已投入分钟」= 计划项 minutes 之和（计划项是唯一权威源）。 */
+  const plannedMinutesFor = (date) => planItemsFor(date).items.reduce((sum, item) => sum + (item.minutes ?? 0), 0)
+  /** 该日候选（唯一实现 = 共享模块 `planCandidates`）。 */
+  const candidatesFor = (date) => planCandidates({
+    tasks: taskRefs(),
+    planItems: planItemsFor(date).items.map((item) => ({ taskId: item.taskId, order: item.order, minutes: item.minutes })),
+    includeOverdue: true,
+    defaultEstimateMinutes: 30,
+    ...dayRange(date),
+  })
   try {
-    await fn({ db, request, newTask, ledgerFor })
+    await fn({ db, request, newTask, planItemsFor, plannedMinutesFor, candidatesFor })
   } finally {
     server.close()
     db.close()
@@ -385,11 +391,11 @@ test('AX-D06 PATCH 项级：404 与 400 分清；未来不得结束；过去只�
 })
 
 // ---------------------------------------------------------------------------
-// CP2：合成长任务的完整闭环 + 容量核对
+// CP2：合成长任务的完整闭环 + 计划投入核对
 // ---------------------------------------------------------------------------
 
-test('CP2 合成长任务闭环：结束投入后仍 doing、进度原值、容量仍 90、刷新保留、明天新项 false', async () => {
-  await withEnv(async ({ db, request, newTask, ledgerFor }) => {
+test('CP2 合成长任务闭环：结束投入后仍 doing、进度原值、投入仍 90、刷新保留、明天新项 false', async () => {
+  await withEnv(async ({ db, request, newTask, planItemsFor, plannedMinutesFor }) => {
     const long = newTask('合成：估时 600 / 未来 5 天截止', { statusCode: 'doing', estimatedMinutes: 600, dueAt: inDays(5), priorityCode: 'p1' })
     updateTask(db, long.id, { progressPercent: 40 })
     const date = today()
@@ -414,12 +420,11 @@ test('CP2 合成长任务闭环：结束投入后仍 doing、进度原值、容�
     assert.deepEqual(after, before)
     assert.equal(after.progress_percent, 40)
 
-    // 容量仍计 90（历史投入不自动减；结束不改变已排）
-    const ledgerToday = ledgerFor(date)
-    assert.equal(ledgerToday.planned, 90)
-    assert.equal(ledgerToday.doneMinutes, 90)
-    assert.equal(ledgerToday.plannedItems[0].minutes, 90)
-    assert.equal(ledgerToday.free, 300)
+    // 计划项仍记 90（历史投入不自动减；结束只翻 effortDone，不改变 minutes）
+    assert.equal(plannedMinutesFor(date), 90)
+    const itemsToday = planItemsFor(date).items
+    assert.equal(itemsToday[0].minutes, 90)
+    assert.equal(itemsToday[0].effortDone, true)
 
     // 明天同任务新项 = false、minutes 按明天的建议（不是把今天的 90 搬过去）
     const dateTomorrow = tomorrow()
@@ -427,8 +432,8 @@ test('CP2 合成长任务闭环：结束投入后仍 doing、进度原值、容�
     assert.equal(tomorrowAdd.status, 200)
     assert.equal(tomorrowAdd.body.plan.items[0].effortDone, false)
     assert.equal(tomorrowAdd.body.plan.items[0].minutes, 600, '明天取该任务当前估时快照')
-    assert.equal(ledgerFor(dateTomorrow).planned, 600, '跨日的已排各自独立')
-    assert.equal(ledgerFor(date).planned, 90, '今天那份不受明天影响')
+    assert.equal(plannedMinutesFor(dateTomorrow), 600, '跨日的计划项各自独立')
+    assert.equal(plannedMinutesFor(date), 90, '今天那份不受明天影响')
   })
 })
 
@@ -463,55 +468,57 @@ test('重新打开已完成的任务：该日 effortDone 不被自动重置', as
   })
 })
 
-test('容量只能从持久化计划派生：把计划 JSON 改成坏串 → readable=false 且不给假 0', async () => {
-  await withEnv(async ({ db, request, newTask, ledgerFor }) => {
+test('投入只能从持久化计划读：把计划 JSON 改成坏串 → readable=false 且不给假 0', async () => {
+  await withEnv(async ({ db, request, newTask, planItemsFor, plannedMinutesFor }) => {
     const date = today()
     const task = newTask('坏计划探针')
     await request('POST', `/api/workbench/plans/${date}/items`, { taskId: task.id, minutes: 30 })
-    assert.equal(ledgerFor(date).planned, 30)
+    assert.equal(plannedMinutesFor(date), 30)
     const backup = db.prepare('SELECT items_json FROM daily_plans WHERE plan_date = ?').get(date).items_json
     db.prepare('UPDATE daily_plans SET items_json = ? WHERE plan_date = ?').run('{oops', date)
-    const ledger = ledgerFor(date)
-    assert.equal(ledger.readable, false)
-    assert.equal(ledger.planned, 0)
-    assert.match(ledger.reason ?? '', /不是合法 JSON/)
+    const broken = planItemsFor(date)
+    assert.equal(broken.readable, false)
+    assert.equal(broken.items.length, 0)
+    assert.equal(plannedMinutesFor(date), 0)
+    assert.match(broken.reason ?? '', /不是合法 JSON/)
     assert.equal(db.prepare('SELECT items_json FROM daily_plans WHERE plan_date = ?').get(date).items_json, '{oops', '原串一个字节不动')
     db.prepare('UPDATE daily_plans SET items_json = ? WHERE plan_date = ?').run(backup, date)
-    assert.equal(ledgerFor(date).planned, 30, '修好之后必须恢复可算')
+    assert.equal(plannedMinutesFor(date), 30, '修好之后必须恢复可算')
   })
 })
 
-test('计划全量清空（DELETE）后已排归零，候选区照常可见', async () => {
-  await withEnv(async ({ db, request, newTask, ledgerFor }) => {
+test('计划全量清空（DELETE）后投入归零，候选区照常可见', async () => {
+  await withEnv(async ({ db, request, newTask, plannedMinutesFor, candidatesFor }) => {
     const date = today()
     // 用 doing 任务：无截止且 todo 的**不是候选**（需求 §5.1 的候选口径），
     // 所以这里必须挑一条真正会进候选的任务来验"清空后候选还在"。
     const task = newTask('清空前排入', { statusCode: 'doing', estimatedMinutes: 45 })
     await request('POST', `/api/workbench/plans/${date}/items`, { taskId: task.id, minutes: 45 })
-    assert.equal(ledgerFor(date).planned, 45)
+    assert.equal(plannedMinutesFor(date), 45)
     assert.equal(deleteDailyPlan(db, date), true)
-    const ledger = ledgerFor(date)
-    assert.equal(ledger.planned, 0)
-    assert.equal(ledger.unscheduledCount, 1, '无计划也要看得到候选')
-    assert.equal(ledger.unscheduled[0].suggestedMinutes, 45)
-    assert.equal(ledger.free, 390)
+    assert.equal(plannedMinutesFor(date), 0)
+    const after = candidatesFor(date)
+    assert.equal(after.candidates.length, 1, '无计划也要看得到候选')
+    assert.equal(after.candidates[0].suggestedMinutes, 45)
   })
 })
 
 test('无截止且不在推进的 todo 不是候选（需求 §5.1 四条候选条件的直接断言）', async () => {
-  await withEnv(async ({ request, newTask, ledgerFor }) => {
+  await withEnv(async ({ request, newTask, plannedMinutesFor, candidatesFor }) => {
     const date = today()
     const plainTodo = newTask('无截止的待办', { estimatedMinutes: 45 })
-    const ledger = ledgerFor(date)
-    assert.equal(ledger.unscheduledCount, 0, '无截止 + todo → 不进候选（也不许静默当成"今天该做"）')
+    assert.equal(candidatesFor(date).candidates.length, 0, '无截止 + todo → 不进候选（也不许静默当成"今天该做"）')
     // 设成 doing 之后立刻可见（不靠 AI 改状态，是用户自己改的）
     const doing = newTask('改成推进中', { statusCode: 'doing', estimatedMinutes: 45 })
-    const afterDoing = ledgerFor(date)
-    assert.deepEqual(afterDoing.unscheduled.map((row) => row.taskId), [doing.id])
+    assert.deepEqual(candidatesFor(date).candidates.map((row) => row.taskId), [doing.id])
     // 显式排入那条 todo 之后它才进候选（"已在计划中"是第三条候选条件）
     await request('POST', `/api/workbench/plans/${date}/items`, { taskId: plainTodo.id, minutes: 20 })
-    const afterPlan = ledgerFor(date)
-    assert.ok(afterPlan.unscheduled.every((row) => row.taskId !== plainTodo.id))
-    assert.equal(afterPlan.planned, 20)
+    const afterPlan = candidatesFor(date)
+    // 「已在计划中」是**第三条**候选条件：排入之后它反而必须出现在候选里（带 planned 标记）
+    const reinserted = afterPlan.candidates.find((row) => row.taskId === plainTodo.id)
+    assert.ok(reinserted, '排入后必须进候选 —— 计划项永远是候选，不受截止/状态条件约束')
+    assert.equal(reinserted.planned, true)
+    assert.equal(reinserted.plannedMinutes, 20, '排入的计划项要带投入快照')
+    assert.equal(plannedMinutesFor(date), 20)
   })
 })

@@ -24,7 +24,7 @@ const localDate = (offsetDays = 0) => {
 }
 const isoDaysFromNow = (days) => `${localDate(days)}T00:01:00.000Z`
 
-/** 读整个今日计划面板（列表 + 容量条 + 每行动作）。 */
+/** 读整个今日计划面板（列表 + 表尾合计 + 每行动作）。 */
 const READ_PLAN = `
   const items = Array.from(document.querySelectorAll('.wb-plan-item')).map((el) => ({
     cls: el.className,
@@ -37,11 +37,8 @@ const READ_PLAN = `
   }));
   const panel = document.querySelector('.wb-panel-host');
   const text = panel === null ? '' : (panel.innerText || '');
-  const capacityMatch = /已排 ([0-9]+) min/.exec(text);
   return {
     items,
-    capacityMinutes: capacityMatch === null ? null : Number(capacityMatch[1]),
-    capacityLine: (text.match(/已排 [0-9]+ min[^\\n]*/) || [null])[0],
     footer: (text.match(/共 [0-9]+ 项[^\\n]*/) || [null])[0],
     text: text.slice(0, 800),
   };
@@ -73,10 +70,10 @@ const createdTaskIds = []
 const plansTouched = new Set()
 
 /**
- * 计划投入的**服务端合计**。容量判据一律用"DOM 读数 == 同一时刻服务端合计"来断言，
+ * 计划投入的**服务端合计**。计划合计的判据一律用"DOM 读数 == 同一时刻服务端合计"来断言，
  * **不写死 90/120 这类绝对值** —— 那个数会随库里其他任务变动（同一台机器上多轮验收，
  * 或用户自己也在用这个测试库）。绝对值断言只会变成"要么假红、要么只在本机此刻成立"。
- * 判据的意图是"容量账本与计划项一致"，等值比较表达它最准确。
+ * 判据的意图是"界面显示的合计与计划项一致"，等值比较表达它最准确。
  */
 const plannedMinutesViaApi = async (date) => {
   const plan = await api.get(`/api/workbench/plans?date=${date}`)
@@ -147,13 +144,13 @@ try {
     ok: beforeRow !== undefined && String(beforeRow.minutes).includes('90 min') && beforeRow.effortDoneLabel === null && beforeRow.acts.includes('今日投入结束'),
     detail: safeJson(beforeRow),
   })
-  // ── AX-C06 容量文案与计划一致（DOM 读数 == 服务端合计，同一时刻）────────
+  // ── AX-C06 计划表尾「已排投入 N min」== 服务端合计（同一时刻）────────────
   const planned1 = await plannedMinutesViaApi(today)
-  report.capacityCheck1 = { api: planned1, dom: beforePlan.capacityMinutes, footer: beforePlan.footer }
+  report.planTotalCheck1 = { api: planned1, footer: beforePlan.footer }
   suite.check({
-    id: '容量条「已排 N min」== 服务端计划项合计（同一时刻读）', axId: 'AX-C06', layer: 'B',
-    ok: planned1.readable === true && beforePlan.capacityMinutes === planned1.total && String(beforePlan.footer ?? '').includes('已排投入 ' + String(planned1.total) + ' min'),
-    detail: safeJson(report.capacityCheck1),
+    id: '计划面板表尾「已排投入 N min」== 服务端计划项合计（同一时刻读）', axId: 'AX-C06', layer: 'B',
+    ok: planned1.readable === true && String(beforePlan.footer ?? '').includes('已排投入 ' + String(planned1.total) + ' min'),
+    detail: safeJson(report.planTotalCheck1),
   })
 
   // ── AX-D07 真实鼠标点「今日投入结束」→ 显示已结束 ────────────────────────
@@ -269,7 +266,7 @@ try {
     detail: safeJson(report.defer),
   })
 
-  // ── AX-C02/ C06：改计划投入 → 行内与容量账本一起变（且两边一致）──────────
+  // ── AX-C02/ C06：改计划投入 → 行内与表尾合计一起变（且两边一致）──────────
   const setMinutes = await api.patch(`/api/workbench/plans/${today}/items/${long.id}`, { minutes: 60 })
   await browser.goto(api.pageUrl())
   await sleep(3000)
@@ -279,12 +276,12 @@ try {
   await sleep(2500)
   const afterMinutesPlan = await browser.evaluate(READ_PLAN)
   const planned2 = await plannedMinutesViaApi(today)
-  report.afterMinutes = { status: setMinutes.status, api: planned2, dom: afterMinutesPlan.capacityMinutes, row: afterMinutesPlan.items.find((item) => item.title === tLong) ?? null }
-  await browser.screenshot(`${suite.dir}/07-改分钟后容量.png`)
+  report.afterMinutes = { status: setMinutes.status, api: planned2, footer: afterMinutesPlan.footer, row: afterMinutesPlan.items.find((item) => item.title === tLong) ?? null }
+  await browser.screenshot(`${suite.dir}/07-改分钟后计划投入.png`)
   suite.check({
-    id: '把计划投入改成 60 后：行内显示 60 min，容量条同步（== 服务端合计）', axId: 'AX-C02', layer: 'B',
+    id: '把计划投入改成 60 后：行内显示 60 min，表尾合计同步（== 服务端合计）', axId: 'AX-C02', layer: 'B',
     ok: setMinutes.status === 200 && String(report.afterMinutes.row?.minutes ?? '').includes('60 min')
-      && planned2.readable === true && afterMinutesPlan.capacityMinutes === planned2.total
+      && planned2.readable === true && String(afterMinutesPlan.footer ?? '').includes('已排投入 ' + String(planned2.total) + ' min')
       && planned1.readable === true && planned2.total === planned1.total - 30,
     detail: safeJson(report.afterMinutes),
   })

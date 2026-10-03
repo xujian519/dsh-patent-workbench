@@ -62,19 +62,11 @@ const PACKAGE_BUILD_ID: string = (() => {
   } catch { return 'unknown' }
 })()
 
-/** 每天可投入时长（分钟）：存 meta，缺省 390（6.5 小时），夹在 30–1440 之间。 */
-export const DEFAULT_DAILY_CAPACITY_MINUTES = 390
-export function readDailyCapacityMinutes(db: DatabaseSync): number {
-  const raw = Number(readMeta(db, 'daily_capacity_minutes'))
-  if (!Number.isFinite(raw) || raw < 30) return DEFAULT_DAILY_CAPACITY_MINUTES
-  return Math.min(1440, Math.round(raw))
-}
-
 /**
  * 没填「预计耗时」时的默认分钟数：存 meta，缺省 30，夹在 5–1440 之间。
  *
  * ⚠️ 这两个常量（`DEFAULT_ESTIMATE_MINUTES` / `MIN_ESTIMATE_MINUTES`）与客户端
- * `src/client/capacity.ts` 里**必须同值**：一处是"读书时兜底"，一处是"落库时夹取"，
+ * `src/client/dailyPlanCandidates.ts` 里**必须同值**：一处是"读书时兜底"，一处是"落库时夹取"，
  * 不同值就会出现"库里存 3 分钟、界面按 5 分钟算"的双口径。
  * 测试 `test/routes.test.mjs` 直接 import 客户端那份做交叉断言，不靠人记。
  */
@@ -152,13 +144,12 @@ export function readWorkbenchSettings(db: DatabaseSync): WorkbenchSettings {
     defaultWorkspace: readMeta(db, 'ai_default_workspace') ?? '',
     autoCreateTypeFolders: (readMeta(db, 'auto_create_type_folders') ?? '1') === '1',
     desktopNotify: (readMeta(db, 'desktop_notify') ?? '1') === '1',
-    dailyCapacityMinutes: readDailyCapacityMinutes(db),
     quickWorkspaceRecent: readRecentWorkspaces(db),
     /** 缺省**开**：功能不默认关闭，否则用户永远发现不了它（关掉是显式动作）。 */
     autoKnowledgeRecall: (readMeta(db, 'knowledge_recall_auto') ?? '1') !== '0',
     defaultEstimateMinutes: readDefaultEstimateMinutes(db),
     /** 缺省**关**：逾期是历史欠账，默认不混进"今天要做的事"（见 contracts 里的说明）。 */
-    dailyCapacityIncludeOverdue: (readMeta(db, 'daily_capacity_include_overdue') ?? '0') === '1',
+    planIncludeOverdue: (readMeta(db, 'plan_include_overdue') ?? '0') === '1',
     /** 角色库三个偏好：**唯一读入口**在 `db/repo/personas.ts`（与写入端共用一处形状）。 */
     ...readPersonaSettings(db),
   }
@@ -238,21 +229,17 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
             writeMeta(db, 'knowledge_recall_auto', body.autoKnowledgeRecall ? '1' : '0')
             deps.knowledgeRecall?.setAutoEnabled(body.autoKnowledgeRecall)
           }
-          if (typeof body.dailyCapacityMinutes === 'number' && Number.isFinite(body.dailyCapacityMinutes)) {
-            const minutes = Math.min(1440, Math.max(30, Math.round(body.dailyCapacityMinutes)))
-            writeMeta(db, 'daily_capacity_minutes', String(minutes))
-          }
           /**
-           * 默认耗时（v1.15.1）：没填「预计耗时」的任务按它计入今日容量。
+           * 默认耗时（v1.15.1）：没填「预计耗时」的任务按它当作投入。
            * 夹 5–1440，缺省 30；越界按边界落库而不是静默丢弃（静默丢件是禁区）。
            */
           if (typeof body.defaultEstimateMinutes === 'number' && Number.isFinite(body.defaultEstimateMinutes)) {
             const minutes = Math.min(MAX_SETTINGS_ESTIMATE_MINUTES, Math.max(MIN_SETTINGS_ESTIMATE_MINUTES, Math.round(body.defaultEstimateMinutes)))
             writeMeta(db, 'default_estimated_minutes', String(minutes))
           }
-          /** 逾期是否计入今日容量：写单个 meta 键，客户端读同一键（不另开字段）。 */
-          if (body.dailyCapacityIncludeOverdue === true || body.dailyCapacityIncludeOverdue === false) {
-            writeMeta(db, 'daily_capacity_include_overdue', body.dailyCapacityIncludeOverdue ? '1' : '0')
+          /** 逾期任务是否列入当日候选：写单个 meta 键，客户端读同一键（不另开字段）。 */
+          if (body.planIncludeOverdue === true || body.planIncludeOverdue === false) {
+            writeMeta(db, 'plan_include_overdue', body.planIncludeOverdue ? '1' : '0')
           }
           /**
            * 角色库三个偏好（§6.3）：路径 + 两个 ID 数组。
@@ -317,7 +304,7 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
          *
          * 旧实现按 `getTask` 过滤掉了"任务已删除"的项 —— 那是静默丢件：用户看到的是
          * "计划里少了一条，又没人说"。现在缺失任务照样返回（`taskStatusCode: 'missing'`），
-         * 由界面标注，容量也照它的快照计入已排（requirements §4.2、AX-C04）。
+         * 由界面标注，它的 `minutes` 快照原样保留（requirements §4.2、AX-C04）。
          */
         const planTaskStatus = new Map(listTasks(db, { includeArchived: true }).map((task) => [task.id, task.archived === 1 ? 'archived' : task.statusCode]))
         const planView = plan === undefined ? null : {

@@ -307,7 +307,7 @@ test('分钟校验：1 与 1440 合法，0/1441/小数/字符串/null 全部拒�
   }
 })
 
-test('parsePlanItems：坏 JSON / 非数组 → readable=false（容量必须显示不可计算）', () => {
+test('parsePlanItems：坏 JSON / 非数组 → readable=false（界面必须显示不可计算）', () => {
   assert.equal(parsePlanItems('{oops').readable, false)
   assert.equal(parsePlanItems('{"a":1}').readable, false)
   assert.equal(parsePlanItems(null).readable, false)
