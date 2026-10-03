@@ -7,6 +7,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmKnowledgeDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, updateDraft, updateTaskWithCompletion } from '../../db/repo.js'
 import { DRAFTS_PREFIX, badRequest, methodNotAllowed, pathSegments, publicTask, readJsonBody, requireLoopback, writeJson } from './helpers.js'
 import { writeReviewToTeamMemory, teamMemoryAvailable, type TeamMemoryService } from '../../review-memory.js'
+import { canonicalizeKnowledgeDraftPayload, knowledgeDraftRejection, knowledgeDraftUnknownKeys } from '../../shared/knowledgeDraftPayload.js'
 
 /** 草稿关联的任务 id（验收 / 复盘 / 拆解类草稿会带；任务类草稿确认后才存在）。 */
 function taskIdOf(draft: { payload: Record<string, unknown> }): string | undefined {
@@ -73,6 +74,30 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
             if (getDictionary(db, 'draft_kind', kindCode) === undefined) return writeJson(res, 400, { error: `unknown draft_kind "${kindCode}"` })
             const sessionId = typeof body.sessionId === 'string' ? body.sessionId : null
             const payload = typeof body.payload === 'object' && body.payload !== null ? body.payload as Record<string, unknown> : {}
+            /**
+             * 知识草稿：**建的时候就把字段名收干净、把坏草稿挡在门外**。
+             *
+             * 这条路由是插件自己推荐的"一个会话产出多条知识"的绕行口，此前只校验外层
+             * `kindCode`：调用方按工具参数名写 `content_md` 也能拿到 201，草稿随即变成
+             * **永远确认不了**的死草稿（用户点「确认入库」只看到 `knowledge requires content`，
+             * 弹窗正文还是空的）。见 `shared/knowledgeDraftPayload.ts` 文件头。
+             *
+             * 当场做两件事：缺 title/contentMd → 400 中文原因（并列出本次 payload 的键）；
+             * 否则把别名换成规范键名，**并回报换了哪些**（静默改写字段是本仓禁止的）。
+             */
+            if (kindCode === 'knowledge') {
+              const rejection = knowledgeDraftRejection(payload)
+              if (rejection !== null) return writeJson(res, 400, { error: rejection })
+              const canonical = canonicalizeKnowledgeDraftPayload(payload)
+              const draft = createDraft(db, { kindCode, sessionId, payload: canonical.payload })
+              const unknown = knowledgeDraftUnknownKeys(canonical.payload)
+              return writeJson(res, 201, {
+                ok: true,
+                draft,
+                ...(canonical.usedAliases.length === 0 ? {} : { normalizedAliases: canonical.usedAliases }),
+                ...(unknown.length === 0 ? {} : { ignoredKeys: unknown }),
+              })
+            }
             return writeJson(res, 201, { ok: true, draft: createDraft(db, { kindCode, sessionId, payload }) })
           }
           return methodNotAllowed(res)

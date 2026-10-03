@@ -18,6 +18,7 @@
  */
 import { MarkdownText } from './MarkdownText.js'
 import { knowledgeDraftOverwriteNotice } from '../../shared/knowledgeDraftOverwrite.js'
+import { normalizeKnowledgeDraftPayload } from '../../shared/knowledgeDraftPayload.js'
 
 export interface KnowledgeDraftBodyProps {
   /** 草稿 id：提示里要带上它，用户才能在会话与界面之间对上同一份草稿。 */
@@ -26,8 +27,14 @@ export interface KnowledgeDraftBodyProps {
 }
 
 export function KnowledgeDraftBody({ draftId, payload }: KnowledgeDraftBodyProps): JSX.Element {
-  const tags = Array.isArray(payload.tags) ? payload.tags as string[] : []
-  const contentMd = String(payload.contentMd ?? '')
+  /**
+   * 字段名走唯一口径（`shared/knowledgeDraftPayload.ts`）：正文键名写成 `content_md`
+   * 的草稿**照样显示正文**。以前这里直读 `payload.contentMd`，于是那种草稿的弹窗正文是
+   * **空的** —— 用户既看不到要确认的是什么，又确认不了（`knowledge requires content`）。
+   */
+  const { payload: fields } = normalizeKnowledgeDraftPayload(payload)
+  const tags = fields.tags
+  const contentMd = fields.contentMd
   const notice = knowledgeDraftOverwriteNotice(payload, draftId)
   return (
     <>
@@ -50,13 +57,13 @@ export function KnowledgeDraftBody({ draftId, payload }: KnowledgeDraftBodyProps
           {notice}
         </div>
       )}
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{String(payload.title ?? '')}</div>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{fields.title}</div>
       {tags.length > 0 && <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 6 }}>{tags.map((tag) => `#${tag}`).join(' ')}</div>}
-      {typeof payload.fileLink === 'string' && payload.fileLink !== '' && (
-        <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 6, wordBreak: 'break-all' }}>📎 {payload.fileLink}</div>
+      {fields.fileLink !== null && fields.fileLink !== '' && (
+        <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 6, wordBreak: 'break-all' }}>📎 {fields.fileLink}</div>
       )}
-      {typeof payload.sourceTaskId === 'string' && payload.sourceTaskId !== '' && (
-        <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 6 }}>关联任务：{payload.sourceTaskId.slice(0, 8)}</div>
+      {fields.sourceTaskId !== null && fields.sourceTaskId !== '' && (
+        <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 6 }}>关联任务：{fields.sourceTaskId.slice(0, 8)}</div>
       )}
       <MarkdownText text={contentMd} />
     </>

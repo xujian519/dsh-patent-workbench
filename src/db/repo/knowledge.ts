@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, getDraft, withDraftConfirm, type DraftRow } from '../repo.js'
 import { parseDraft, safeJsonParse, type RawDraftRow } from './shared.js'
+import { knowledgeDraftRejection, normalizeKnowledgeDraftPayload } from '../../shared/knowledgeDraftPayload.js'
 
 
 export interface KnowledgeInput {
@@ -223,23 +224,40 @@ export function deleteKnowledge(db: DatabaseSync, id: string): boolean {
   return deleteKnowledgeWithRefs(db, id).deleted
 }
 
+/**
+ * 确认一份知识草稿 → 落库成知识条目。
+ *
+ * 字段名走**唯一口径** `shared/knowledgeDraftPayload.ts`：既认工具参数名的 snake_case
+ * 别名（`content_md` / `source_task_id` / `file_link` …），也在缺标题/正文时给出可读的
+ * 中文原因（并列出本次 payload 的键）。
+ *
+ * 为什么读侧也要归一（而不是只在校验入口收干净）：本次缺陷（2026-10-03）里那条草稿
+ * **已经躺在库里**（1668 字正文写在 `content_md` 下）。读侧归一让它不用改数据、不用迁移
+ * 就能显示、能入库 —— 用户点一次「确认入库」就能把内容救回来。
+ */
 export function confirmKnowledgeDraft(db: DatabaseSync, draftId: string, actor = 'user', at = nowIso()): KnowledgeRow | undefined {
   const draft = getDraft(db, draftId)
   if (draft === undefined || draft.kindCode !== 'knowledge') return undefined
-  const payload = draft.payload as { title?: string; contentMd?: string; kindCode?: string; tags?: string[]; sourceTaskId?: string; sourceSessionId?: string; sourceReviewId?: string; fileLink?: string | null; supersededById?: string | null; validUntil?: string | null }
-  const title = typeof payload.title === 'string' ? payload.title.trim() : ''
-  if (title === '') throw new Error('knowledge requires a non-empty title')
-  const contentMd = typeof payload.contentMd === 'string' ? payload.contentMd : ''
-  if (contentMd.trim() === '') throw new Error('knowledge requires content')
+  const payload = draft.payload as { sourceSessionId?: string; supersededById?: string | null; validUntil?: string | null }
+  const rejection = knowledgeDraftRejection(draft.payload)
+  if (rejection !== null) throw new Error(rejection)
+  const { payload: fields } = normalizeKnowledgeDraftPayload(draft.payload)
   return withDraftConfirm(db, draftId, 'knowledge', () => createKnowledge(db, {
-    kindCode: payload.kindCode ?? 'note',
-    title,
-    contentMd,
-    tags: Array.isArray(payload.tags) ? payload.tags : [],
-    sourceTaskId: typeof payload.sourceTaskId === 'string' ? payload.sourceTaskId : null,
+    kindCode: fields.kindCode,
+    // 标题照旧 trim（与 `workbench_submit_knowledge`、`POST /knowledge` 两条建入路径同口径）。
+    title: fields.title.trim(),
+    contentMd: fields.contentMd,
+    tags: fields.tags,
+    sourceTaskId: fields.sourceTaskId,
     sourceSessionId: typeof payload.sourceSessionId === 'string' ? payload.sourceSessionId : draft.sessionId,
-    sourceReviewId: typeof payload.sourceReviewId === 'string' ? payload.sourceReviewId : null,
-    fileLink: typeof payload.fileLink === 'string' ? payload.fileLink : null,
+    sourceReviewId: fields.sourceReviewId,
+    /**
+     * 归入的案卷：草稿里写了就照写（`createKnowledge` 会校验存在性，不存在 → 中文 400）。
+     * 以前这里**根本不传** `matterId`，草稿上写了案卷也会被静默丢掉 —— 与
+     * 「归入案卷」在条目建入路径上的语义（可显式归入）不一致，索性一并接上。
+     */
+    matterId: fields.matterId,
+    fileLink: fields.fileLink,
     supersededById: typeof payload.supersededById === 'string' ? payload.supersededById : null,
     validUntil: typeof payload.validUntil === 'string' ? payload.validUntil : null,
   }, at), { at })

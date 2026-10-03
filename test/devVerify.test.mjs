@@ -585,34 +585,47 @@ test('AX-V07：token 取日志里最后一个（不是按 offset 的第一段）
 })
 
 /**
- * 本机真实状态的一致性判据（T6 改过一次口径，**不是放宽**）。
+ * 本机真实状态的一致性判据（T6 改过一次口径、v1.16.4 又改一次，**都不是放宽**）。
  *
  * 原来的写法把"**当时**这台机器的状态"当成了判据：断言 web profile 里没有独立 DB 配置、
  * 于是预检必须拒绝。T6 给 web profile 配了独立测试库之后，那条断言变成**必然假红** ——
  * 它测的是机器状态，不是代码行为（"把环境当 fixture"是这类测试的通病）。
  *
- * 现在的口径：预检结论必须与**读到的实际配置**一致。
- * - 目标 profile 真的声明了独立 dbPath/dataDir → 必须通过（隔离成立就该放行）；
+ * 现在的口径：预检结论必须与**读到的实际配置**一致，且**按实际声明的路径**去核对。
+ * - 目标 profile 真的声明了独立 dbPath/dataDir → 用**那个路径**核对必须通过（隔离成立就该放行）；
+ * - 声明与配置不一致（`--db-path` 指向别的库）→ 必须拒绝（这才是"能挡住写错库"的证明）；
  * - 没声明 → 必须拒绝（fail-closed）。
- * 两侧都真实读配置，所以无论环境怎么变都成立，而且它仍然会在"fail-closed 被拆掉"时变红。
+ *
+ * 为什么把硬编码的 `verify-web.db` 换成"读到的声明值"（v1.16.4）：本机 web profile 现在把
+ * 本插件指向了 `patent-workbench-web.db`（用户自己的库，不是研发用的 verify 库）。旧写法把
+ * **研发工具约定的**那个路径当成了 fixture，于是任何一次"用户换库"都会让这条假红 ——
+ * 而它想守的其实是"预检结论跟实际配置一致"，与具体是哪个库名无关。
+ * 三个分支都在，所以"fail-closed 被拆掉"或"声明与配置不一致却放行"照样会红。
  */
 test('本机真实状态：预检结论必须与目标 profile 的实际 DB 配置一致（声明了隔离就放行、没声明就拒绝）', async () => {
   const { preflight, readActualConfig } = await import('../scripts/verify/safety.mjs')
   const home = process.env.USERPROFILE ?? process.env.HOME ?? '/'
   const profileDir = join(home, '.dsh', 'profiles', 'web')
-  const dbPath = join(home, '.dsh', 'workbench', 'verify-web.db')
+  // 研发链默认要用的隔离库（只是"某个会用到的路径"，不是 fixture —— 核对以 profile 声明为准）
+  const requested = join(home, '.dsh', 'workbench', 'verify-web.db')
   if (process.env.DSH_WEB_URL === undefined) {
-    const verdict = preflight({ url: 'http://127.0.0.1:3080', profile: 'web', profileDir, dbPath, env: process.env })
+    const verdict = preflight({ url: 'http://127.0.0.1:3080', profile: 'web', profileDir, dbPath: requested, env: process.env })
     assert.equal(verdict.ok, false, '没有 DSH_WEB_URL 时无法自锁，必须 fail-closed')
     return
   }
   const actual = readActualConfig({ profileDir, dshHome: process.env.DSH_HOME ?? join(home, '.dsh') })
-  const declaresDb = typeof actual.values?.dbPath === 'string' || typeof actual.values?.dataDir === 'string'
-  const verdict = preflight({ url: 'http://127.0.0.1:3080', profile: 'web', profileDir, dbPath, env: process.env })
-  if (declaresDb) {
-    assert.equal(verdict.ok, true, `目标 profile 已声明独立 DB（${JSON.stringify(actual.values)}），预检不该拒绝：${JSON.stringify(verdict.errors.map((entry) => entry.code))}`)
-  } else {
+  const declared = actual.values?.dbPath ?? actual.values?.dataDir
+  if (typeof declared !== 'string' || declared === '') {
+    const verdict = preflight({ url: 'http://127.0.0.1:3080', profile: 'web', profileDir, dbPath: requested, env: process.env })
     assert.equal(verdict.ok, false, '目标 profile 没有独立 DB 配置时必须拒绝（fail-closed）')
     assert.ok(verdict.errors.some((entry) => ['DB_NOT_DECLARED', 'SAME_PORT', 'DB_UNKNOWN', 'DB_PATH_MISMATCH'].includes(entry.code)), `实际理由：${JSON.stringify(verdict.errors.map((entry) => entry.code))}`)
+    return
   }
+  // ① 按 profile 真正声明的那个库核对 → 隔离成立，必须放行
+  const matched = preflight({ url: 'http://127.0.0.1:3080', profile: 'web', profileDir, dbPath: declared, env: process.env })
+  assert.equal(matched.ok, true, `目标 profile 已声明独立 DB（${declared}），预检不该拒绝：${JSON.stringify(matched.errors.map((entry) => entry.code))}`)
+  // ② 声明成**另一个**库 → 必须拒绝（否则"写错库"这半条防线没有断言守着）
+  const mismatched = preflight({ url: 'http://127.0.0.1:3080', profile: 'web', profileDir, dbPath: `${declared}.另一个库.db`, env: process.env })
+  assert.equal(mismatched.ok, false, '声明的库与 profile 配置不一致时必须拒绝')
+  assert.ok(mismatched.errors.some((entry) => entry.code === 'DB_PATH_MISMATCH'), `实际理由：${JSON.stringify(mismatched.errors.map((entry) => entry.code))}`)
 })

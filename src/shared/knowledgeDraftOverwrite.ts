@@ -40,7 +40,22 @@ export const KNOWLEDGE_DRAFT_REPLACED_TITLES_KEY = 'replacedTitles'
 export const KNOWLEDGE_DRAFT_REPLACED_TITLES_LIMIT = 5
 
 /**
- * 「一个会话只产生 1 条知识草稿」的约束说明 + 官方绕行方案。
+ * 绕行口 `POST /api/workbench/drafts` 的 `payload` 字段名说明。
+ *
+ * 为什么必须写出来（2026-10-03 用户实测缺陷 `操作失败：knowledge requires content`）：
+ * 上面那句绕行建议只给了外层形状 `{"kindCode":"knowledge","payload":{...}}`，
+ * **没给 payload 的字段名**，于是调用方照着 `workbench_submit_knowledge` 的
+ * **工具参数名**填 `content_md`，而入库侧只认 `contentMd` —— 草稿建得出来、确认不了，
+ * 弹窗正文还是空的。字段名的机器可读口径在 `shared/knowledgeDraftPayload.ts`
+ * （规范键 + 别名表），这段文案与它的一致性由 `test/knowledgeDraftPayload.test.mjs` 钉住。
+ */
+export const KNOWLEDGE_DRAFT_PAYLOAD_FIELDS_DOC =
+  'payload 的字段名用 camelCase：title、contentMd（Markdown 正文）、kindCode、tags、sourceTaskId、sourceReviewId、matterId（归入案卷）、fileLink；' +
+  '工具参数名那套 snake_case 写法（content_md / kind_code / source_task_id / source_review_id / matter_id / file_link）也认，' +
+  '但缺 title 或缺 contentMd 的草稿会被当场 400 拒收（不会静静躺在「待处理」里等你去点确认）。'
+
+/**
+ * 「一个会话只产生 1 条知识草稿」的约束说明 + 官方绕行方案（含 payload 字段名）。
  *
  * 工具说明、工具回执、界面提示**共用这一段**：这句话此前只在工具说明里说了半截
  * （"同一会话重复提交会更新同一草稿"），既没说清**因此一个会话只能产出 1 条**，
@@ -51,7 +66,8 @@ export const KNOWLEDGE_DRAFT_SESSION_CONSTRAINT =
   '（前一次的内容被替换，不会单独入库），因此一个会话最多产出 1 条知识。' +
   '要在同一个会话里沉淀多条独立主题的知识，请改走插件自身的 loopback 路由 ' +
   'POST /api/workbench/drafts（body: {"kindCode":"knowledge","payload":{...}}）：每次调用建一份独立的 pending 草稿，' +
-  '仍然必须由用户逐条点「确认入库」。'
+  '仍然必须由用户逐条点「确认入库」。' +
+  KNOWLEDGE_DRAFT_PAYLOAD_FIELDS_DOC
 
 /** 这份草稿被写入过几次、以及被**静默覆盖**掉的标题（按时间先后）。 */
 export interface KnowledgeDraftHistory {

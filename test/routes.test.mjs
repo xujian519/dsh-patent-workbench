@@ -354,6 +354,77 @@ test('knowledge API supports file_link and local document reading', async () => 
   }
 })
 
+test('知识草稿字段名：绕行口收 snake_case 别名并回报，缺正文当场 400（不再是确认时的英文报错）', async () => {
+  await withServer(async ({ request, db }) => {
+    /**
+     * 真实缺陷（2026-10-03，用户实测 `操作失败：knowledge requires content`）：
+     * 插件推荐的绕行口 `POST /api/workbench/drafts` 只校验外层 kindCode，
+     * 调用方按 `workbench_submit_knowledge` 的**工具参数名**写 `content_md` 也能拿到 201 ——
+     * 草稿随即变成永远确认不了的死草稿，且弹窗正文是空的（读 `payload.contentMd`）。
+     */
+    const created = await request('POST', '/api/workbench/drafts', {
+      kindCode: 'knowledge',
+      payload: {
+        title: '用工具参数名写的知识草稿',
+        content_md: '## 结论\n\nsnake_case 也能入库。',
+        kind_code: 'lesson',
+        tags: ['踩坑'],
+        source_task_id: null,
+        file_link: null,
+      },
+    })
+    assert.equal(created.status, 201)
+    // 改写字段必须回报（静默改写是本仓禁止的）
+    assert.deepEqual(created.body.normalizedAliases, ['content_md', 'kind_code'])
+
+    // 落库的是规范键名（别名键已被换掉，不是两套并存）
+    const stored = db.prepare('SELECT payload_json FROM task_drafts WHERE id = ?').get(created.body.draft.id)
+    const storedPayload = JSON.parse(stored.payload_json)
+    assert.equal(storedPayload.contentMd, '## 结论\n\nsnake_case 也能入库。')
+    assert.equal(storedPayload.kindCode, 'lesson')
+    assert.equal(storedPayload.content_md, undefined)
+
+    // 确认入库：正文一字不少
+    const confirmed = await request('POST', `/api/workbench/drafts/${created.body.draft.id}/confirm`)
+    assert.equal(confirmed.status, 200)
+    assert.equal(confirmed.body.knowledge.contentMd, '## 结论\n\nsnake_case 也能入库。')
+    assert.equal(confirmed.body.knowledge.kindCode, 'lesson')
+
+    /**
+     * 已经躺在库里的坏草稿（本版之前建的）也要能救回来：
+     * 直接落一条 payload 只有 `content_md` 的 pending 草稿（绕过路由），确认必须成功。
+     */
+    const legacy = db.prepare(`
+      INSERT INTO task_drafts (id, kind_code, session_id, payload_json, status_code, created_at, updated_at)
+      VALUES ('legacy-camel-miss', 'knowledge', NULL, ?, 'pending', '2026-10-03T00:00:00.000Z', '2026-10-03T00:00:00.000Z')
+    `).run(JSON.stringify({ title: '老草稿', content_md: '老草稿的 1668 字正文', tags: ['老'] }))
+    assert.equal(legacy.changes, 1)
+    const rescued = await request('POST', '/api/workbench/drafts/legacy-camel-miss/confirm')
+    assert.equal(rescued.status, 200)
+    assert.equal(rescued.body.knowledge.contentMd, '老草稿的 1668 字正文')
+    assert.equal(rescued.body.knowledge.title, '老草稿')
+
+    // 缺正文：建的时候就被拒，且中文原因要点出合法键名 + 本次实际有哪些键
+    const noContent = await request('POST', '/api/workbench/drafts', {
+      kindCode: 'knowledge',
+      payload: { title: '只有标题', content: '想当然的键名' },
+    })
+    assert.equal(noContent.status, 400)
+    assert.match(noContent.body.error, /contentMd/)
+    // 必须把**本次 payload 实际有哪些键**列出来，调用方才能一眼看出自己把正文写成了 content
+    assert.match(noContent.body.error, /本次 payload 的键：title、content/)
+
+    // 缺标题同理
+    const noTitle = await request('POST', '/api/workbench/drafts', { kindCode: 'knowledge', payload: { contentMd: '有正文没标题' } })
+    assert.equal(noTitle.status, 400)
+    assert.match(noTitle.body.error, /title/)
+
+    // 其他草稿类型不受影响（校验只对 knowledge 生效）
+    const taskDraft = await request('POST', '/api/workbench/drafts', { kindCode: 'task', payload: {} })
+    assert.equal(taskDraft.status, 201)
+  })
+})
+
 test('list-local-dir: 盘符根能给"上一级"，不再把用户永久困在 C 盘', async () => {
   await withServer(async ({ request }) => {
     // 默认起点是主目录（保留原行为）
@@ -507,7 +578,9 @@ test('draft defer/resume/abandon API: 暂存不弹窗、可唤回、驳回留痕
 test('draft defer API: 所有草稿类型都可暂存，且暂存留痕走通用事件码', async () => {
   await withServer(async ({ request, db }) => {
     // v1.14.0：暂存白名单推广为「默认全部可暂存」，非验收类不再被拒。
-    const created = await request('POST', '/api/workbench/drafts', { kindCode: 'knowledge', payload: {} })
+    // 知识草稿从 v1.16.4 起在建草稿时就校验字段（缺 title/contentMd → 400），
+    // 所以 fixture 必须是**能确认的真草稿**——空 payload 那种正是被拒收的死草稿。
+    const created = await request('POST', '/api/workbench/drafts', { kindCode: 'knowledge', payload: { title: '暂存用的知识草稿', contentMd: '正文' } })
     const res = await request('POST', `/api/workbench/drafts/${created.body.draft.id}/defer`)
     assert.equal(res.status, 200)
     assert.equal(res.body.draft.deferredAt !== null, true)
