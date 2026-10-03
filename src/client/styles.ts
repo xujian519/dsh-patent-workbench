@@ -776,6 +776,53 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 [data-dsh-personal-workbench-view] .wb-stat span { font-size: 11.5px; }
 
 
+/* ── 案卷视图（阶段 5 · 5B）───────────────────────────────────────────────────
+   拓扑：工具条（计数 + 新建）→ 列表（一行一案卷）→ 详情（字段区 / 官文 / 时间线）。
+   与知识库同一条布局判断：面板是窄栏，左右分栏会把两边都挤到读不出东西。
+   颜色不新造 —— 阶段徽标用字典里的 color（用户可在设置里改），其余取既有 token。 */
+.wb-matter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.wb-matter-bar-note { flex: 1; font-size: 12px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
+.wb-matter-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.wb-matter-row {
+  display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer;
+  border: 1px solid var(--wb-line); border-radius: var(--wb-r-2); background: var(--wb-surface);
+  padding: 9px 11px; font: inherit; color: inherit;
+}
+.wb-matter-row:hover { border-color: var(--wb-ink-3); }
+.wb-matter-row.on { border-color: var(--wb-accent); box-shadow: var(--wb-sh-1); }
+.wb-matter-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.wb-matter-case { font-size: 11.5px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
+.wb-matter-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-matter-row-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--wb-ink-3); justify-content: flex-end; }
+.wb-matter-stage { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--wb-line); color: var(--wb-ink-3); white-space: nowrap; }
+.wb-matter-detail { display: flex; flex-direction: column; gap: 12px; }
+.wb-matter-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.wb-matter-title { margin: 0; flex: 1; font-size: 13.5px; font-weight: 650; }
+.wb-matter-count { font-size: 11px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
+/* 字段区：两列自动网格（窄屏自动塌成一列），值缺失时显示 "—" 而不是留空 */
+.wb-matter-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px 14px; }
+.wb-matter-field { display: flex; gap: 8px; font-size: 12px; min-width: 0; }
+.wb-matter-field-k { flex: none; width: 76px; color: var(--wb-ink-3); }
+.wb-matter-field-v { color: var(--wb-ink-1); overflow: hidden; text-overflow: ellipsis; }
+.wb-matter-notices { display: flex; flex-direction: column; gap: 6px; }
+.wb-matter-notice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--wb-line) 60%, transparent); }
+.wb-matter-notice:last-child { border-bottom: none; }
+.wb-matter-notice-kind { font-weight: 600; }
+.wb-matter-notice-date, .wb-matter-notice-mode { color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
+.wb-matter-notice-file { color: var(--wb-ink-3); overflow: hidden; text-overflow: ellipsis; max-width: 220px; white-space: nowrap; }
+.wb-matter-tl { display: flex; flex-direction: column; }
+.wb-matter-tl-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--wb-line) 50%, transparent); font-size: 12px; }
+.wb-matter-tl-row:last-child { border-bottom: none; }
+.wb-matter-tl-kind { flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--wb-line); color: var(--wb-ink-3); }
+.wb-matter-tl-kind.notice { border-color: color-mix(in srgb, var(--wb-p1) 60%, transparent); color: var(--wb-p1); }
+.wb-matter-tl-kind.deadline { border-color: color-mix(in srgb, var(--wb-warn, #d9a03f) 60%, transparent); color: var(--wb-warn, #d9a03f); }
+.wb-matter-tl-date { flex: none; width: 84px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
+.wb-matter-tl-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wb-matter-tl-title { color: var(--wb-ink-1); }
+.wb-matter-tl-detail { color: var(--wb-ink-3); font-size: 11.5px; word-break: break-all; }
+.wb-matter-tl-undated { margin-top: 10px; border-top: 1px dashed var(--wb-line); padding-top: 8px; }
+.wb-matter-tl-undated-head { font-size: 11.5px; color: var(--wb-ink-3); margin-bottom: 4px; }
+
 /* 卡片 / 列表 / 计划：统一边框强度与阴影，行分割线改发丝 */
 [data-dsh-personal-workbench-view] .wb-card {
   border: 1px solid var(--wb-line); border-radius: var(--wb-r-2); background: var(--wb-surface);

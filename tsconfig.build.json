@@ -17,6 +17,8 @@
     "src/client/externalLink.ts",
     "src/client/inlineMarkdown.ts",
     "src/client/dailyPlanCandidates.ts",
+    "src/client/matterTimeline.ts",
+    "src/client/components/MattersView.tsx",
     "src/client/dailyPlanPrompt.ts",
     "src/client/taskProgressView.ts",
     "src/client/personaPrompt.ts",

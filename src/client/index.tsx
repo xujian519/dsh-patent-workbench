@@ -77,6 +77,8 @@ import {
   DEFAULT_SORT_DIR, buildListPage, normalizePageSize, normalizeSortDir, normalizeSortKey, toContentItem,
 } from './listPresentation.js'
 import { PlanPanel } from './components/PlanPanel.js'
+import { MatterDetail, MatterList, type MatterDeadlineView, type MatterNoticeView, type MatterView } from './components/MattersView.js'
+import { buildMatterTimeline, type MatterTimelineEvent } from './matterTimeline.js'
 import {
   clientFileLinkToPath, draftKindLabel, eventIcon, eventLabel, fmtTime, localDateString,
   roleLabel, sameDay, shortId, startOfDay, startOfWeek, toLocalInput,
@@ -272,7 +274,7 @@ async function quickImageToPromptPart(image: QuickImageDraft): Promise<PromptCon
  * 教训与规矩见本仓 skill §14：**切片/替换必须用唯一标记**，别用在文件里出现两次的字符串。
  */
 function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; closePanel: () => void }): JSX.Element {
-  const [view, setView] = useState<'today' | 'calendar' | 'list' | 'knowledge'>('today')
+  const [view, setView] = useState<'today' | 'calendar' | 'list' | 'knowledge' | 'matters'>('today')
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   /**
@@ -452,8 +454,22 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [pickedPlanSession, setPickedPlanSession] = useState<{ sessionId: string } | null>(null)
   const [planRefreshKey, setPlanRefreshKey] = useState(0)
   const [knowledgeEntries, setKnowledgeEntries] = useState<KnowledgeEntry[]>([])
-  /** 案卷列表（只为「归入案卷」下拉；拉不到就是空列表 —— 下拉里显示"未归入"，不假装有关系）。 */
-  const [matters, setMatters] = useState<Array<{ id: string; caseNumber: string; title: string }>>([])
+  /**
+   * 案卷列表（案件视图与「归入案卷」下拉共用一份）。
+   *
+   * 拉不到就是空列表 —— 下拉里显示"未归入"，案件视图显示"还没有案卷"，**不假装有关系**。
+   */
+  const [matters, setMatters] = useState<MatterView[]>([])
+  /** 选中的案卷 id（详情按需拉官文/期限/事件 —— 案子少、但每条详情有三份列表要拉）。 */
+  const [selectedMatterId, setSelectedMatterId] = useState<string | null>(null)
+  const [matterNotices, setMatterNotices] = useState<MatterNoticeView[]>([])
+  const [matterDeadlines, setMatterDeadlines] = useState<MatterDeadlineView[]>([])
+  const [matterEvents, setMatterEvents] = useState<MatterTimelineEvent[]>([])
+  /** 建档/编辑表单草稿（null = 弹窗关闭）。 */
+  const [matterDraft, setMatterDraft] = useState<Record<string, string> | null>(null)
+  const [matterEditId, setMatterEditId] = useState<string | null>(null)
+  /** 官文登记表单草稿（null = 弹窗关闭）。 */
+  const [noticeDraft, setNoticeDraft] = useState<Record<string, string> | null>(null)
   /**
    * 知识库列表的筛选/排序/分页状态。
    *
@@ -626,8 +642,167 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * 每次敲字都打库不可接受（与知识库同一判断）。案件视图（阶段 5 的后续片）会复用这份数据。
    */
   const loadMatters = useCallback(async () => {
-    const res = await api<{ matters: Array<{ id: string; caseNumber: string; title: string }> }>('/api/workbench/matters')
+    const res = await api<{ matters: MatterView[] }>('/api/workbench/matters')
     setMatters(res.matters)
+  }, [])
+
+  /**
+   * 拉某个案卷的三份明细（官文 / 期限 / 事件）。
+   *
+   * 三份**一起拉、一起替换**：时间线是三者合成的（`buildMatterTimeline`），
+   * 分三次 setState 会让界面闪出"只有官文、没有期限"的中间态。
+   * 期限在 5C 会用来做看板；现在先只喂时间线，界面不自己算任何期限 —— 那是引擎的职责。
+   */
+  /** 打开建档/编辑弹窗（`matter` 为空 = 新建）。表单值一律先转成字符串：输入框只认字符串。 */
+  const openMatterForm = useCallback((matter: MatterView | null) => {
+    setMatterEditId(matter?.id ?? null)
+    setMatterDraft({
+      caseNumber: matter?.caseNumber ?? '',
+      title: matter?.title ?? '',
+      clientId: matter?.clientId ?? '',
+      matterType: matter?.matterType ?? (dicts.find((d) => d.kind === 'matter_type')?.code ?? 'drafting'),
+      patentKind: matter?.patentKind ?? '',
+      stageCode: matter?.stageCode ?? (dicts.find((d) => d.kind === 'matter_stage')?.code ?? 'open'),
+      applicationNo: matter?.applicationNo ?? '',
+      publicationNo: matter?.publicationNo ?? '',
+      patentNo: matter?.patentNo ?? '',
+      filingDate: matter?.filingDate ?? '',
+      priorityDate: matter?.priorityDate ?? '',
+      claimsPriority: matter?.claimsPriority === 1 ? '1' : '0',
+      isPctNationalPhase: matter?.isPctNationalPhase === true ? '1' : '0',
+      techField: matter?.techField ?? '',
+      ipc: matter?.ipc ?? '',
+      inventors: matter?.inventors ?? '',
+      applicant: matter?.applicant ?? '',
+      attorney: matter?.attorney ?? '',
+      workspacePath: matter?.workspacePath ?? '',
+    })
+  }, [dicts])
+
+  /**
+   * 保存案卷。
+   *
+   * 空串一律发 `null`（服务端把 `''` 当成"没填"，但显式发 null 更干净）；
+   * `claimsPriority` / `isPctNationalPhase` 是**起算日的输入**（引擎明确不推断），所以必须真发出去 ——
+   * 漏发会被服务端按缺省 `0` 处理，而用户以为他勾过。
+   */
+  const saveMatter = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+    if (matterDraft === null) return
+    const text = (key: string): string | null => (matterDraft[key] ?? '').trim() === '' ? null : (matterDraft[key] ?? '').trim()
+    const payload = {
+      caseNumber: (matterDraft.caseNumber ?? '').trim(),
+      title: (matterDraft.title ?? '').trim(),
+      clientId: text('clientId'),
+      matterType: matterDraft.matterType ?? 'drafting',
+      patentKind: text('patentKind'),
+      stageCode: matterDraft.stageCode ?? 'open',
+      applicationNo: text('applicationNo'),
+      publicationNo: text('publicationNo'),
+      patentNo: text('patentNo'),
+      filingDate: text('filingDate'),
+      priorityDate: text('priorityDate'),
+      claimsPriority: matterDraft.claimsPriority === '1',
+      isPctNationalPhase: matterDraft.isPctNationalPhase === '1',
+      techField: text('techField'),
+      ipc: text('ipc'),
+      inventors: text('inventors'),
+      applicant: text('applicant'),
+      attorney: text('attorney'),
+      workspacePath: text('workspacePath'),
+    }
+    if (payload.caseNumber === '' || payload.title === '') { setError('案号与名称都必填'); return }
+    setBusy(true)
+    try {
+      const res = matterEditId === null
+        ? await api<{ matter: MatterView }>('/api/workbench/matters', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+        : await api<{ matter: MatterView }>(`/api/workbench/matters/${matterEditId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+      setMatterDraft(null)
+      setMatterEditId(null)
+      await loadMatters()
+      setSelectedMatterId(res.matter.id)
+      setNotice(matterEditId === null ? `已建档：${res.matter.caseNumber}` : `已更新：${res.matter.caseNumber}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  const openNoticeForm = useCallback(() => {
+    setNoticeDraft({
+      noticeKind: dicts.find((d) => d.kind === 'notice_kind')?.code ?? '',
+      dispatchDate: localDateString(),
+      deliveryMode: dicts.find((d) => d.kind === 'delivery_mode')?.code ?? 'electronic',
+      deliveryDate: '',
+      designatedMonths: '',
+      fileLink: '',
+      note: '',
+    })
+  }, [dicts])
+
+  /** 登记一条官文。`designatedMonths` 只在填了合法正整数时才发（0/空 = 不指定）。 */
+  const saveNotice = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+    if (noticeDraft === null || selectedMatterId === null) return
+    const months = Number((noticeDraft.designatedMonths ?? '').trim())
+    const text = (key: string): string | null => (noticeDraft[key] ?? '').trim() === '' ? null : (noticeDraft[key] ?? '').trim()
+    setBusy(true)
+    try {
+      await api(`/api/workbench/matters/${selectedMatterId}/notices`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          noticeKind: noticeDraft.noticeKind,
+          dispatchDate: (noticeDraft.dispatchDate ?? '').trim(),
+          deliveryMode: noticeDraft.deliveryMode ?? 'electronic',
+          deliveryDate: text('deliveryDate'),
+          designatedMonths: Number.isInteger(months) && months > 0 ? months : null,
+          fileLink: text('fileLink'),
+          note: text('note'),
+        }),
+      })
+      setNoticeDraft(null)
+      await loadMatterDetail(selectedMatterId)
+      setNotice('已登记官文（期限需在 5C 的「重算期限」里算）')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  const deleteNotice = async (noticeId: string): Promise<void> => {
+    if (selectedMatterId === null || !window.confirm('删除这条官文登记？已算出的期限不会自动跟着删，可重算。')) return
+    setBusy(true)
+    try {
+      await api(`/api/workbench/matters/${selectedMatterId}/notices/${noticeId}`, { method: 'DELETE' })
+      await loadMatterDetail(selectedMatterId)
+      setNotice('已删除官文登记')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  /** 选中的案卷对象（数据源是列表，不另存一份 —— 两份状态一定会漂）。 */
+  const selectedMatter = selectedMatterId === null ? null : (matters.find((matter) => matter.id === selectedMatterId) ?? null)
+  /**
+   * 时间线（纯函数合成，判定在 `client/matterTimeline.ts`，有单测）。
+   *
+   * 字典通过 `labelOf` 注入：纯模块不碰库，也不猜中文名（查不到就原样显示码）。
+   */
+  const matterTimeline = useMemo(() => buildMatterTimeline({
+    events: matterEvents,
+    notices: matterNotices,
+    deadlines: matterDeadlines,
+    labelOf: (kind, code) => dicts.find((dict) => dict.kind === kind && dict.code === code)?.name ?? code,
+  }), [matterEvents, matterNotices, matterDeadlines, dicts])
+
+  const loadMatterDetail = useCallback(async (matterId: string) => {
+    const [notices, deadlines, events] = await Promise.all([
+      api<{ notices: MatterNoticeView[] }>(`/api/workbench/matters/${matterId}/notices`),
+      api<{ deadlines: MatterDeadlineView[] }>(`/api/workbench/matters/${matterId}/deadlines`),
+      api<{ events: MatterTimelineEvent[] }>(`/api/workbench/matters/${matterId}/events`),
+    ])
+    setMatterNotices(notices.notices)
+    setMatterDeadlines(deadlines.deadlines)
+    setMatterEvents(events.events)
   }, [])
 
   // 知识库：一次取回后**全部在客户端**搜索/筛选/排序/分页 —— 千级规模下每次敲字都打库是不可接受的。
@@ -639,6 +814,10 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     if (view === 'knowledge') void loadKnowledge().catch(() => undefined)
   }, [view, loadKnowledge, knowledgeRefreshKey])
   useEffect(() => { void loadMatters().catch(() => undefined) }, [loadMatters])
+  useEffect(() => {
+    if (view !== 'matters' || selectedMatterId === null) return
+    void loadMatterDetail(selectedMatterId).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [view, selectedMatterId, loadMatterDetail])
   useEffect(() => { void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))) }, [refresh])
   useEffect(() => { void api<{ settings: WorkbenchSettings }>('/api/workbench/settings').then((r) => setSettings(withSettingsFallback(r.settings))).catch(() => undefined) }, [])
 
@@ -2635,6 +2814,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
           <button className={`wb-seg ${view === 'calendar' ? 'on' : ''}`} onClick={() => setView('calendar')}><Icon name="calendar" />日历</button>
           <button className={`wb-seg ${view === 'list' ? 'on' : ''}`} onClick={() => setView('list')}><Icon name="list" />任务</button>
           <button className={`wb-seg ${view === 'knowledge' ? 'on' : ''}`} onClick={() => setView('knowledge')}><Icon name="book" />知识库</button>
+          {/* 案卷（阶段 5）：一等实体就该有自己的一屏 —— 它的字段与任务语义不搭（决策 1） */}
+          <button className={`wb-seg ${view === 'matters' ? 'on' : ''}`} onClick={() => setView('matters')}><Icon name="folder" />案件</button>
         </div>
         <div style={{ flex: 1 }} />
         {pendingCount > 0 && (
@@ -2722,6 +2903,77 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         onPickAndSummarize={pickAndSummarizeLocalFile}
         onSummarize={() => void summarizeLocalDoc()}
       />
+      {/**
+        * 建档 / 编辑案卷（阶段 5 · 5B）。
+        *
+        * 字段按「引擎要什么」排在前面：申请日 / 优先权日 / 要求优先权 / 专利类型 是
+        * `patent-deadline` 起算期限的输入（决策 3），填错会算出错的期限 ——
+        * 所以它们与案号同级显眼，而不是埋在最后。
+        */}
+      {matterDraft !== null && (
+        <Modal
+          title={<><Icon name="folder" />{matterEditId === null ? '新建案卷' : '编辑案卷'}</>}
+          size="md"
+          onClose={() => { setMatterDraft(null); setMatterEditId(null) }}
+          footer={(
+            <>
+              <span className="wb-foot-note">案号与名称必填；其余可留空（留空 = 库里为 NULL，不是空串）</span>
+              <button className="wb-btn primary" type="submit" form="wb-matter-form" disabled={busy}><Icon name="check" />保存</button>
+            </>
+          )}
+        >
+          <form className="wb-form" id="wb-matter-form" onSubmit={(e) => void saveMatter(e)}>
+            <label className="full">案号<input required value={matterDraft.caseNumber} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, caseNumber: e.target.value })} placeholder="内部案号，如 2026-UM-002" /></label>
+            <label className="full">发明名称<input required value={matterDraft.title} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, title: e.target.value })} /></label>
+            <label>案型<select value={matterDraft.matterType} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, matterType: e.target.value })}>{dictOf('matter_type').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+            <label>专利类型<select value={matterDraft.patentKind} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, patentKind: e.target.value })}><option value="">（未定）</option>{dictOf('patent_kind').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+            <label>阶段<select value={matterDraft.stageCode} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, stageCode: e.target.value })}>{dictOf('matter_stage').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+            <label>客户<input value={matterDraft.clientId} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, clientId: e.target.value })} /></label>
+            <label>申请号<input value={matterDraft.applicationNo} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, applicationNo: e.target.value })} /></label>
+            <label>公开号<input value={matterDraft.publicationNo} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, publicationNo: e.target.value })} /></label>
+            <label>授权号<input value={matterDraft.patentNo} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, patentNo: e.target.value })} /></label>
+            <label>申请日<input type="date" value={matterDraft.filingDate} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, filingDate: e.target.value })} /></label>
+            <label>优先权日<input type="date" value={matterDraft.priorityDate} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, priorityDate: e.target.value })} /></label>
+            <label className="wb-inline-check"><input type="checkbox" checked={matterDraft.claimsPriority === '1'} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, claimsPriority: e.target.checked ? '1' : '0' })} />要求优先权</label>
+            <label className="wb-inline-check"><input type="checkbox" checked={matterDraft.isPctNationalPhase === '1'} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, isPctNationalPhase: e.target.checked ? '1' : '0' })} />PCT 进入中国</label>
+            <label>技术领域<input value={matterDraft.techField} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, techField: e.target.value })} /></label>
+            <label>IPC<input value={matterDraft.ipc} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, ipc: e.target.value })} /></label>
+            <label>发明人<input value={matterDraft.inventors} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, inventors: e.target.value })} placeholder="多人用逗号分隔" /></label>
+            <label>申请人<input value={matterDraft.applicant} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, applicant: e.target.value })} /></label>
+            <label>代理师<input value={matterDraft.attorney} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, attorney: e.target.value })} /></label>
+            <label className="full">案卷目录<input value={matterDraft.workspacePath} onChange={(e) => setMatterDraft((prev) => prev === null ? prev : { ...prev, workspacePath: e.target.value })} placeholder="该案卷的工作目录（会话在此目录下时会优先召回本卷知识）" /></label>
+          </form>
+        </Modal>
+      )}
+
+      {/**
+        * 官文登记（阶段 5 · 5C 的前置）：官文是**期限的输入源** —— 没有官文就没有起算点。
+        * 这里只登记事实（发文日/送达/指定期限/文件），**不算期限** —— 算期限是引擎的职责（决策 3）。
+        */}
+      {noticeDraft !== null && (
+        <Modal
+          title={<><Icon name="file" />登记官文</>}
+          size="sm"
+          onClose={() => setNoticeDraft(null)}
+          footer={(
+            <>
+              <span className="wb-foot-note">只登记事实；期限由引擎按这些输入计算</span>
+              <button className="wb-btn primary" type="submit" form="wb-notice-form" disabled={busy}><Icon name="check" />登记</button>
+            </>
+          )}
+        >
+          <form className="wb-form" id="wb-notice-form" onSubmit={(e) => void saveNotice(e)}>
+            <label className="full">官文类型<select required value={noticeDraft.noticeKind} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, noticeKind: e.target.value })}>{dictOf('notice_kind').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+            <label>发文日<input required type="date" value={noticeDraft.dispatchDate} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, dispatchDate: e.target.value })} /></label>
+            <label>送达方式<select value={noticeDraft.deliveryMode} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, deliveryMode: e.target.value })}>{dictOf('delivery_mode').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+            <label>送达日<input type="date" value={noticeDraft.deliveryDate} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, deliveryDate: e.target.value })} /></label>
+            <label>指定期限（月）<input type="number" min={1} max={36} value={noticeDraft.designatedMonths} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, designatedMonths: e.target.value })} placeholder="留空 = 不指定" /></label>
+            <label className="full">官文文件<input value={noticeDraft.fileLink} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, fileLink: e.target.value })} placeholder="file:// 或绝对路径（复用知识库同一套 file_link 机制）" /></label>
+            <label className="full">备注<input value={noticeDraft.note} onChange={(e) => setNoticeDraft((prev) => prev === null ? prev : { ...prev, note: e.target.value })} /></label>
+          </form>
+        </Modal>
+      )}
+
       {reminders.length > 0 && reminderModalOpen && (
         <Modal
           title={<><Icon name="bell" />到期提醒（{reminders.length}）</>}
@@ -3036,6 +3288,33 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
             </>
           )}
 
+          {view === 'matters' && (
+            <>
+              <div className="wb-matter-bar">
+                <span className="wb-matter-bar-note">案卷 {matters.length} 个{selectedMatterId === null ? '' : '（已选 1 个）'}</span>
+                <button className="wb-btn primary" disabled={busy} onClick={() => openMatterForm(null)} data-matter-create><Icon name="plus" />新建案卷</button>
+              </div>
+              {/**
+                * 列表在上、详情在下（与知识库同一条布局判断）：面板是**窄栏**，
+                * 左右分栏会把两边都挤到读不出东西。点一行即选中，详情跟着换。
+                */}
+              <MatterList matters={matters} dicts={dicts} selectedId={selectedMatterId} onOpen={(matter) => setSelectedMatterId(matter.id)} />
+              {selectedMatter === null
+                ? (matters.length === 0 ? null : <div className="wb-empty">选一个案卷看详情与时间线。</div>)
+                : (
+                  <MatterDetail
+                    matter={selectedMatter}
+                    dicts={dicts}
+                    timeline={matterTimeline}
+                    notices={matterNotices}
+                    onEdit={() => openMatterForm(selectedMatter)}
+                    onAddNotice={openNoticeForm}
+                    onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
+                    busy={busy}
+                  />
+                )}
+            </>
+          )}
           {view === 'list' && (
             <>
               <div style={{ position: 'relative', zIndex: 25, display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
