@@ -10,6 +10,9 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { MIGRATIONS, SCHEMA_VERSION } from '../lib/db/schema.js'
 import { openWorkbenchDb, migrate } from '../lib/db/database.js'
@@ -81,14 +84,25 @@ test('迁移 19：旧任务（含 done）一律 progress=0，原字段不变，�
 
     migrate(db)
 
-    assert.equal(SCHEMA_VERSION, 21)
+    assert.equal(SCHEMA_VERSION, 22)
     for (const id of ['t-todo', 't-doing', 't-done']) {
       const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
       assert.equal(row.progress_percent, 0, `${id} 的旧进度必须是 0（不反推）`)
     }
     const after = db.prepare("SELECT * FROM tasks WHERE id = 't-doing'").get()
-    // 除新列外，原字段逐字不变（防止迁移"顺手"改写别的字段）。
+    /**
+     * 除新列外，原字段逐字不变（防止迁移"顺手"改写别的字段）。
+     *
+     * ⚠️ 阶段 4 · E 片的迁移 22 会**删掉** recurrence 四列，所以这四列在这里的"不变"
+     * 应当表现为"已消失"而不是"值相同" —— 判据跟着意图走，不是放宽：
+     * 它本来要说的是"没有任何迁移**改写**已有数据"，删列不是改写。
+     */
+    const droppedByMigration22 = new Set(['recurrence_code', 'recurrence_rule', 'recurrence_master_id', 'recurrence_last_generated'])
     for (const key of Object.keys(before)) {
+      if (droppedByMigration22.has(key)) {
+        assert.ok(!(key in after), `字段 ${key} 已被迁移 22 删除，不该还在`)
+        continue
+      }
       assert.deepEqual(after[key], before[key], `字段 ${key} 不应被迁移改动`)
     }
 
@@ -382,7 +396,7 @@ test('迁移 21：daily_capacity_include_overdue 改名成 plan_include_overdue�
     assert.equal(meta.get('plan_include_overdue'), '1', '用户的选择必须被搬到新键上（不是回落到缺省 false）')
     assert.equal(meta.has('daily_capacity_include_overdue'), false, '旧键必须消失（否则两个键各有各的口径）')
     assert.equal(meta.has('daily_capacity_minutes'), false, '容量读数已不存在，这个键没有任何读取方')
-    assert.equal(meta.get('schema_version'), '21')
+    assert.equal(meta.get('schema_version'), '22', 'migrate 一律跑到最新版（迁移 21 之后还有 22）')
 
     // 幂等：再跑一次不报错、内容不变
     const snapshot = JSON.stringify(db.prepare('SELECT key, value FROM meta ORDER BY key').all())
@@ -401,18 +415,149 @@ test('迁移 21：两个键同时存在时也不因 UNIQUE 冲突而炸（OR REP
     migrate(db)
     const meta = new Map(db.prepare('SELECT key, value FROM meta').all().map((row) => [row.key, row.value]))
     assert.equal(meta.get('plan_include_overdue'), '1', '旧键带值搬过来（用户在原开关上做过的选择优先）')
-    assert.equal(meta.get('schema_version'), '21')
+    assert.equal(meta.get('schema_version'), '22', 'migrate 一律跑到最新版（迁移 21 之后还有 22）')
   } finally {
     db.close()
   }
 })
 
-test('openWorkbenchDb 全新库即 schema 21，且旧客户端省略 progressPercent 仍可读写', () => {
+/**
+ * 迁移 22（阶段 4 · E 片）：把前四片删掉代码后留在库里的东西一并清掉。
+ *
+ * 这条测试刻意**造出老库状态**（四张表、recurrence 四列、16 行出厂字典都还在），
+ * 因为"删干净"最容易骗人的地方是：删了代码但忘了迁库，于是新库没有、老库还有，
+ * 而所有测试都是在**新库**上跑的（全绿）。
+ */
+test('迁移 22：四张废表 + tasks 的 recurrence 四列与两个索引全部消失，16 行出厂字典转停用', () => {
+  /** 迁移 22 要停用的 16 行（与 schema.ts 里那张表逐字对应）。 */
+  const RETIRED = [
+    ['idea_kind', 'spark'], ['idea_kind', 'random'], ['idea_kind', 'plugin'], ['idea_kind', 'project'], ['idea_kind', 'skill'],
+    ['draft_kind', 'idea_cluster'], ['draft_kind', 'idea_tasks'], ['draft_kind', 'report'],
+    ['ai_session_scope', 'day_report'], ['ai_session_scope', 'week_report'],
+    ['ai_session_scope', 'idea_association'], ['ai_session_scope', 'idea_brainstorm'],
+    ['recurrence', 'none'], ['recurrence', 'daily'], ['recurrence', 'weekly'], ['recurrence', 'monthly'],
+  ]
+  const tableNames = () => db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name)
+  const taskColumns = () => db.prepare('PRAGMA table_info(tasks)').all().map((row) => row.name)
+  const indexNames = () => db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all().map((row) => row.name)
+
+  const db = openLegacyDb(21)
+  try {
+    // 老库的出厂字典：这批 code 已从 seed.ts 移除，所以显式种回来模拟"老库就是有这些行"
+    const insert = db.prepare(`INSERT OR IGNORE INTO dictionaries
+      (kind, code, name, config, builtin, active, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, '{}', 1, 1, 10, ?, ?)`)
+    for (const [kind, code] of RETIRED) insert.run(kind, code, code, AT, AT)
+    insert.run('draft_kind', 'daily_plan', '今日计划', AT, AT)
+    insert.run('ai_session_scope', 'daily_plan', '今日计划会话', AT, AT)
+
+    // 迁移前：四表与 recurrence 列确实在（否则下面"消失"的断言是空跑）
+    for (const table of ['ideas', 'idea_clusters', 'idea_links', 'task_reports']) {
+      assert.ok(tableNames().includes(table), `老库该有表 ${table}`)
+    }
+    for (const column of ['recurrence_code', 'recurrence_rule', 'recurrence_master_id', 'recurrence_last_generated']) {
+      assert.ok(taskColumns().includes(column), `老库该有列 ${column}`)
+    }
+    assert.deepEqual(indexNames().filter((name) => name.startsWith('idx_tasks_recurrence')).length, 2)
+
+    migrate(db)
+
+    for (const table of ['ideas', 'idea_clusters', 'idea_links', 'task_reports']) {
+      assert.ok(!tableNames().includes(table), `表 ${table} 必须消失`)
+    }
+    for (const column of ['recurrence_code', 'recurrence_rule', 'recurrence_master_id', 'recurrence_last_generated']) {
+      assert.ok(!taskColumns().includes(column), `列 ${column} 必须消失（不留永远为空的列）`)
+    }
+    assert.deepEqual(indexNames().filter((name) => name.startsWith('idx_tasks_recurrence')), [], '两个 recurrence 索引必须消失')
+    // 别的索引不许被顺手删掉（DROP COLUMN 的连带影响只该落在 recurrence 上）
+    assert.ok(indexNames().includes('idx_tasks_status'), '无关索引不受影响')
+
+    const inactive = db.prepare('SELECT kind, code FROM dictionaries WHERE active = 0').all()
+      .map((row) => `${row.kind}:${row.code}`).sort()
+    assert.deepEqual(inactive, RETIRED.map(([kind, code]) => `${kind}:${code}`).sort(), '这 16 行必须停用（不多不少）')
+    for (const [kind, code] of [['draft_kind', 'daily_plan'], ['ai_session_scope', 'daily_plan']]) {
+      assert.equal(db.prepare('SELECT active FROM dictionaries WHERE kind = ? AND code = ?').get(kind, code).active, 1,
+        `${kind}:${code} 仍在用（日报计划），必须保持 active=1`)
+    }
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '22')
+
+    // 幂等：再跑一次不报错（DROP 都带 IF EXISTS / 列有存在性判断）
+    migrate(db)
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '22')
+  } finally {
+    db.close()
+  }
+})
+
+/**
+ * D4「迁移前自动备份」：破坏性迁移（`destructive: true`）跑之前必须留下**可用**的回滚点。
+ *
+ * 为什么这条必须验"备份能打开、且停在迁移前的版本"：
+ * 只断言"backups/ 里多了一个文件"会漏掉 WAL 那个经典坑 —— WAL 模式下未 checkpoint 的
+ * 事务还在 `.db-wal` 里，直接拷 `.db` 会得到一个**缺最近事务**的备份，文件在、
+ * 大小也对，回滚时才发现少了数据。所以这里真开备份库读 schema_version。
+ */
+test('破坏性迁移前自动整库备份：openWorkbenchDb 先写一份停在旧版本的备份，再跑迁移', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-backup-'))
+  try {
+    const dbPath = join(dir, 'workbench.db')
+    const first = openWorkbenchDb({ dbPath })
+    // 先写入一批真实数据：备份里必须**有**它们，否则下面那条 WAL 反向验证是空跑
+    seedDictionaries(first)
+    // 模拟"用户的库停在 21，插件已升到 22"（迁移 22 是破坏性的）
+    first.prepare("UPDATE meta SET value = '21' WHERE key = 'schema_version'").run()
+    first.close()
+
+    const second = openWorkbenchDb({ dbPath })
+    assert.equal(second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '22', '迁移照常跑完')
+    second.close()
+
+    const backups = readdirSync(join(dir, 'backups'))
+    assert.equal(backups.length, 1, `该且只该备份一次（实测 ${JSON.stringify(backups)}）`)
+    assert.match(backups[0], /^workbench-\d{8}-\d{6}-pre-schema21-to-22\.db$/, '文件名要能自证"哪次迁移、从哪版到哪版"')
+
+    const restored = new DatabaseSync(join(dir, 'backups', backups[0]))
+    try {
+      assert.equal(restored.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '21', '备份必须停在迁移前')
+      // WAL 坑的反向验证：备份里必须**有**建库之后写入的数据（不是一份缺事务的空壳）
+      assert.ok(restored.prepare("SELECT COUNT(*) AS n FROM dictionaries WHERE kind = 'type'").get().n > 0, '备份里要有真实数据')
+    } finally {
+      restored.close()
+    }
+
+    // 到了最新版后再开：没有待跑的破坏性迁移 → 不许再备份（否则 backups/ 会被每次开库刷爆）
+    const third = openWorkbenchDb({ dbPath })
+    third.close()
+    assert.equal(readdirSync(join(dir, 'backups')).length, 1, '非破坏性路径不该重复备份')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('迁移 22 配套：seedDictionaries 不再种 recurrence 出厂行（新库不留永远选不到的选项）', () => {
+  const db = openWorkbenchDb({ dbPath: ':memory:' })
+  try {
+    seedDictionaries(db)
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM dictionaries WHERE kind = 'recurrence'").get().n, 0)
+    // 日报计划的两个 code 必须还在（它们是"亲戚"，不是被删的那批）
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM dictionaries WHERE kind = 'draft_kind' AND code = 'daily_plan'").get().n, 1)
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM dictionaries WHERE kind = 'ai_session_scope' AND code = 'daily_plan'").get().n, 1)
+    // 已删功能的 code 一个都不许被种回来
+    for (const [kind, code] of [['draft_kind', 'report'], ['idea_kind', 'spark'], ['ai_session_scope', 'day_report']]) {
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM dictionaries WHERE kind = ? AND code = ?').get(kind, code).n, 0,
+        `${kind}:${code} 不该再被出厂种入`)
+    }
+  } finally {
+    db.close()
+  }
+})
+
+test('openWorkbenchDb 全新库即 schema 22，且旧客户端省略 progressPercent 仍可读写', () => {
   const db = openWorkbenchDb({ dbPath: ':memory:' })
   try {
     seedDictionaries(db)
     const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
-    assert.equal(Number(version.value), 21)
+    assert.equal(Number(version.value), 22)
     const task = createTask(db, { title: '任务', typeCode: 'code_impl', priorityCode: 'p1' })
     // 老调用点（不带 progressPercent 的 patch）照常工作，进度保持原值
     setTaskProgress(db, task.id, 40)

@@ -4,11 +4,21 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 21
+export const SCHEMA_VERSION = 22
 
 export interface Migration {
   version: number
   name: string
+  /**
+   * 这个迁移会**不可逆地丢东西**（DROP TABLE / DROP COLUMN / DELETE 数据）。
+   *
+   * 标记本身不改变迁移行为，只驱动一件事：`openWorkbenchDb` 在跑它之前先把
+   * **整库备份**到同目录的 `backups/`（决策 D4「迁移前自动备份」，
+   * 实现见 `database.ts#backupBeforeDestructiveMigrations`）。
+   *
+   * ⚠️ 新增"删表/删列"的迁移必须带上它 —— 否则用户就没有回滚点了。
+   */
+  destructive?: boolean
   up(db: DatabaseSync): void
 }
 
@@ -765,6 +775,72 @@ export const MIGRATIONS: Migration[] = [
        */
       db.prepare("UPDATE OR REPLACE meta SET key = 'plan_include_overdue' WHERE key = 'daily_capacity_include_overdue'").run()
       db.prepare("DELETE FROM meta WHERE key = 'daily_capacity_minutes'").run()
+    },
+  },
+  {
+    version: 22,
+    name: 'drop-removed-features',
+    // DROP TABLE ×4 + DROP COLUMN ×4 —— 本仓第一个破坏性迁移，所以是第一个带这个标记的。
+    destructive: true,
+    up(db) {
+      /**
+       * 专利工作台阶段 4 收尾（决策 4，见
+       * docs/design/2026-10-03-patent-workbench-redesign.md）：把前四片删掉**代码**后
+       * 留在库里的东西一并清掉。
+       *
+       * ## 1. DROP TABLE ×4（点子 / 点子王 / 日报周报）
+       *
+       * `ideas` / `idea_clusters` / `idea_links` / `task_reports`。
+       * 迁移前已实测：这四表在**两份真实库**（`workbench.db` 与 `case.db`）里都是 **0 行**，
+       * 所以这是纯结构清理、没有数据损失 —— 但仍然照项目纪律**先整库备份**（见提交说明），
+       * 因为"现在没数据"不等于"将来不需要回滚"。
+       * 先删 `idea_links`：它带指向 `ideas` / `idea_clusters` 的外键。
+       * `IF EXISTS` 是为了幂等（测试里会用旧库快照反复跑）。
+       *
+       * ## 2. `tasks` 的四个 `recurrence_*` 列 + 两个索引
+       *
+       * **不留"永远为空的列"**：空列会让下一个人以为还有功能在对它读写，
+       * 于是又去清理一次。SQLite 的 `DROP COLUMN` 拒绝删除被索引引用的列，
+       * 所以两个索引必须先删。
+       *
+       * ## 3. 16 行出厂字典 `active = 0`（**不是 DELETE**）
+       *
+       * - `idea_kind` 5 行（整类消失）；- `draft_kind` 3 行（`idea_cluster` / `idea_tasks` / `report`）；
+       * - `ai_session_scope` 4 行（`day_report` / `week_report` / `idea_association` / `idea_brainstorm`）；
+       * - `recurrence` 4 行（整类消失）。
+       *
+       * 为什么停用而不是删：`dictionaries` 是**用户可编辑**的（设置页能改名字/颜色/排序），
+       * 这 16 行只是**出厂默认**；停用保住了"这个 code 曾经是什么"这条信息，
+       * 以后真有人重新引入同名 code 时不用猜。
+       *
+       * ⚠️ **保留** `draft_kind:daily_plan` 与 `ai_session_scope:daily_plan` —— 日报计划
+       * （AI 智能排序 / 手动添加 / 计划会话）还在用，它们只是名字里带 report 的亲戚。
+       * `ai_session_scope:day_report` / `week_report` 才是要停的 —— 它们是**范围码**，
+       * 光删代码不停用，UI 里还会选得到。
+       */
+      const at = new Date().toISOString()
+
+      db.exec('DROP TABLE IF EXISTS idea_links')
+      db.exec('DROP TABLE IF EXISTS idea_clusters')
+      db.exec('DROP TABLE IF EXISTS task_reports')
+      db.exec('DROP TABLE IF EXISTS ideas')
+
+      db.exec('DROP INDEX IF EXISTS idx_tasks_recurrence_master')
+      db.exec('DROP INDEX IF EXISTS idx_tasks_recurrence_code')
+      const taskColumns = new Set((db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((column) => column.name))
+      for (const column of ['recurrence_code', 'recurrence_rule', 'recurrence_master_id', 'recurrence_last_generated']) {
+        if (taskColumns.has(column)) db.exec(`ALTER TABLE tasks DROP COLUMN ${column}`)
+      }
+
+      const retired: Array<[string, string]> = [
+        ['idea_kind', 'spark'], ['idea_kind', 'random'], ['idea_kind', 'plugin'], ['idea_kind', 'project'], ['idea_kind', 'skill'],
+        ['draft_kind', 'idea_cluster'], ['draft_kind', 'idea_tasks'], ['draft_kind', 'report'],
+        ['ai_session_scope', 'day_report'], ['ai_session_scope', 'week_report'],
+        ['ai_session_scope', 'idea_association'], ['ai_session_scope', 'idea_brainstorm'],
+        ['recurrence', 'none'], ['recurrence', 'daily'], ['recurrence', 'weekly'], ['recurrence', 'monthly'],
+      ]
+      const retire = db.prepare('UPDATE dictionaries SET active = 0, updated_at = ? WHERE kind = ? AND code = ?')
+      for (const [kind, code] of retired) retire.run(at, kind, code)
     },
   },
 ]

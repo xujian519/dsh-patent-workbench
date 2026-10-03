@@ -66,11 +66,11 @@ export const DICTIONARY_SEEDS: DictionarySeed[] = [
   { kind: 'knowledge_kind', code: 'decision', name: '决策记录', sortOrder: 30, config: { color: '#8B7BE8' } },
   { kind: 'knowledge_kind', code: 'snippet', name: '片段/模板', sortOrder: 40, config: { color: '#2E9B7B' } },
 
-  // 重复规则
-  { kind: 'recurrence', code: 'none', name: '不重复', sortOrder: 10, config: {} },
-  { kind: 'recurrence', code: 'daily', name: '每天', sortOrder: 20, config: {} },
-  { kind: 'recurrence', code: 'weekly', name: '每周', sortOrder: 30, config: {} },
-  { kind: 'recurrence', code: 'monthly', name: '每月', sortOrder: 40, config: {} },
+  /**
+   * `recurrence` 出厂字典（不重复/每天/每周/每月）已随重复任务域删除
+   * （阶段 4 · D/E 片）。老库里的那 4 行由迁移 22 置为 `active = 0`（停用而非删除），
+   * 新库不再种 —— 两边都不留"永远选不到的选项"。
+   */
 
   // V2 复用型 AI 会话范围
   { kind: 'ai_session_scope', code: 'daily_plan', name: '今日计划会话', sortOrder: 10, config: {} },

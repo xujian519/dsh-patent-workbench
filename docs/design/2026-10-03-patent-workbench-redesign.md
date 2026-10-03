@@ -1,6 +1,6 @@
 # 专利工作台改造方案（dsh-personal-workbench → dsh-patent-workbench）
 
-> 状态：**阶段 4 进行中**（阶段 0–3 已落地；阶段 4 分 A–E 五片，A/B/C 已完成）。
+> 状态：**阶段 4 已完成**（阶段 0–4 已落地；阶段 5 知识库加法 + 案件视图 / 期限看板待做）。
 > 相关既有工作（另一仓库）：
 >
 > - `deepseek-harness/docs/dsh-workbench-integration-design.md`（2026-09-03 工作台↔专利案件集成，Phase 1–5）
@@ -15,7 +15,7 @@
 | 1 改名 | ✅ | `dsh-patent-workbench`：包名 / cordis id / PANEL_NAME / 模块 id / 仓库 URL / README；**刻意保留** DOM 前缀 `data-dsh-personal-workbench-*` 与数据目录 `~/.dsh/workbench/`（提交 `662f335`） |
 | 2 领域字典 + matters | ✅ | 迁移 20：`matters` / `matter_notices` / `matter_deadlines` / `matter_events` + `knowledge_entries.matter_id` + 四类领域字典；`db/repo/matters.ts`（CRUD + 校验）与 `api/routes/matters.ts`（REST）；`test/matters.test.mjs` 9 例 |
 | 3 期限引擎接入 | ◐ | **DSH Patent 侧已完成**（`deepseek-harness` 分支 `feat/patent-deadline-service`）：`patent-deadline` 新增 `provideService` / `exposeTool` 两个 Config 开关，profile 根域多注册一行即发布 `patentDeadline` 服务（不是新建包）；工作台侧已完成软探测 + `shared/patentDeadline.ts`（案卷/官文 → 引擎入参、报告 → 期限行，唯一映射处）+ `POST /api/workbench/matters/:id/deadlines/recompute`，引擎缺失时 409 明确降级。**待做**：期限看板 UI（归到阶段 5）与实机装盘 |
-| 4 删除通用功能 | ◐ | 分片执行（D4）：**A 片**删日报/周报（`6ea289f`，−544 行，工具 17→16）；**B 片**删点子/点子王（`a15dc51`，34 文件 −2326 行，工具 16→14）；**C 片**删容量账本（`client/capacity.ts` → `dailyPlanCandidates.ts`、`CapacityRulePanel`、`dailyCapacityMinutes` 设置、迁移 21 的两个 meta 键）。**留存的**：`daily_plans` + AI 智能排序、`estimatedMinutes`、`dailyCapacityIncludeOverdue`（改名 `planIncludeOverdue`）。**待做**：D 片重复任务、E 片迁移 22（`DROP TABLE` ×4 + 字典停用） |
+| 4 删除通用功能 | ✅ | 分五片（D4）：**A** 日报/周报（`6ea289f`，−544 行，工具 17→16）；**B** 点子/点子王（`a15dc51`，34 文件 −2326 行，工具 16→14）；**C** 容量账本（`def51ad`，−3223 行，`capacity.ts` → `dailyPlanCandidates.ts`，迁移 21 = 两个 meta 键）；**D** 重复任务（`d746305`，`db/repo/recurring.ts` 整删）；**E** 迁移 22（`DROP TABLE` ×4 + `DROP COLUMN` ×4 + 16 行字典 `active=0` + 破坏性迁移前自动备份）。**留存的**：`daily_plans` + AI 智能排序、`estimatedMinutes`、`planIncludeOverdue`（原 `dailyCapacityIncludeOverdue`） |
 | 5 知识库加法 + UI | ⬜ | `matter_id` 关联、新 kind、本案卷优先；案件视图 / 期限看板 |
 | 6 bridge 收口 | ⬜ | `workbench_link_patent_case` → `_matter-log.md` → `matter_events` 只读投影 |
 
@@ -90,7 +90,7 @@
 | D2 | 期限集成机制 | **服务（软探测）**，非直接 import |
 | B′ | 服务落点 | **`patent-deadline` 自已被 profile 根域再注册一行**（`{ provideService: true, exposeTool: false }`），由两个 Config 开关控制；**不新建包**（2026-10-03 修订，见第 4 节） |
 | D3 | 工具前缀 | **保留 `workbench_*`**（不动 bridge / persona / 421 条测试） |
-| D4 | 删除的表 | **B：追加迁移 `DROP TABLE` + 彻底清理痕迹**；迁移前自动备份 |
+| D4 | 删除的表 | 已实现：**迁移 22** 做 `DROP TABLE` ×4 + `DROP COLUMN` ×4（`tasks.recurrence_*`）+ 16 行字典停用；**破坏性迁移前自动整库备份**（`Migration.destructive` 标记 → `openWorkbenchDb` 先 WAL checkpoint 再 copy 到 `backups/`） |
 
 ## 4. B′：期限服务的落地形态
 
@@ -222,13 +222,14 @@ ALTER TABLE knowledge_entries ADD COLUMN matter_id TEXT;
 | 域 | 删除面 |
 | --- | --- |
 | 点子 | `db/repo/ideas.ts`、`api/routes/ideas.ts`、`idea-clusters.ts`、`client/components/IdeaCardGrid.tsx`、tab；工具 `workbench_propose_idea_clusters` / `workbench_submit_idea_tasks` |
-| 容量 | `client/capacity.ts`、`CapacityRulePanel.tsx`、`test/capacity*.test.mjs` |
+| 容量 | `client/capacity.ts` → 改名 `client/dailyPlanCandidates.ts`（**只删容量账本**：`computeCapacityLedger` / `CapacityRulePanel` / `dailyCapacityMinutes`；`daily_plans` + AI 智能排序**保留**） |
 | 日报周报 | `api/routes/reports.ts`、`db/repo/reports.ts`、report 视图；工具 `workbench_submit_report` |
-| 重复任务 | `recurrence` 相关分支与字典（年费由期限引擎承担） |
+| 重复任务 | `db/repo/recurring.ts`（`ensureRecurringInstances` + 4 个惰性补齐调用点）、HTTP/契约/仓储的 recurrence 字段、客户端「重复」下拉与模板分支、`tasks` 的 4 列（迁移 22 DROP） |
 
-**表**（D4=B，`DROP TABLE`）：`ideas` / `idea_clusters` / `idea_links` / `task_reports`（两库实测 0 行）。
-**字典**：`idea_kind`、`draft_kind:idea_cluster/idea_tasks/report`、`ai_session_scope:idea_*/day_report/week_report`、`recurrence` —— 除删种子外，追加迁移显式停用已有行（`active=0`），否则 UI 仍可选到。
-**安全网**：迁移前整库备份（复用 `~/.dsh/workbench/backups/`）。
+**表**（`DROP TABLE`，迁移 22）：`ideas` / `idea_clusters` / `idea_links` / `task_reports`（两库实测 0 行）。
+**列**：`tasks.recurrence_code / recurrence_rule / recurrence_master_id / recurrence_last_generated` + 两个索引（不留"永远为空的列"）。
+**字典**：`idea_kind` 5 行、`draft_kind:idea_cluster/idea_tasks/report`、`ai_session_scope:day_report/week_report/idea_association/idea_brainstorm`、`recurrence` 4 行 = **16 行** —— 除 `seedDictionaries` 去种子外，迁移 22 显式停用已有行（`active=0`），否则 UI 仍可选到；`ai_session_scope:day_report` 这类**范围码**尤其必须显式停用。
+**安全网**：`Migration.destructive` 标记 → `openWorkbenchDb` 在跑之前先 `wal_checkpoint(TRUNCATE)` 再整库 copy 到 `~/.dsh/workbench/backups/`（复用既有目录约定；拷不出来就中止迁移，不裸删表）。
 
 ## 8. 改名与数据迁移（决策 6）
 

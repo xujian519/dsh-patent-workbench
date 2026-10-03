@@ -243,30 +243,29 @@ test('db migrations, dictionaries and task tree', () => {
     assert.equal(getAiSession(db, 'daily_plan', planDate).sessionId, 'sess-daily-plan-2')
 
     /**
-     * 阶段 4 · D 片：重复任务域已整体删除（决策 4）。
+     * 阶段 4 · D/E 片：重复任务域已整体删除（决策 4）。
      *
-     * 这条钉住的是"**没人再写那四列**"——列本身要到 E 片（迁移 22）才 DROP，
-     * 所以现在唯一能防"悄悄写回来"的就是这条：旧客户端/旧工具若还传 recurrenceCode，
-     * 服务端当未知字段忽略，库里必须保持建表缺省（而不是被写进半截数据）。
+     * 两件事一起钉住（列在迁移 22 里 DROP 掉了，所以这里能断言的是"列不存在"）：
+     * 1. `tasks` 表**没有**那四个 `recurrence_*` 列 ——「不留永远为空的列」，
+     *    而"新库没有、老库还有"正是这类清理最容易骗人的地方（老库那条在 progressDb 的迁移 22 测试里）；
+     * 2. 旧客户端/旧工具若还传 `recurrenceCode`，服务端当**未知字段忽略** —— 不报错、不半写。
      */
     const legacyRecurring = createTask(db, {
       title: '按旧参数建（recurrenceCode 应被忽略）', typeCode: 'code_impl', priorityCode: 'p2',
       recurrenceCode: 'daily', recurrenceRule: { interval: 1, startDate: '2026-08-16' }, recurrenceMasterId: 'ghost',
     })
-    // ⚠️ `node:sqlite` 返回的行是 **null 原型对象**，`assert.deepEqual` 与对象字面量不等
-    //（本轮实测踩到：报错信息里那句 `[Object: null prototype]` 就是它）—— 先展开成普通对象。
-    const recurrenceColumns = () => ({ ...db.prepare('SELECT recurrence_code, recurrence_rule, recurrence_master_id, recurrence_last_generated FROM tasks WHERE id = ?').get(legacyRecurring.id) })
-    assert.deepEqual(recurrenceColumns(),
-      { recurrence_code: null, recurrence_rule: '{}', recurrence_master_id: null, recurrence_last_generated: null },
-      'createTask 不许再写 recurrence 四列')
+    const recurrenceColumns = ['recurrence_code', 'recurrence_rule', 'recurrence_master_id', 'recurrence_last_generated']
+    const taskColumns = db.prepare('PRAGMA table_info(tasks)').all().map((row) => row.name)
+    for (const column of recurrenceColumns) {
+      assert.ok(!taskColumns.includes(column), `tasks 不该再有 ${column} 列（迁移 22 已 DROP）`)
+    }
     const taskRowKeys = Object.keys(getTask(db, legacyRecurring.id))
     for (const key of ['recurrenceCode', 'recurrenceRule', 'recurrenceMasterId', 'recurrenceLastGenerated']) {
       assert.ok(!taskRowKeys.includes(key), `TaskRow 不该再有 ${key}`)
     }
+    assert.equal(legacyRecurring.title, '按旧参数建（recurrenceCode 应被忽略）', '旧参数被忽略，任务照常建出来')
     updateTask(db, legacyRecurring.id, { recurrenceCode: 'weekly', recurrenceRule: { interval: 2 } })
-    assert.deepEqual(recurrenceColumns(),
-      { recurrence_code: null, recurrence_rule: '{}', recurrence_master_id: null, recurrence_last_generated: null },
-      'updateTask 同样不许再写 recurrence 四列')
+    assert.equal(getTask(db, legacyRecurring.id).title, '按旧参数建（recurrenceCode 应被忽略）', '改任务带旧参数也不许炸')
 
     // knowledge base: create / search / draft confirm / file_link / delete
     const k1 = createKnowledge(db, { title: 'edge-tts 方案', kindCode: 'lesson', contentMd: '# 结论\n免费可用', tags: ['TTS', '踩坑'], fileLink: 'D:\\docs\\edge-tts.md' })

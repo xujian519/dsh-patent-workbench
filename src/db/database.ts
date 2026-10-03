@@ -2,9 +2,9 @@
  * 打开/迁移工作台 SQLite 数据库。
  * 运行态数据库默认在 ~/.dsh/workbench/workbench.db。
  */
-import { mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { MIGRATIONS, SCHEMA_VERSION } from './schema.js'
 
@@ -24,6 +24,53 @@ function readVersion(db: DatabaseSync): number {
     | { value: string }
     | undefined
   return row === undefined ? 0 : Number(row.value)
+}
+
+/**
+ * 破坏性迁移前的**整库备份**（决策 D4「迁移前自动备份」）。
+ *
+ * ## 为什么必须有
+ *
+ * `migrate()` 里的破坏性迁移（`destructive: true`，如 `DROP TABLE`）是不可逆的。
+ * 光在提交说明里写"已经备份过了"只对**开发者自己的机器**成立；用户装盘那一刻跑的是
+ * 迁移本身，没人替他备份。所以备份必须长在打开库的路径上。
+ *
+ * ## 三个刻意的判断
+ *
+ * 1. **只有"将要跑破坏性迁移"才备份**（有一条 `destructive` 的版本号大于当前版本）。
+ *    每次开库都拷一份会让 `backups/` 迅速膨胀，也会掩盖真正的回滚点。
+ * 2. **先 `wal_checkpoint(TRUNCATE)` 再 copy**：WAL 模式下未 checkpoint 的事务还在
+ *    `.db-wal` 里，直接拷 `.db` 会得到一个**缺最近事务**的备份 —— 这正是本仓
+ *    `~/.dsh/workbench/backup-case-db.sh` 里那行的原因，同法照抄。
+ * 3. **拷不出来就抛**（不吞）：宁可让插件启动失败并说清原因，也不能在没有回滚点的情况下
+ *    去删表。全新库（`schema_version` 为 0 或不存在）没有可丢的东西，跳过。
+ *
+ * 返回备份文件路径（跳过时返回 undefined），便于测试与排障时直接断言。
+ */
+function backupBeforeDestructiveMigrations(db: DatabaseSync, dbPath: string): string | undefined {
+  if (dbPath === ':memory:' || dbPath === '') return undefined
+  /**
+   * ⚠️ `meta` 表是 `migrate()` 自己建的，而本函数跑在它**之前** —— 全新库这里
+   * 连表都没有（本轮实测踩到：`no such table: meta`）。没有 meta 表 = 一个迁移都没跑过
+   * = 没有任何可丢的东西，直接跳过。
+   */
+  const hasMeta = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get() !== undefined
+  if (!hasMeta) return undefined
+  const current = readVersion(db)
+  if (current === 0) return undefined
+  const pending = MIGRATIONS.filter((migration) => migration.version > current && migration.destructive === true)
+  if (pending.length === 0) return undefined
+  const target = pending[pending.length - 1].version
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  const dir = join(dirname(dbPath), 'backups')
+  mkdirSync(dir, { recursive: true })
+  const now = new Date()
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const file = join(dir, `${basename(dbPath, '.db')}-${stamp}-pre-schema${current}-to-${target}.db`)
+  copyFileSync(dbPath, file)
+  if (!existsSync(file)) throw new Error(`破坏性迁移前备份失败：${file} 没有生成，已中止迁移（不删表）`)
+  return file
 }
 
 /**
@@ -75,6 +122,7 @@ export function openWorkbenchDb(config: WorkbenchDbConfig = {}): DatabaseSync {
   try {
     db.exec('PRAGMA journal_mode = WAL')
     db.exec('PRAGMA foreign_keys = ON')
+    backupBeforeDestructiveMigrations(db, dbPath)
     migrate(db)
   } catch (error) {
     // 迁移失败必须先把连接关掉：否则句柄泄漏，Windows 上文件被占用，
