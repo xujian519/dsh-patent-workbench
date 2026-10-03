@@ -52,7 +52,13 @@ check('版本推进到最新', after === SCHEMA_VERSION, `${before} → ${after}
 
 const knowledge = Object.fromEntries(readKind('knowledge_kind').map((r) => [r.code, JSON.parse(r.config)]))
 
-check('知识库类型全部有颜色', ['note', 'lesson', 'decision', 'snippet'].every((c) => typeof knowledge[c].color === 'string' && knowledge[c].color.startsWith('#')), JSON.stringify(knowledge))
+/**
+ * ⚠️ 阶段 5 把知识库出厂分类从 4 类扩到 10 类（决策 5.2.2），所以这里**不能写死 4 个 code** ——
+ * 判据是"**每一条出厂分类都带颜色**"（缺色会让 Tab 圆点与徽标统一落灰，
+ * 迁移 16 修过一次的同一类问题）。改法：按数据自身遍历，而不是列举。
+ */
+const colorless = Object.entries(knowledge).filter(([, v]) => typeof v.color !== 'string' || !v.color.startsWith('#')).map(([code]) => code)
+check('知识库类型全部有颜色', Object.keys(knowledge).length >= 4 && colorless.length === 0, `共 ${Object.keys(knowledge).length} 类，缺色：${JSON.stringify(colorless)}`)
 check('用户自己配过的颜色**不被覆盖**', knowledge.note.color === '#123456', `note=${knowledge.note.color}`)
 check('用户在同一 config 里的其他字段被保留', knowledge.note['自定义'] === '保留我', JSON.stringify(knowledge.note))
 check('停用/改名的行也补上颜色', knowledge.decision.color === '#8B7BE8', JSON.stringify(knowledge.decision))

@@ -24,7 +24,7 @@ import { openWorkbenchDb, SchemaTooNewError, type WorkbenchDbConfig } from './db
 import { seedDictionaries } from './db/seed.js'
 import { installKnowledgeRecall } from './knowledge-recall.js'
 import { knowledgeRecallControlTool, searchKnowledgeTool } from './knowledge-tools.js'
-import { linkKnowledgeMatterTool } from './matter-tools.js'
+import { linkKnowledgeMatterTool, syncMatterEventsTool } from './matter-tools.js'
 import { countFiredRemindersSince, countQueue, enqueueReminder, listDueRemindersInWindow, listQueue, markQueueAttempt, readMeta, removeQueueEntry, skipStaleReminders } from './db/repo.js'
 import { probeDshIm, WechatChannelAdapter } from './reminder/adapter.js'
 import { readReminderPolicy, writeReminderPolicy } from './reminder/config.js'
@@ -425,7 +425,7 @@ function applyReady(ctx: Context, db: DatabaseSync, config: Config): void {
         // 知识库回流：模型主动查 + 自动召回的开关/引用回报（与钩子共用同一个管理器）。
         searchKnowledgeTool(knowledgeRecall), knowledgeRecallControlTool(knowledgeRecall),
         // 案卷域：把知识条目显式归入案卷（"本案卷优先"的写入口，阶段 5）。
-        linkKnowledgeMatterTool(db),
+        linkKnowledgeMatterTool(db), syncMatterEventsTool(db),
       ].map((tool) => ctx.tools.register(tool))
       return () => { for (const dispose of disposers) dispose() }
     },

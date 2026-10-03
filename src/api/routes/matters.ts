@@ -14,6 +14,7 @@
  * - `POST /api/workbench/matters/:id/deadlines/recompute` 调期限引擎重算并落库（返回待补输入）
  * - `PATCH /api/workbench/matters/:id/deadlines/:did` 单条期限状态（已办理 / 已豁免）
  * - `GET  /api/workbench/matters/:id/events`         案卷事件（_matter-log.md 的只读投影）
+ * - `POST /api/workbench/matters/:id/events/sync`     读案卷目录的 _matter-log.md → 投影成事件（幂等、只追加；不写磁盘）
  * - `POST /api/workbench/matters/:id/events`         追加事件
  *
  * 校验失败一律 `400` + 中文原因（仓储层抛出）；不静默忽略非法值。
@@ -22,14 +23,27 @@
  * 这里只做映射与落库。服务拿不到时返回 `409` 让界面明说“期限引擎不可用”，
  * 绝不在插件里兜底一份期限口径（同一语义两处实现是禁区）。
  */
+import { readFile, stat } from 'node:fs/promises'
 import type { ServerResponse } from 'node:http'
+import { join } from 'node:path'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import {
   MATTER_STAGE_CODES, appendMatterEvent, createMatter, createMatterNotice, deleteMatter, deleteMatterNotice,
   getMatter, listMatterDeadlines, listMatterEvents, listMatterNotices, listMatters, localDateString,
-  replaceMatterDeadlines, setMatterDeadlineStatus, updateMatter, type MatterStageCode,
+  projectMatterLogEvents, replaceMatterDeadlines, setMatterDeadlineStatus, updateMatter, type MatterStageCode,
 } from '../../db/repo.js'
+import { parseMatterLog } from '../../shared/matterLog.js'
+
+/**
+ * 投影源的**文件名常量**（`patent-matter` 技能定义的固定名）。
+ *
+ * 只认这一个名字：不接受调用方传路径 —— 否则一个手滑的 `../../../` 就能把任意文件的行
+ * 读成"案卷事件"存进库。案卷目录 + 固定文件名 = 攻击面为零。
+ */
+const MATTER_LOG_FILENAME = '_matter-log.md'
+/** 单次导入的体积上限：日志是纯文本行记录，2 MiB 已远超真实规模（一万行约 0.5 MiB）。 */
+const MAX_MATTER_LOG_BYTES = 2 * 1024 * 1024
 import { buildDeadlineQuery, reportToDeadlineRows, type PatentDeadlineService } from '../../shared/patentDeadline.js'
 import { MATTERS_PREFIX, isLoopbackRequest, pathSegments, readJsonBody, writeJson } from './helpers.js'
 
@@ -264,6 +278,55 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
           if (section === 'events') {
             if (segments.length === 2 && method === 'GET') {
               return writeJson(res, 200, { ok: true, events: listMatterEvents(db, id) })
+            }
+            /**
+             * `POST /matters/:id/events/sync`：把案卷目录里的 `_matter-log.md`
+             * **投影**成 `matter_events`（阶段 6 · bridge 收口；决策 D1）。
+             *
+             * 方向是**单向**的：日志是唯一事实源，本端点**只读磁盘、只追加库行** ——
+             * 不写案卷目录（那个方向被明令禁止）、不 UPDATE/DELETE 已有事件。
+             * 幂等：同一份日志导两次，第二次 `added = 0`。
+             */
+            if (segments.length === 3 && segments[2] === 'sync' && method === 'POST') {
+              const matter = getMatter(db, id)
+              if (matter === undefined) return writeJson(res, 404, { error: '案卷不存在' })
+              const dir = matter.workspacePath === null ? '' : matter.workspacePath.trim()
+              if (dir === '') {
+                /**
+                 * 没登记目录就**直说没法定位**，不猜一个路径、也不去别处找日志：
+                 * 猜错会把另一个案卷的日志导进来，那比"没导入"严重得多。
+                 */
+                return writeJson(res, 400, {
+                  error: '案卷没有登记「案卷目录」，无法定位 _matter-log.md。请先在案卷详情里补全目录（例如 patent-workspace/<案号>）。',
+                })
+              }
+              const logPath = join(dir, MATTER_LOG_FILENAME)
+              let content: string
+              try {
+                const info = await stat(logPath)
+                if (!info.isFile()) return writeJson(res, 400, { error: `${logPath} 不是文件` })
+                if (info.size > MAX_MATTER_LOG_BYTES) {
+                  return writeJson(res, 400, { error: `_matter-log.md 超过上限（${MAX_MATTER_LOG_BYTES} 字节），拒绝整体导入` })
+                }
+                content = await readFile(logPath, 'utf8')
+              } catch (error) {
+                const code = (error as { code?: string }).code
+                if (code === 'ENOENT') return writeJson(res, 404, { error: `该案卷目录下没有 ${MATTER_LOG_FILENAME}：${logPath}` })
+                return writeJson(res, 400, { error: `读取 ${logPath} 失败：${error instanceof Error ? error.message : String(error)}` })
+              }
+              const parsed = parseMatterLog(content)
+              const result = projectMatterLogEvents(db, id, parsed.events)
+              return writeJson(res, 200, {
+                ok: true,
+                path: logPath,
+                added: result.added,
+                existing: result.existing,
+                total: result.total,
+                /** 名字与数量一并给出："导入了 0 条"与"另有 2 行没解析出来"是两件事。 */
+                ignoredLines: parsed.ignored,
+                skipped: parsed.skipped,
+                events: listMatterEvents(db, id),
+              })
             }
             if (segments.length === 2 && method === 'POST') {
               if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })

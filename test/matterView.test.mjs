@@ -158,7 +158,7 @@ test('SSR：详情渲染字段区 + 官文 + 时间线；字段缺失显示 —�
   const html = renderToStaticMarkup(createElement(MatterDetail, {
     matter: matter(), dicts: DICTS, timeline: timeline(),
     notices: [{ id: 'n1', noticeKind: 'office_action_first', dispatchDate: '2026-10-05', deliveryMode: 'electronic', deliveryDate: null, designatedMonths: 4, fileLink: null, note: null }],
-    deadlines: [], engineAvailable: true, recomputeNote: '',
+    deadlines: [], engineAvailable: true, recomputeNote: '', onSyncEvents: () => {}, syncNote: '',
     onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
   }))
   assert.match(html, /data-matter-detail="2026-UM-002"/)
@@ -181,7 +181,7 @@ test('SSR：时间线里没有日期的条目要单独列出来并说明（不�
   })
   const html = renderToStaticMarkup(createElement(MatterDetail, {
     matter: matter(), dicts: DICTS, timeline: withUndated, notices: [],
-    deadlines: [], engineAvailable: true, recomputeNote: '',
+    deadlines: [], engineAvailable: true, recomputeNote: '', onSyncEvents: () => {}, syncNote: '',
     onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
   }))
   assert.match(html, /data-matter-undated/)
@@ -272,7 +272,7 @@ test('SSR：案卷详情的期限区 —— 重算说明、顺延口径双日期
       deadlineRow(),
       deadlineRow({ id: 'dl2', label: '缴年费', status: 'done', computedFrom: { calendarCaveat: '2027 年节假日表未覆盖' } }),
     ],
-    engineAvailable: true, recomputeNote: '重算完成：2 条真日期期限；顺延口径：apply',
+    engineAvailable: true, recomputeNote: '重算完成：2 条真日期期限；顺延口径：apply', onSyncEvents: () => {}, syncNote: '',
     onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
   }))
   assert.match(html, /data-matter-recompute-note/)
@@ -287,7 +287,7 @@ test('SSR：案卷详情的期限区 —— 重算说明、顺延口径双日期
   // 引擎不可用：说明降级 + 重算按钮禁用
   const degraded = renderToStaticMarkup(createElement(MatterDetail, {
     matter: matter(), dicts: DICTS, timeline: timeline(), notices: [], deadlines: [],
-    engineAvailable: false, recomputeNote: '',
+    engineAvailable: false, recomputeNote: '', onSyncEvents: () => {}, syncNote: '',
     onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
   }))
   assert.match(degraded, /data-matter-engine-missing/)
@@ -375,4 +375,41 @@ test('5D：package.json 描述与 README 已不宣称被删掉的功能（日报
    * 按纪律不改写。这里反向确认一下它确实还在（防止有人"顺手清理"历史）。
    */
   assert.match(readme.slice(readme.indexOf('## 版本历史')), /容量账本/, '版本历史里的发版记录不许被清理')
+})
+
+// ---------------------------------------------------------------------------
+// 阶段 6 · bridge 收口：投影器的界面接线
+// ---------------------------------------------------------------------------
+
+test('SSR：时间线卡带「同步事件日志」按钮与方向说明（用户得能看出它不改案卷目录）', () => {
+  const html = renderToStaticMarkup(createElement(MatterDetail, {
+    matter: matter(), dicts: DICTS, timeline: timeline(), notices: [],
+    deadlines: [], engineAvailable: true, recomputeNote: '', onSyncEvents: () => {}, syncNote: '',
+    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
+  }))
+  assert.match(html, /data-matter-sync-events/, '要有同步按钮')
+  assert.match(html, /同步事件日志/)
+  assert.match(html, /data-matter-sync-hint/, '要有方向说明')
+  assert.match(html, /唯一事实源/, '说明里要点出日志是唯一事实源')
+  assert.match(html, /_matter-log\.md/)
+  assert.match(html, /不改写文件、不改已有事件/)
+
+  const withNote = renderToStaticMarkup(createElement(MatterDetail, {
+    matter: matter(), dicts: DICTS, timeline: timeline(), notices: [],
+    deadlines: [], engineAvailable: true, recomputeNote: '',
+    onSyncEvents: () => {}, syncNote: '已从 /x/_matter-log.md 同步：新增 2 条，已存在 0 条。⚠️ 1 行没解析出来（未进事件）：第 5 行（缺少动作）',
+    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
+  }))
+  assert.match(withNote, /data-matter-sync-note/)
+  assert.match(withNote, /没解析出来/)
+  assert.match(withNote, /第 5 行/)
+})
+
+test('6：投影走服务端端点，界面与工具都不许自己解析日志格式', () => {
+  assert.match(clientSource, /\/events\/sync`/, '界面必须走 sync 端点')
+  assert.match(read('src/shared/matterLog.ts'), /export function parseMatterLog/)
+  assert.match(read('src/db/repo/matters.ts'), /export function projectMatterLogEvents/)
+  assert.doesNotMatch(read('src/client/components/MattersView.tsx'), /parseMatterLog|split\('\|'\)/, '界面不许自己解析日志')
+  assert.match(read('src/matter-tools.ts'), /parseMatterLog\(content\)/, '工具复用同一份解析')
+  assert.doesNotMatch(read('src/matter-tools.ts'), /split\('\|'\)/, '工具不许另写一份解析')
 })

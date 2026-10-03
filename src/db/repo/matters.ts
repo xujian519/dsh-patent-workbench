@@ -27,6 +27,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso } from './shared.js'
+import { matterLogEventKey } from '../../shared/matterLog.js'
 
 /** 案卷阶段：逐字对齐 patent-matter 技能的六态（L1–L5）。 */
 export const MATTER_STAGE_CODES = ['open', 'retrieving', 'analyzing', 'drafting', 'review', 'closed'] as const
@@ -641,6 +642,50 @@ export function listMatterEvents(db: DatabaseSync, matterId: string): MatterEven
  * 追加一条案卷事件（`_matter-log.md` 的只读投影）。
  * 只追加、不覆写 —— 这是案件审计链的投影方向，唯一事实源始终是 `_matter-log.md`。
  */
+/**
+ * 把 `_matter-log.md` 的解析结果**投影**成 `matter_events`（阶段 6 · bridge 收口）。
+ *
+ * ## 三条硬约束
+ *
+ * 1. **只追加**：已存在的事件一个字节都不动（不 UPDATE、不 DELETE）。
+ *    投影方向是单向的（事实源在案卷目录里），反向改写等于让投影变成第二本账。
+ * 2. **幂等**：同一份日志导入两次，第二次 `added = 0`。键是 `at + 动作 + 产物`
+ *    （见 `shared/matterLog.ts#matterLogEventKey` 的理由）。
+ * 3. **不猜**：解析失败的行由调用方从 `skipped` 原样报给用户，这里不替它决定"要不要凑一条"。
+ *
+ * 返回值把 `added` / `existing` / `total` 分开报 —— "导入了 0 条"与"导入了 3 条、另有 2 行没解析"
+ * 是两件完全不同的事，合起来报就没法区分。
+ */
+export function projectMatterLogEvents(
+  db: DatabaseSync,
+  matterId: string,
+  events: ReadonlyArray<{ at: string; action: string; artifact: string | null; approver: string | null; note: string | null }>,
+): { added: number; existing: number; total: number } {
+  const seen = new Set(listMatterEvents(db, matterId).map((row) => matterLogEventKey({ at: row.at, action: row.action, artifact: row.artifact })))
+  const fresh = events.filter((event) => {
+    const key = matterLogEventKey(event)
+    if (seen.has(key)) return false
+    seen.add(key)   // 同一份日志里重复行也只进一条
+    return true
+  })
+  if (fresh.length === 0) return { added: 0, existing: events.length, total: events.length }
+  db.exec('BEGIN')
+  try {
+    const insert = db.prepare(`
+      INSERT INTO matter_events (id, matter_id, action, artifact, approver, note, at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const event of fresh) {
+      insert.run(randomUUID(), matterId, event.action, event.artifact, event.approver, event.note, event.at)
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+  return { added: fresh.length, existing: events.length - fresh.length, total: events.length }
+}
+
 export function appendMatterEvent(db: DatabaseSync, input: MatterEventInput): MatterEventRow {
   if (getMatter(db, input.matterId) === undefined) throw new Error(`案卷不存在：${input.matterId}`)
   const action = requireText(input.action, '动作')

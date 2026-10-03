@@ -255,7 +255,7 @@ function TimelineRow({ entry }: { entry: MatterTimelineEntry }): JSX.Element {
  * ⚠️ **没有**任何"期限只剩 N 天"式的推断 —— 那是 `patent-deadline` 的职责（决策 3 / D2），
  * 界面只显示引擎算出来的 `due_date`。5C 会把重算按钮与期限看板加在这里。
  */
-export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engineAvailable, recomputeNote, onEdit, onAddNotice, onDeleteNotice, onRecompute, onSetDeadlineStatus, busy }: {
+export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engineAvailable, recomputeNote, onEdit, onAddNotice, onDeleteNotice, onRecompute, onSetDeadlineStatus, onSyncEvents, syncNote, busy }: {
   matter: MatterView
   dicts: readonly Dict[]
   timeline: MatterTimeline
@@ -270,6 +270,10 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
   onDeleteNotice: (noticeId: string) => void
   onRecompute: () => void
   onSetDeadlineStatus: (deadlineId: string, status: string) => void
+  /** 同步 `_matter-log.md` → 事件（阶段 6）。 */
+  onSyncEvents: () => void
+  /** 上次同步的回执（含"没解析出来的行"），空串 = 还没同步过。 */
+  syncNote: string
   busy: boolean
 }): JSX.Element {
   return (
@@ -377,7 +381,20 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
       <div className="wb-card">
         <div className="wb-matter-head">
           <h3 className="wb-matter-title">时间线 <span className="wb-matter-count">{timeline.entries.length}</span></h3>
+          {/**
+            * 「同步事件日志」（阶段 6）：把案卷目录里的 `_matter-log.md` 投影成事件。
+            * 按钮文案说清方向（**读日志**），因为反方向（库 → 磁盘）是被明令禁止的：
+            * 用户得能一眼看出这不会改他的案卷目录。
+            */}
+          <button className="wb-btn" disabled={busy} onClick={onSyncEvents} data-matter-sync-events>
+            <Icon name="refresh" />同步事件日志
+          </button>
         </div>
+        <div className="wb-field-note" data-matter-sync-hint>
+          事件的唯一事实源是案卷目录里的 <code>_matter-log.md</code>（DSH Patent 只追加写入）。
+          这个按钮只**读**它并把新行补进时间线 —— 不改写文件、不改已有事件。
+        </div>
+        {syncNote === '' ? null : <div className="wb-field-note" data-matter-sync-note>{syncNote}</div>}
         {timeline.entries.length === 0 && timeline.undated.length === 0
           ? <div className="wb-empty">还没有可上时间线的记录（事件 / 官文 / 期限）。</div>
           : (

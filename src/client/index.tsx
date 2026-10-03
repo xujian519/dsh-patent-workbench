@@ -472,6 +472,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [noticeDraft, setNoticeDraft] = useState<Record<string, string> | null>(null)
   /** 最近一次重算的结果说明（含引擎给的 pending 条数与顺延口径）。 */
   const [matterRecomputeNote, setMatterRecomputeNote] = useState('')
+  /** 最近一次事件同步的回执（含"没解析出来的行"，阶段 6）。 */
+  const [matterSyncNote, setMatterSyncNote] = useState('')
   /** 近 N 天到期的期限（跨案卷，今日视图的看板）。 */
   const [upcomingDeadlines, setUpcomingDeadlines] = useState<UpcomingDeadlineView[]>([])
   const [upcomingDays, setUpcomingDays] = useState(7)
@@ -803,6 +805,35 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     } catch (e) {
       // 409 = 引擎不可用：把这句可操作的中文原因留下（别只说"失败了"）
       setMatterRecomputeNote(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  /**
+   * 同步 `_matter-log.md` → 案卷事件（阶段 6 · bridge 收口）。
+   *
+   * 回执把三件事分开说：新增 / 已存在（幂等跳过）/ **未解析行（带行号与原因）**。
+   * 静默吞掉"没解析出来"的行，等于让用户以为日志同步干净了 —— 那正是"库与事实源悄悄不一致"。
+   */
+  const syncMatterEvents = async (matterId: string): Promise<void> => {
+    setBusy(true)
+    try {
+      const res = await api<{
+        path: string
+        added: number
+        existing: number
+        total: number
+        ignoredLines: number
+        skipped: Array<{ line: number; text: string; reason: string }>
+      }>(`/api/workbench/matters/${matterId}/events/sync`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) })
+      await loadMatterDetail(matterId)
+      setMatterSyncNote([
+        `已从 ${res.path} 同步：新增 ${res.added} 条，已存在（幂等跳过）${res.existing} 条，日志共 ${res.total} 条。`,
+        res.skipped.length === 0 ? '' : `⚠️ ${res.skipped.length} 行没解析出来（未进事件）：${res.skipped.slice(0, 5).map((row) => `第 ${row.line} 行（${row.reason}）`).join('；')}${res.skipped.length > 5 ? ' …' : ''}`,
+      ].filter((part) => part !== '').join(' '))
+      setNotice(res.added === 0 ? '事件日志没有新记录（幂等：已存在的不会重复导入）' : `已补进 ${res.added} 条事件`)
+    } catch (e) {
+      setMatterSyncNote(e instanceof Error ? e.message : String(e))
       setError(e instanceof Error ? e.message : String(e))
     } finally { setBusy(false) }
   }
@@ -3398,6 +3429,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                     recomputeNote={matterRecomputeNote}
                     onRecompute={() => void recomputeMatterDeadlines(selectedMatter.id)}
                     onSetDeadlineStatus={(deadlineId, status) => void setMatterDeadlineStatus(deadlineId, status)}
+                    onSyncEvents={() => void syncMatterEvents(selectedMatter.id)}
+                    syncNote={matterSyncNote}
                     busy={busy}
                   />
                 )}

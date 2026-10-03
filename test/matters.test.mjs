@@ -2,12 +2,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { openWorkbenchDb } from '../lib/db/database.js'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { seedDictionaries } from '../lib/db/seed.js'
 import { makeRoutes } from '../lib/api/routes.js'
 import {
   appendMatterEvent, createKnowledge, createMatter, createMatterNotice, deleteMatter, deleteMatterNotice,
   getMatter, getKnowledge, getMatterByCaseNumber, listMatterDeadlines, listMatterEvents, listMatterNotices,
   listMatters, replaceMatterDeadlines, setMatterDeadlineStatus, updateMatter, updateKnowledge, listKnowledge,
+  projectMatterLogEvents,
   findMatterIdByWorkspacePath,
   MATTER_STAGE_CODES, PATENT_KINDS, NOTICE_KINDS, REPEATABLE_NOTICE_KINDS, DELIVERY_MODES,
 } from '../lib/db/repo.js'
@@ -598,5 +602,105 @@ test('routes: /matter-deadlines/upcoming —— 窗口内、排除已完成/免�
   } finally {
     server.close()
     db.close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 阶段 6 · bridge 收口：_matter-log.md → matter_events 的**只读投影**
+// ---------------------------------------------------------------------------
+
+test('投影：只追加、幂等、不改已有行（第二次导入 added=0）', () => {
+  const db = freshDb()
+  try {
+    const m = createMatter(db, baseMatter())
+    const events = [
+      { at: '2026-08-19T21:00:00+08:00', action: '建案', artifact: '目录骨架', approver: '用户', note: '交底书已入' },
+      { at: '2026-08-19T21:15:00+08:00', action: '检索', artifact: '01-检索/x.md', approver: '用户', note: null },
+    ]
+    const first = projectMatterLogEvents(db, m.id, events)
+    assert.deepEqual(first, { added: 2, existing: 0, total: 2 })
+    const rows = listMatterEvents(db, m.id)
+    assert.deepEqual(rows.map((row) => row.action), ['建案', '检索'])
+
+    const second = projectMatterLogEvents(db, m.id, events)
+    assert.deepEqual(second, { added: 0, existing: 2, total: 2 }, '幂等：同一份日志导两次不重复')
+
+    /**
+     * **只追加**：审批人/备注后补（日志只追加，所以"补充说明"会写在稍后的行里）
+     * 不许被当成"更新旧事件" —— 旧行的字段一个字节都不动。
+     */
+    const before = listMatterEvents(db, m.id).find((row) => row.action === '建案')
+    projectMatterLogEvents(db, m.id, [{ ...events[0], approver: '李四', note: '后补的说明' }])
+    const after = listMatterEvents(db, m.id).find((row) => row.action === '建案')
+    assert.deepEqual(after, before, '同键事件重导不许改写既有行（投影是单向的）')
+    assert.equal(listMatterEvents(db, m.id).length, 2)
+
+    // 同一份日志里的重复行也只进一条
+    const dup = projectMatterLogEvents(db, m.id, [events[0], events[0]])
+    assert.deepEqual(dup, { added: 0, existing: 2, total: 2 })
+  } finally {
+    db.close()
+  }
+})
+
+test('投影：路由真读磁盘 —— 正常导入 / 幂等 / 无目录 400 / 无文件 404 / 不写磁盘', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-matterlog-'))
+  const caseDir = join(dir, 'patent-workspace', 'CN2026-0001')
+  mkdirSync(caseDir, { recursive: true })
+  const logPath = join(caseDir, '_matter-log.md')
+  writeFileSync(logPath, [
+    '# 案卷事件日志',
+    '',
+    '2026-08-19T21:00:00+08:00 | 建案 | 目录骨架 | 用户 | 交底书已入 00-交底书/',
+    '2026-08-19T21:15:00+08:00 | 检索 | 01-检索/x.md | 用户 | 命中 D1/D2',
+    '这行格式不对，必须被报出来',
+  ].join('\n'))
+
+  const db = freshDb()
+  const server = startServer(db)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+  const base = `http://127.0.0.1:${port}/api/workbench/matters`
+  try {
+    const noDir = createMatter(db, baseMatter({ caseNumber: 'NO-DIR' }))
+    const withDir = createMatter(db, baseMatter({ caseNumber: 'CN2026-0001', workspacePath: caseDir }))
+
+    // ① 没登记目录 → 400 且说清怎么修（不猜路径）
+    const bad = await fetch(`${base}/${noDir.id}/events/sync`, { method: 'POST' })
+    assert.equal(bad.status, 400)
+    assert.match((await bad.json()).error, /没有登记「案卷目录」/)
+
+    // ② 正常导入
+    const first = await fetch(`${base}/${withDir.id}/events/sync`, { method: 'POST' })
+    assert.equal(first.status, 200)
+    const body = await first.json()
+    assert.equal(body.added, 2)
+    assert.equal(body.ignoredLines, 2, '脚手架 = 标题 + 空行（与未解析分开计数）')
+    assert.deepEqual(body.skipped.map((row) => row.line), [5], '格式不对的那行要带行号报出来')
+    assert.equal(body.events.length, 2)
+
+    // ③ 幂等：再点一次不重复
+    const again = await (await fetch(`${base}/${withDir.id}/events/sync`, { method: 'POST' })).json()
+    assert.equal(again.added, 0)
+    assert.equal(again.existing, 2)
+    assert.equal(again.events.length, 2)
+
+    // ④ **不写磁盘**（投影是单向的：任何一次调用都不许改案卷目录）
+    const after = readFileSync(logPath, 'utf8')
+    assert.match(after, /这行格式不对/, '源文件必须一字不动')
+    assert.equal(readdirSync(caseDir).sort().join(','), '_matter-log.md', '目录里不许冒出任何新文件')
+
+    // ⑤ 目录登记了但没有日志文件 → 404（"还没有事件记录"与"路径错了"是两件事）
+    const emptyDir = createMatter(db, baseMatter({ caseNumber: 'NO-LOG', workspacePath: join(dir, 'nowhere') }))
+    const missing = await fetch(`${base}/${emptyDir.id}/events/sync`, { method: 'POST' })
+    assert.equal(missing.status, 404)
+    assert.match((await missing.json()).error, /没有 _matter-log\.md/)
+
+    // ⑥ 只读端点：GET 打 sync 是 405（不给"顺手改事件"的入口）
+    assert.equal((await fetch(`${base}/${withDir.id}/events/sync`)).status, 405)
+  } finally {
+    server.close()
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
   }
 })

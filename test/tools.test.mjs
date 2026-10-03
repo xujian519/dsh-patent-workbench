@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openWorkbenchDb } from '../lib/db/database.js'
 import { seedDictionaries } from '../lib/db/seed.js'
 import { proposeDailyPlanTool, submitKnowledgeTool, submitTaskTool, updateTaskTool, requestCompletionTool, saveTaskMemoryTool } from '../lib/tools.js'
 import { createDraft, createKnowledge, createMatter, createTask, confirmDailyPlanDraft, confirmTaskDraft, getKnowledge, getTask, getTaskMemoryContext, getDraftBySession, getPendingDailyPlanDraft, getPendingDraftForTask, linkTaskSession, updateTask } from '../lib/db/repo.js'
-import { linkKnowledgeMatterTool } from '../lib/matter-tools.js'
+import { linkKnowledgeMatterTool, syncMatterEventsTool } from '../lib/matter-tools.js'
 
 /**
  * 删临时目录，容忍 Windows 上刚 `close()` 时文件句柄尚未释放导致的 EPERM。
@@ -415,6 +415,67 @@ test('link_knowledge_matter：归入 / 改归 / 移出 / 三种坏输入都给�
     assert.match(await run({ knowledge_id: entry.id, case_number: '不存在的案号' }), /^错误：没有这个案卷/)
     assert.match(await run({ knowledge_id: entry.id }), /^错误：要么给 case_number/)
     assert.equal(getKnowledge(db, entry.id).matterId, null, '坏输入不许改到任何东西')
+    db.close()
+  } finally {
+    rmTempDir(dir)
+  }
+})
+
+test('sync_matter_events：真读案卷目录的 _matter-log.md 并幂等投影（回执把三件事分开报）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-sync-tool-'))
+  const caseDir = join(dir, 'patent-workspace', '2026-UM-002')
+  mkdirSync(caseDir, { recursive: true })
+  writeFileSync(join(caseDir, '_matter-log.md'), [
+    '2026-08-19T21:00:00+08:00 | 建案 | 目录骨架 | 用户 | 交底书已入 00-交底书/',
+    '这行格式不对',
+  ].join('\n'))
+  try {
+    const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
+    seedDictionaries(db)
+    const tool = syncMatterEventsTool(db)
+    const run = (args) => tool.execute(args, {})
+
+    /**
+     * 坏输入：案号必填 —— **框架先挡**（`required: true` 的参数缺失时 `execute` 根本进不来，
+     * 抛 `ToolArgsError`；与 `progressTools.test.mjs` 里那条口径一致）。
+     * 处理函数里那句 `str(args.case_number) === undefined` 因此是**第二道防线**（直接调用
+     * `tool.execute` 的场景，比如本文件里的各种直调），不是死代码。
+     */
+    await assert.rejects(() => run({}), /missing required property "case_number"/)
+    assert.match(await run({ case_number: '不存在' }), /^错误：没有这个案卷/)
+
+    // 没登记目录 → 明确说"无法定位"，并说明不猜路径
+    const noDir = createMatter(db, { caseNumber: '2026-UM-001', title: '无目录', matterType: 'drafting' })
+    const noDirOut = await run({ case_number: noDir.caseNumber })
+    assert.match(noDirOut, /没有登记案卷目录/)
+    assert.match(noDirOut, /不会去猜路径/)
+
+    // 正常：新增 1 条 + 1 行未解析（带行号与原因）
+    const matter = createMatter(db, { caseNumber: '2026-UM-002', title: '有目录', matterType: 'drafting', workspacePath: caseDir })
+    const out = await run({ case_number: matter.caseNumber })
+    assert.match(out, /新增 1 条/)
+    assert.match(out, /日志共 1 条记录/)
+    assert.match(out, /1 行\*\*没解析出来\*\*/)
+    assert.match(out, /第 2 行/)
+    assert.match(out, /只读；本插件从不改写它/)
+
+    // 幂等：再跑一次是 0 新增
+    assert.match(await run({ case_number: matter.caseNumber }), /新增 0 条，已存在（幂等跳过）1 条/)
+    db.close()
+  } finally {
+    rmTempDir(dir)
+  }
+})
+
+test('sync_matter_events：目录在但没有日志文件时，说清"这不是错误"', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-sync-tool2-'))
+  try {
+    const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
+    seedDictionaries(db)
+    const matter = createMatter(db, { caseNumber: '2026-UM-003', title: '空目录', matterType: 'drafting', workspacePath: join(dir, 'nope') })
+    const out = await syncMatterEventsTool(db).execute({ case_number: matter.caseNumber }, {})
+    assert.match(out, /没有 _matter-log\.md/)
+    assert.match(out, /这不是错误/)
     db.close()
   } finally {
     rmTempDir(dir)

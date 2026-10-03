@@ -29,6 +29,7 @@
     "src/client/components/DayPanel.tsx",
     "src/shared/taskProgress.ts",
     "src/shared/dailyPlanPolicy.ts",
+    "src/shared/matterLog.ts",
     "src/shared/persona.ts",
     "src/personas/parse.ts",
     "src/personas/library.ts",
