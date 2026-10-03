@@ -209,7 +209,7 @@ function optionalExtraDate(extra: Record<string, unknown>, key: string): Calenda
 export function buildDeadlineQuery(input: BuildDeadlineQueryInput): PatentDeadlineQuery {
   const { matter, notices } = input
   if (matter.patentKind === null) {
-    throw new Error('案卷缺少专利类型（发明 / 实用新型 / 外观设计），期限无法起算——请先在案件详情里补全')
+    throw new Error('案卷缺少专利类型（发明 / 实用新型 / 外观设计），期限无法起算——请先在案卷详情里补全')
   }
   const query: PatentDeadlineQuery = {
     kind: matter.patentKind,

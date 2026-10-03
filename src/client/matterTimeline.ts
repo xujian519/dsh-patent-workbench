@@ -7,7 +7,7 @@
  *
  * | 来源 | 表 | 日期字段 | 形态 |
  * |---|---|---|---|
- * | 案件事件 | `matter_events` | `at` | **ISO 日期时间**（带时分秒与 Z） |
+ * | 案卷事件 | `matter_events` | `at` | **ISO 日期时间**（带时分秒与 Z） |
  * | 官文 | `matter_notices` | `dispatch_date` | `YYYY-MM-DD`（纯日期） |
  * | 期限 | `matter_deadlines` | `due_date` | `YYYY-MM-DD`（纯日期） |
  *

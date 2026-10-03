@@ -455,9 +455,9 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [planRefreshKey, setPlanRefreshKey] = useState(0)
   const [knowledgeEntries, setKnowledgeEntries] = useState<KnowledgeEntry[]>([])
   /**
-   * 案卷列表（案件视图与「归入案卷」下拉共用一份）。
+   * 案卷列表（案卷视图与「归入案卷」下拉共用一份）。
    *
-   * 拉不到就是空列表 —— 下拉里显示"未归入"，案件视图显示"还没有案卷"，**不假装有关系**。
+   * 拉不到就是空列表 —— 下拉里显示"未归入"，案卷视图显示"还没有案卷"，**不假装有关系**。
    */
   const [matters, setMatters] = useState<MatterView[]>([])
   /** 选中的案卷 id（详情按需拉官文/期限/事件 —— 案子少、但每条详情有三份列表要拉）。 */
@@ -646,7 +646,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * 案卷列表（阶段 5）：只用来给「归入案卷」下拉提供选项。
    *
    * 为什么一次全拉：案子是**几十条**量级（一个人同时在办的案子），下拉要能即时过滤；
-   * 每次敲字都打库不可接受（与知识库同一判断）。案件视图（阶段 5 的后续片）会复用这份数据。
+   * 每次敲字都打库不可接受（与知识库同一判断）。案卷视图（阶段 5 的后续片）会复用这份数据。
    */
   const loadMatters = useCallback(async () => {
     const res = await api<{ matters: MatterView[] }>('/api/workbench/matters')
@@ -1631,9 +1631,9 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       let docPrompt = ''
       if (mode === 'knowledge_doc') {
         if (docContext === undefined) throw new Error('知识总结需要文档内容')
-        docPrompt = `你是“个人工作台”的知识库总结助手。请阅读下面的本地文档内容，提炼出值得沉淀的知识条目，并调用 workbench_submit_knowledge 提交 pending 草稿。\n\n本地文件：${docContext.fileLink}\n文件名：${docContext.name ?? ''}\n文档内容（${docContext.truncated === true ? '已截断' : '全文'}）：\n"""\n${docContext.content}\n"""\n\n要求：\n- 总结为可检索、可复用的知识条目：背景/结论/可复用做法；正文使用 Markdown\n- title 简洁；kind_code 根据内容选择 note/lesson/decision/snippet；tags 给出 3-5 个关键词\n- file_link 必须填 "${docContext.fileLink}"（或同值的 file:// URL），用于追溯本地文件\n- 只提交知识草稿，不要直接创建知识条目。`
+        docPrompt = `你是“专利工作台”的知识库总结助手。请阅读下面的本地文档内容，提炼出值得沉淀的知识条目，并调用 workbench_submit_knowledge 提交 pending 草稿。\n\n本地文件：${docContext.fileLink}\n文件名：${docContext.name ?? ''}\n文档内容（${docContext.truncated === true ? '已截断' : '全文'}）：\n"""\n${docContext.content}\n"""\n\n要求：\n- 总结为可检索、可复用的知识条目：背景/结论/可复用做法；正文使用 Markdown\n- title 简洁；kind_code 根据内容选择 note/lesson/decision/snippet；tags 给出 3-5 个关键词\n- file_link 必须填 "${docContext.fileLink}"（或同值的 file:// URL），用于追溯本地文件\n- 只提交知识草稿，不要直接创建知识条目。`
       }
-      const planPrompt = `你是“个人工作台”的 AI 计划助手。请为 ${planAnchor}（${'日一二三四五六'[new Date(`${planAnchor}T00:00:00`).getDay()]}）安排执行顺序。\n\n今天：${localDateString()}；当前时间：${new Date().toISOString()}\n\n${planPromptPayload.text}\n\n请综合考虑：优先级（p0 紧急 > p1 高 > p2 普通 > p3 低）、是否已逾期、截止时间、状态（doing/blocked 优先推进）、预计耗时、父子关系与可能的依赖。如果信息不足，可以先问用户 1-2 个关键问题（例如：当天可投入多少小时、哪些必须当天完成）。\n\n然后调用 workbench_propose_daily_plan：\n- plan_date="${planAnchor}"\n- summary：1-3 句排序思路\n- items：扁平顺序数组（1 号最重要），每项 {task_id, order, note, minutes}；note 写清为什么排这里或建议时间块；minutes 是“今天在这条上计划投入多少分钟”（1–1440，不是任务总耗时）\n- 同一父子链上不要同时出现父任务和它下面的子任务；如需排子任务，只排可执行的叶子，并在 note 中说明属于哪个父任务\n- 不要传 effortDone（今日投入是否结束只能由用户操作）\n- 只提交计划草稿，不要修改任何任务字段，不要执行任务。`
+      const planPrompt = `你是“专利工作台”的 AI 计划助手。请为 ${planAnchor}（${'日一二三四五六'[new Date(`${planAnchor}T00:00:00`).getDay()]}）安排执行顺序。\n\n今天：${localDateString()}；当前时间：${new Date().toISOString()}\n\n${planPromptPayload.text}\n\n请综合考虑：优先级（p0 紧急 > p1 高 > p2 普通 > p3 低）、是否已逾期、截止时间、状态（doing/blocked 优先推进）、预计耗时、父子关系与可能的依赖。如果信息不足，可以先问用户 1-2 个关键问题（例如：当天可投入多少小时、哪些必须当天完成）。\n\n然后调用 workbench_propose_daily_plan：\n- plan_date="${planAnchor}"\n- summary：1-3 句排序思路\n- items：扁平顺序数组（1 号最重要），每项 {task_id, order, note, minutes}；note 写清为什么排这里或建议时间块；minutes 是“今天在这条上计划投入多少分钟”（1–1440，不是任务总耗时）\n- 同一父子链上不要同时出现父任务和它下面的子任务；如需排子任务，只排可执行的叶子，并在 note 中说明属于哪个父任务\n- 不要传 effortDone（今日投入是否结束只能由用户操作）\n- 只提交计划草稿，不要修改任何任务字段，不要执行任务。`
       const prompt = mode === 'knowledge_doc'
         ? docPrompt
         : mode === 'plan'
@@ -1655,12 +1655,12 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
           modelLabel: effectiveModelLabel(selectionApplication, mode === 'clarify' ? quickModelSelection : promptModelSelection),
         })
         : mode === 'consult'
-          ? `你是“个人工作台”的任务协助助手。请针对下面这个任务提供咨询、拆解或复盘建议（咨询模式不执行）。\n\n任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode} 状态：${task?.statusCode}\n截止：${task?.effectiveDueAt ?? task?.dueAt ?? '无'}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树）：\n${memoryContext}` : ''}\n\n请先理解任务，再给出建议；如果信息不足，可以一次问一个问题。\n\n重要：如果用户要求把结论/补充信息保存回任务，请调用 workbench_update_task(task_id="${task?.id ?? ''}", description="...") 更新原任务；绝对不要调用 workbench_submit_task 新建任务。`
+          ? `你是“专利工作台”的任务协助助手。请针对下面这个任务提供咨询、拆解或复盘建议（咨询模式不执行）。\n\n任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode} 状态：${task?.statusCode}\n截止：${task?.effectiveDueAt ?? task?.dueAt ?? '无'}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树）：\n${memoryContext}` : ''}\n\n请先理解任务，再给出建议；如果信息不足，可以一次问一个问题。\n\n重要：如果用户要求把结论/补充信息保存回任务，请调用 workbench_update_task(task_id="${task?.id ?? ''}", description="...") 更新原任务；绝对不要调用 workbench_submit_task 新建任务。`
           : mode === 'breakdown'
-            ? `你是“个人工作台”的任务拆解助手。请分析下面这个任务，并调用 workbench_propose_subtasks 提交子任务提案。\n\n父任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode} 截止：${task?.effectiveDueAt ?? task?.dueAt ?? '无'}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树）：\n${memoryContext}` : ''}\n\n粒度规则：每层 2-6 个、最大深度 3 层、叶子 15-240 分钟且有可验证完成标准；子任务的 type_code/priority_code 默认继承父任务；若任务太小，设置 no_breakdown_needed=true。只提交提案，不要执行。如果用户对提案提出修改意见，请带上上一次工具返回的 draft_id 再次调用 workbench_propose_subtasks 更新同一份提案。`
+            ? `你是“专利工作台”的任务拆解助手。请分析下面这个任务，并调用 workbench_propose_subtasks 提交子任务提案。\n\n父任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode} 截止：${task?.effectiveDueAt ?? task?.dueAt ?? '无'}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树）：\n${memoryContext}` : ''}\n\n粒度规则：每层 2-6 个、最大深度 3 层、叶子 15-240 分钟且有可验证完成标准；子任务的 type_code/priority_code 默认继承父任务；若任务太小，设置 no_breakdown_needed=true。只提交提案，不要执行。如果用户对提案提出修改意见，请带上上一次工具返回的 draft_id 再次调用 workbench_propose_subtasks 更新同一份提案。`
             : mode === 'review'
-              ? `你是“个人工作台”的任务复盘助手。请对下面这个已完成任务做复盘：\n\n任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树）：\n${memoryContext}` : ''}\n\n请从“做得好 / 做得不好 / 下次改进”三个角度输出 Markdown，并调用 workbench_submit_review(task_id="${task?.id ?? ''}", summary_md="...", lessons=[{"title":"...","content":"..."}])。`
-              : `你是“个人工作台”的任务执行助手。请直接完成下面这个任务，不要反复确认已知信息。\n\n任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode}\n截止：${task?.effectiveDueAt ?? task?.dueAt ?? '无'}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树，父任务会话会看到整棵子树上下文）：\n${memoryContext}` : ''}\n${previousSessions.length > 0 ? `\n该任务此前已有执行会话：${previousSessions.map((s) => String(s.session_id ?? '')).filter((x) => x !== '').join('、')}\n若这些会话有未完成上下文，请先向用户索取上一会话的总结/未完成事项再继续，不要重复已完成工作。` : ''}\n\n执行过程中请遵守：\n- **阶段性推进后主动报一次进度**：调用 workbench_update_progress(task_id="${task?.id ?? ''}", progress=<0-99 的整数>, note="这一步做了什么")。进度是显式值，直接生效、不需要用户确认；不要替用户推算，也不要从子任务比例派生。\n- 如果有关键上下文、阶段性结论、决策或未完成事项，请调用 workbench_save_task_memory(task_id="${task?.id ?? ''}", content="...", kind="note|decision|summary") 写入任务共享记忆，便于后续会话续作。\n- 若当前任务是父任务，且你直接完成父任务，验收通过后系统会级联完成所有未完成子任务。\n- 全部做完时调用 workbench_update_progress(task_id="${task?.id ?? ''}", progress=100, summary="2-4句完成总结")（等价于 workbench_request_completion）提交完成验收；**100 不是进度值**，它表示提交验收，库里不会写入 100。等用户在个人工作台验收；在用户验收通过前，任务不算完成，不要声称已经完成。若任务无法完成，如实说明原因，不要提交验收。`
+              ? `你是“专利工作台”的任务复盘助手。请对下面这个已完成任务做复盘：\n\n任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树）：\n${memoryContext}` : ''}\n\n请从“做得好 / 做得不好 / 下次改进”三个角度输出 Markdown，并调用 workbench_submit_review(task_id="${task?.id ?? ''}", summary_md="...", lessons=[{"title":"...","content":"..."}])。`
+              : `你是“专利工作台”的任务执行助手。请直接完成下面这个任务，不要反复确认已知信息。\n\n任务 id：${task?.id}\n任务标题：${task?.title}\n任务描述：${task?.description || '（无）'}\n类型：${task?.typeCode} 优先级：${task?.priorityCode}\n截止：${task?.effectiveDueAt ?? task?.dueAt ?? '无'}\n${memoryContext !== '' ? `\n任务共享记忆（同一任务/子树，父任务会话会看到整棵子树上下文）：\n${memoryContext}` : ''}\n${previousSessions.length > 0 ? `\n该任务此前已有执行会话：${previousSessions.map((s) => String(s.session_id ?? '')).filter((x) => x !== '').join('、')}\n若这些会话有未完成上下文，请先向用户索取上一会话的总结/未完成事项再继续，不要重复已完成工作。` : ''}\n\n执行过程中请遵守：\n- **阶段性推进后主动报一次进度**：调用 workbench_update_progress(task_id="${task?.id ?? ''}", progress=<0-99 的整数>, note="这一步做了什么")。进度是显式值，直接生效、不需要用户确认；不要替用户推算，也不要从子任务比例派生。\n- 如果有关键上下文、阶段性结论、决策或未完成事项，请调用 workbench_save_task_memory(task_id="${task?.id ?? ''}", content="...", kind="note|decision|summary") 写入任务共享记忆，便于后续会话续作。\n- 若当前任务是父任务，且你直接完成父任务，验收通过后系统会级联完成所有未完成子任务。\n- 全部做完时调用 workbench_update_progress(task_id="${task?.id ?? ''}", progress=100, summary="2-4句完成总结")（等价于 workbench_request_completion）提交完成验收；**100 不是进度值**，它表示提交验收，库里不会写入 100。等用户在专利工作台验收；在用户验收通过前，任务不算完成，不要声称已经完成。若任务无法完成，如实说明原因，不要提交验收。`
       if (mode === 'execute') {
         if (task === null) throw new Error('执行模式需要选择一个任务')
         if (task.statusCode === 'done' || task.statusCode === 'cancelled') throw new Error('该任务已完成或已取消，不能再次执行')
@@ -2873,14 +2873,14 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   return (
     <div className="wb-app">
       <div className="wb-h">
-        <div className="wb-title"><Icon name="calendar" size={19} />个人工作台</div>
+        <div className="wb-title"><Icon name="calendar" size={19} />专利工作台</div>
         <div className="wb-segmented">
           <button className={`wb-seg ${view === 'today' ? 'on' : ''}`} onClick={() => setView('today')}><Icon name="today" />今日</button>
           <button className={`wb-seg ${view === 'calendar' ? 'on' : ''}`} onClick={() => setView('calendar')}><Icon name="calendar" />日历</button>
           <button className={`wb-seg ${view === 'list' ? 'on' : ''}`} onClick={() => setView('list')}><Icon name="list" />任务</button>
           <button className={`wb-seg ${view === 'knowledge' ? 'on' : ''}`} onClick={() => setView('knowledge')}><Icon name="book" />知识库</button>
           {/* 案卷（阶段 5）：一等实体就该有自己的一屏 —— 它的字段与任务语义不搭（决策 1） */}
-          <button className={`wb-seg ${view === 'matters' ? 'on' : ''}`} onClick={() => setView('matters')}><Icon name="folder" />案件</button>
+          <button className={`wb-seg ${view === 'matters' ? 'on' : ''}`} onClick={() => setView('matters')}><Icon name="folder" />案卷</button>
         </div>
         <div style={{ flex: 1 }} />
         {pendingCount > 0 && (

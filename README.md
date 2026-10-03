@@ -7,11 +7,13 @@
 [Dely0/dsh-personal-workbench](https://github.com/Dely0/dsh-personal-workbench)）。
 
 > 🚧 **改造进行中**：本仓库正从通用「日历 + 层级任务 + 知识库」工作台改造为**专利律师工作台**
-> （管理/办公层：案件 · 期限 · 官文登记 · 客户 · 办案沉淀库；专业判定检索/三性/撰写/答复/无效
+> （管理/办公层：案卷 · 期限 · 官文登记 · 客户 · 办案沉淀库；专业判定检索/三性/撰写/答复/无效
 > 留给专利内核 DSH Patent）。分阶段方案与决策见
 > [`docs/design/2026-10-03-patent-workbench-redesign.md`](docs/design/2026-10-03-patent-workbench-redesign.md)。
 >
-> **现状**：仍是改造前的通用工作台形态 —— 日历 + 层级任务 + AI 助手，数据全部留在本机。
+> **现状**：阶段 0–4 已落地（改名、案卷四表 + REST、期限引擎接入与**期限看板**、
+> 删除通用功能——日报周报 / 点子 / 容量 / 重复任务），阶段 5 的案卷视图 / 知识库加法已落地。
+> 数据全部留在本机。
 
 [English](#english) · 简体中文
 
@@ -23,6 +25,11 @@
 
 ## 亮点
 
+- 🗂️ **案卷（一等实体）**：案号 / 申请号 / 公开号 / 申请日 / 优先权要求 / 技术领域…一屏管全；
+  案卷详情带**时间线**（案件事件 ∪ 官文 ∪ 期限，三源合一）
+- 📄 **官文登记 → 期限**：登记官文（发文日 / 送达方式 / 指定期限）作为**起算输入**，
+  期限由 DSH Patent 的 `patentDeadline` 引擎算出后落库（可复算、可申诉；引擎缺失时明确降级，不自行推算）
+- ⏳ **期限看板**：今日视图看**跨案卷的近 7 天到期**（含已过期）；案卷详情里可重算、可标记完成/免除
 - 📅 **日历（周/月）+ 树状任务列表**；「今日」「日历」「任务」三视图，筛选排序可组合、保留父子层级
 - ✨ **自然语言快速录入** → AI 澄清后生成任务；支持贴图与 PDF/DOCX 附件，不收的文件逐条给原因
 - 🧠 **每个任务关联多个 AI 会话**：澄清 / 咨询 / 拆解 / 执行 / 复盘
@@ -31,6 +38,8 @@
 - 🗓️ **每日计划**：AI 排序提案（按优先级/到期/预计耗时排候选）→ 确认才生效；「今日投入结束」≠ 任务完成（ADR 0007）
 - 🎯 **会话前选 Skill / 模型 / 角色**，提示词自动注入「加载这些技能」
 - ⏰ **到期提醒**：页内横幅 + 系统通知；可选微信通道（需 `@xmanrui/dsh-im`）
+- 📚 **知识库（专利域分类）**：审查尺度 / 答复策略 / 检索经验 / 客户偏好 / 官文模板 / 驳回教训…；
+  条目可**归入案卷**，该案卷目录下的会话召回时按「本任务 > 本案卷 > 全库」优先
 - 🔒 **数据只在本机** `~/.dsh/workbench`，不上传任何服务器
 
 ## 安装
@@ -153,6 +162,9 @@ turn DSH into a calendar + hierarchical task list + AI assistant workbench. All 
 
 ## Highlights
 
+- 🗂️ **Matters as first-class entities**: case number / application no. / publication no. / filing date / priority claim / technical field — plus a **timeline** merging case events, office notices and deadlines
+- 📄 **Notice registration → deadlines**: register office notices (dispatch date / delivery mode / designated months) as the *starting point*; deadlines are computed by the DSH Patent `patentDeadline` engine and stored (recomputable, contestable; explicit degradation when the engine is absent — never guessed locally)
+- ⏳ **Deadline board**: cross-matter "due within 7 days" (overdue included) on the Today view; recompute and mark done/waived per matter
 - 📅 Calendar (week/month) + tree task list; Today / Calendar / Tasks views with combinable filters that keep parent-child structure
 - ✨ Natural-language quick capture → AI clarification → task created; images and PDF/DOCX attachments supported
 - 🧠 Multiple AI sessions per task: clarify / consult / breakdown / execute / review
@@ -161,6 +173,7 @@ turn DSH into a calendar + hierarchical task list + AI assistant workbench. All 
 - 🗓️ Daily plan: AI proposes an order (candidates ranked by priority/due/estimate), only your confirmation applies it; "done for today" ≠ task completed
 - 🎯 Pick Skill / model / persona before each AI session; prompt gets a "load these skills" instruction
 - ⏰ Due reminders (in-panel banner + system notification), optional WeChat channel via `@xmanrui/dsh-im`
+- 📚 **Knowledge base with patent-domain kinds**: examination standards / reply strategies / search experience / client preferences / notice templates / rejection lessons; entries can be **filed into a matter**, and recall in that matter's workspace ranks "this task > this matter > whole library"
 - 🔒 Local-only storage at `~/.dsh/workbench`
 
 ## Install

@@ -195,7 +195,7 @@ export function buildQuickIntakePrompt(input: QuickIntakePromptInput): string {
   const folderInstruction = input.taskFolderPath === ''
     ? '如需在澄清阶段创建文件，请放在当前工作区内并说明位置。'
     : `如需在澄清阶段创建文件，请放在${input.taskFolderRelative === '' ? '上述任务资料夹' : `工作区内的 ${input.taskFolderRelative}`}，不要在工作区根目录散放文件。`
-  return `你是“个人工作台”的任务澄清助手。请按 workbench-intake 规范执行。\n\n`
+  return `你是“专利工作台”的任务澄清助手。请按 workbench-intake 规范执行。\n\n`
     + `用户想创建的任务是：\n「${quickTaskPlaceholder(input.taskText, input.attachments)}」`
     + `${attachmentInstruction === '' ? '' : `\n\n${attachmentInstruction}`}${documentBlock}\n\n`
     + `当前时间：${input.nowIso}\n`

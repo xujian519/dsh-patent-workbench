@@ -144,7 +144,7 @@ export function submitTaskTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_submit_task',
     description:
-      '个人工作台澄清工具：把澄清后的任务草稿写入 workbench（task_drafts，状态 pending，等待用户在界面确认）。' +
+      '专利工作台澄清工具：把澄清后的任务草稿写入 workbench（task_drafts，状态 pending，等待用户在界面确认）。' +
       '适用于自然语言快速录入和详细表单“启动AI澄清”两个场景。同一会话重复调用且带 draft_id 时更新同一草稿，不重复创建。',
     parameters: {
       draft_id: { type: 'string', description: '已有草稿 id；更新草稿时必传，首次提交不传' },
@@ -319,7 +319,7 @@ export function proposeDailyPlanTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_propose_daily_plan',
     description:
-      '个人工作台每日 AI 智能排序工具：为指定日期生成“今日执行顺序”提案，只写 pending 草稿，由用户在工作台确认后才应用。' +
+      '专利工作台每日 AI 智能排序工具：为指定日期生成“今日执行顺序”提案，只写 pending 草稿，由用户在工作台确认后才应用。' +
       'items 为扁平顺序数组（1 号最重要），每项 {task_id, order, note, minutes?}；note 解释排位理由或建议时间块。' +
       'minutes 是“今天在这条上计划投入多少分钟”（1–1440，可选），**不是任务的总耗时**（总耗时看任务自己的 estimatedMinutes）。' +
       '省略 minutes 时按住手的证据取值：该任务此前已排入本日计划则沿用原值，否则取任务预计耗时，再否则取设置里的默认投入。' +
@@ -419,7 +419,7 @@ export function submitKnowledgeTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_submit_knowledge',
     description:
-      '个人工作台知识库工具：把值得沉淀的经验教训、决策、笔记或可复用片段提交为知识条目草稿（pending），由用户在工作台确认后才入库。' +
+      '专利工作台知识库工具：把值得沉淀的经验教训、决策、笔记或可复用片段提交为知识条目草稿（pending），由用户在工作台确认后才入库。' +
       'kind_code 可选 note/lesson/decision/snippet；tags 为字符串数组；source_task_id 可选，用于关联任务；file_link 可选，用于绑定本地文档（file:// 或绝对路径）。' +
       '⚠️ 同一会话重复提交（不带 draft_id）不是新建、是「覆盖」同一份草稿：' +
       `${KNOWLEDGE_DRAFT_SESSION_CONSTRAINT}` +
@@ -497,7 +497,7 @@ export function proposeSubtasksTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_propose_subtasks',
     description:
-      '个人工作台 AI 拆解工具：针对一个任务/子任务提交“子任务提案树”，只写 pending 草稿，由用户在界面勾选确认后才批量创建。' +
+      '专利工作台 AI 拆解工具：针对一个任务/子任务提交“子任务提案树”，只写 pending 草稿，由用户在界面勾选确认后才批量创建。' +
       '粒度规则：每层 2-6 个、最大深度 3 层、叶子 15-240 分钟且有可验证完成标准；若任务太小，返回无需拆解。',
     parameters: {
       parent_task_id: { type: 'string', required: true, description: '被拆解的任务/子任务 id' },
@@ -612,7 +612,7 @@ export function updateTaskTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_update_task',
     description:
-      '个人工作台任务编辑工具：更新一个已有任务（例如把咨询/澄清的结论回写到任务描述）。只更新传入的字段；task_id 必填。不要把咨询结论提交成新任务。' +
+      '专利工作台任务编辑工具：更新一个已有任务（例如把咨询/澄清的结论回写到任务描述）。只更新传入的字段；task_id 必填。不要把咨询结论提交成新任务。' +
       '也可以改父任务（把任务挪到别的父任务下，或移到顶层）：用 parent_id 指定父任务 id（移到顶层传 "none"），' +
       '用户只给了父任务标题时用 parent_title。改父任务会做存在性、归档与防环校验，失败会返回中文原因。',
     parameters: {
@@ -675,7 +675,7 @@ export function submitReviewTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_submit_review',
     description:
-      '个人工作台复盘工具：对已完成任务进行回顾，输出复盘结论。summary_md 为 Markdown 复盘正文（做得好/做得不好/改进项）；lessons 为 JSON 数组，每项 {title, content}。复盘结果会写回任务详情。',
+      '专利工作台复盘工具：对已完成任务进行回顾，输出复盘结论。summary_md 为 Markdown 复盘正文（做得好/做得不好/改进项）；lessons 为 JSON 数组，每项 {title, content}。复盘结果会写回任务详情。',
     parameters: {
       task_id: { type: 'string', required: true, description: '要复盘的任务 id' },
       summary_md: { type: 'string', required: true, description: 'Markdown 复盘正文' },
@@ -700,7 +700,7 @@ export function submitReviewTool(db: DatabaseSync) {
       const draft = existing !== undefined
         ? updateDraft(db, existing.id, payload)
         : createDraft(db, { kindCode: 'review', sessionId, payload })
-      return `复盘草稿已提交${existing !== undefined ? '（更新）' : ''}（id=${draft?.id}），等待用户在个人工作台确认后才会写回任务。请勿声称复盘已保存。`
+      return `复盘草稿已提交${existing !== undefined ? '（更新）' : ''}（id=${draft?.id}），等待用户在专利工作台确认后才会写回任务。请勿声称复盘已保存。`
     },
   })
 }
@@ -709,7 +709,7 @@ export function requestCompletionTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_request_completion',
     description:
-      '个人工作台执行验收工具：任意节点（含父任务）完成工作后调用，提交“完成验收申请”。用户验收通过后任务才会置为已完成；父任务验收通过时未完成子任务会级联完成。本工具不会自行完成任务。task_id 必填，summary 为完成总结（2-4 句）。若此前被驳回/暂存，务必带上 feedback 说明本次改了什么。返回里会附带该任务的提交历史。',
+      '专利工作台执行验收工具：任意节点（含父任务）完成工作后调用，提交“完成验收申请”。用户验收通过后任务才会置为已完成；父任务验收通过时未完成子任务会级联完成。本工具不会自行完成任务。task_id 必填，summary 为完成总结（2-4 句）。若此前被驳回/暂存，务必带上 feedback 说明本次改了什么。返回里会附带该任务的提交历史。',
     parameters: {
       task_id: { type: 'string', required: true, description: '要申请完成的任务 id（任意节点，父任务也可）' },
       summary: { type: 'string', description: '完成总结（2-4 句）' },
@@ -741,7 +741,7 @@ export function requestCompletionTool(db: DatabaseSync) {
       const deferHint = deferredAt === null
         ? ''
         : `\n注意：该任务已有一份**暂存中**的验收申请（暂存于 ${deferredAt}），用户正在验证；本次提交已更新该草稿内容，请勿重复催促。`
-      return `完成验收申请已提交${updated ? '（更新）' : ''}（草稿 id=${draftId}），等待用户在个人工作台验收。${deferHint}\n${history}\n请勿声称任务已经完成；若用户驳回并给出反馈，请按反馈修改后再提交。`
+      return `完成验收申请已提交${updated ? '（更新）' : ''}（草稿 id=${draftId}），等待用户在专利工作台验收。${deferHint}\n${history}\n请勿声称任务已经完成；若用户驳回并给出反馈，请按反馈修改后再提交。`
     },
   })
 }
@@ -756,7 +756,7 @@ export function updateProgressTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_update_progress',
     description:
-      '个人工作台任务进度工具：阶段性推进后**主动**调用一次，写 0–99 的显式进度，直接生效、不需要用户确认。'
+      '专利工作台任务进度工具：阶段性推进后**主动**调用一次，写 0–99 的显式进度，直接生效、不需要用户确认。'
       + 'progress=100 不是可存储的进度值，它表示「提交完成验收申请」，会走与 workbench_request_completion 完全相同的路径（弹框/可暂存/可驳回/留痕），此时 summary 必填（2–4 句完成总结）；'
       + 'AI 永远不能直接把任务标记为已完成/已取消 —— 「已完成」只由用户验收通过或用户在界面点完成来表达。'
       + '同值重复提交是幂等的（不重复写事件）。已归档/已完成/已取消的任务拒绝更新。进度不由子任务比例派生，不要替用户推算。',
@@ -797,7 +797,7 @@ export function updateProgressTool(db: DatabaseSync) {
         const deferHint = deferredAt === null
           ? ''
           : `\n注意：该任务已有一份**暂存中**的验收申请（暂存于 ${deferredAt}），用户正在验证；本次提交已更新该草稿内容，请勿重复催促。`
-        return `progress=100 已按「提交完成验收」处理：完成验收申请已提交${updated ? '（更新）' : ''}（草稿 id=${draftId}），等待用户在个人工作台验收。`
+        return `progress=100 已按「提交完成验收」处理：完成验收申请已提交${updated ? '（更新）' : ''}（草稿 id=${draftId}），等待用户在专利工作台验收。`
           + `\n库里**没有**写入 100（进度仍是 ${task.progressPercent}%），「已完成」只由用户验收通过或用户点完成来表达。${deferHint}\n${history}`
       }
 
@@ -823,7 +823,7 @@ export function saveTaskMemoryTool(db: DatabaseSync) {
   return defineTool({
     name: 'workbench_save_task_memory',
     description:
-      '个人工作台任务共享记忆工具：把当前会话的重要上下文、阶段性结论或决策保存到任务级共享记忆。' +
+      '专利工作台任务共享记忆工具：把当前会话的重要上下文、阶段性结论或决策保存到任务级共享记忆。' +
       '同一任务/子树下的后续会话（尤其是父任务会话）会自动加载这些记忆，避免跨会话失忆。' +
       'task_id 必填，content 为要记住的内容；kind 可选 note/decision/summary/context，默认 note。',
     parameters: {
@@ -892,7 +892,7 @@ export function loadPersonaTool(db: DatabaseSync, roots: PersonaRootOptions = {}
   return defineTool({
     name: 'workbench_load_persona',
     description:
-      '个人工作台角色工具：取回**本次会话绑定的角色**（专家人格）的正文、revision 与同目录资源清单。'
+      '专利工作台角色工具：取回**本次会话绑定的角色**（专家人格）的正文、revision 与同目录资源清单。'
       + '**没有任何入参**：会话 id 由执行上下文提供，也不接受角色 id —— 你无法读取另一个会话或另一个角色的内容。'
       + '只有用户在这次会话里选了角色时，提示词里才会出现「本次会话已绑定角色…请先调用 workbench_load_persona」这一行；没看到这行就不必调用。'
       + '失败会返回可读中文原因（未绑定 / 来源不可用 / 正文已变化 / 文档格式错误等）——**如实报告原因，不要声称角色已生效**。'
@@ -937,7 +937,7 @@ export function readPersonaResourceTool(db: DatabaseSync, roots: PersonaRootOpti
   return defineTool({
     name: 'workbench_read_persona_resource',
     description:
-      '个人工作台角色资源工具：读取**本次会话绑定角色**的同名附件目录里的一条文本资源。'
+      '专利工作台角色资源工具：读取**本次会话绑定角色**的同名附件目录里的一条文本资源。'
       + 'path 是相对该附件目录的路径（例：resources/checklist.md）。'
       + '只接受该目录内的相对路径：绝对路径 / 盘符 / UNC / `..` / 百分号编码 / 符号链接一律拒绝；二进制与超限文件拒绝。'
       + '附件里的脚本（.js/.py/.ps1 等）即使能读也**不会被工作台执行**。'

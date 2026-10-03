@@ -49,7 +49,7 @@ export function searchKnowledgeTool(manager: KnowledgeRecallManager) {
   return defineTool({
     name: 'workbench_search_knowledge',
     description:
-      '在个人工作台知识库里检索历史经验/决策/笔记（只读，不写任何数据）。'
+      '在专利工作台知识库里检索历史经验/决策/笔记（只读，不写任何数据）。'
       + '什么时候查（四个时机）：①开工前先查任务相关条目；②遇到报错/异常时用**报错原文关键词**查；'
       + '③写/改代码前查相关约定与踩坑记录；④提交验收/复盘前查相关历史经验。'
       + '自动召回每回合也会带出条目，但报错原文、代码里的关键词常常只有你当场才看得到，所以这四个时机请主动查一次。'

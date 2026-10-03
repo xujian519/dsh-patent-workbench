@@ -13,7 +13,7 @@
  * - `GET  /api/workbench/matters/:id/deadlines`      期限列表（阶段 3 由期限引擎写入）
  * - `POST /api/workbench/matters/:id/deadlines/recompute` 调期限引擎重算并落库（返回待补输入）
  * - `PATCH /api/workbench/matters/:id/deadlines/:did` 单条期限状态（已办理 / 已豁免）
- * - `GET  /api/workbench/matters/:id/events`         案件事件（_matter-log.md 的只读投影）
+ * - `GET  /api/workbench/matters/:id/events`         案卷事件（_matter-log.md 的只读投影）
  * - `POST /api/workbench/matters/:id/events`         追加事件
  *
  * 校验失败一律 `400` + 中文原因（仓储层抛出）；不静默忽略非法值。

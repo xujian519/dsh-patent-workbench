@@ -278,7 +278,7 @@ export function notesFromReview(input: {
     ? input.lessons.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
     : []
   const workspace = input.workspace ?? ''
-  const backlink = `\n\n---\n来源：个人工作台任务「${input.taskTitle}」（任务 ${input.taskId}，复盘 ${input.reviewId}），${now.toISOString()}`
+  const backlink = `\n\n---\n来源：专利工作台任务「${input.taskTitle}」（任务 ${input.taskId}，复盘 ${input.reviewId}），${now.toISOString()}`
   if (lessons.length === 0) {
     return [{
       title: `复盘：${input.taskTitle}`.slice(0, 120),

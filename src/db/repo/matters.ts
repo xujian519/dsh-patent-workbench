@@ -638,7 +638,7 @@ export function listMatterEvents(db: DatabaseSync, matterId: string): MatterEven
 }
 
 /**
- * 追加一条案件事件（`_matter-log.md` 的只读投影）。
+ * 追加一条案卷事件（`_matter-log.md` 的只读投影）。
  * 只追加、不覆写 —— 这是案件审计链的投影方向，唯一事实源始终是 `_matter-log.md`。
  */
 export function appendMatterEvent(db: DatabaseSync, input: MatterEventInput): MatterEventRow {

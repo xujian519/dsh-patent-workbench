@@ -189,7 +189,7 @@ test('刷新详情不带导航副作用：saveProgress 走 loadTaskDetail，而 
 })
 
 test('执行提示词要求主动报进度、并说清 100 不是直接完成（AX-P08）', () => {
-  const executePrompt = clientIndex.slice(clientIndex.indexOf('你是“个人工作台”的任务执行助手'))
+  const executePrompt = clientIndex.slice(clientIndex.indexOf('你是“专利工作台”的任务执行助手'))
   const promptBody = executePrompt.slice(0, 2000)
   assert.match(promptBody, /阶段性推进后主动报一次进度/, '执行提示词必须要求主动报进度')
   assert.match(promptBody, /workbench_update_progress/, '提示词要给出具体工具')
@@ -202,9 +202,9 @@ test('执行提示词要求主动报进度、并说清 100 不是直接完成（
 })
 
 test('非执行模式的提示词里**没有**进度工具指令（不诱导咨询/拆解会话执行任务）', () => {
-  const consult = clientIndex.slice(clientIndex.indexOf('你是“个人工作台”的任务协助助手'), clientIndex.indexOf('你是“个人工作台”的任务拆解助手'))
+  const consult = clientIndex.slice(clientIndex.indexOf('你是“专利工作台”的任务协助助手'), clientIndex.indexOf('你是“专利工作台”的任务拆解助手'))
   assert.doesNotMatch(consult, /workbench_update_progress/, '咨询模式不得被诱导去写进度')
-  const breakdown = clientIndex.slice(clientIndex.indexOf('你是“个人工作台”的任务拆解助手'), clientIndex.indexOf('你是“个人工作台”的任务复盘助手'))
+  const breakdown = clientIndex.slice(clientIndex.indexOf('你是“专利工作台”的任务拆解助手'), clientIndex.indexOf('你是“专利工作台”的任务复盘助手'))
   assert.doesNotMatch(breakdown, /workbench_update_progress/, '拆解模式不得被诱导去写进度')
 })
 

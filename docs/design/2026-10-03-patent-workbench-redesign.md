@@ -1,6 +1,6 @@
 # 专利工作台改造方案（dsh-personal-workbench → dsh-patent-workbench）
 
-> 状态：**阶段 5 进行中**（阶段 0–4 已完成；5A 知识库加法、5B 案件视图 + 时间线、5C 期限看板均已落地，仅剩 5D 文案/域名词）。
+> 状态：**阶段 5 已完成**（阶段 0–5 均已落地；仅剩阶段 6 bridge 收口）。
 > 相关既有工作（另一仓库）：
 >
 > - `deepseek-harness/docs/dsh-workbench-integration-design.md`（2026-09-03 工作台↔专利案件集成，Phase 1–5）
@@ -16,7 +16,7 @@
 | 2 领域字典 + matters | ✅ | 迁移 20：`matters` / `matter_notices` / `matter_deadlines` / `matter_events` + `knowledge_entries.matter_id` + 四类领域字典；`db/repo/matters.ts`（CRUD + 校验）与 `api/routes/matters.ts`（REST）；`test/matters.test.mjs` 9 例 |
 | 3 期限引擎接入 | ◐ | **DSH Patent 侧已完成**（`deepseek-harness` 分支 `feat/patent-deadline-service`）：`patent-deadline` 新增 `provideService` / `exposeTool` 两个 Config 开关，profile 根域多注册一行即发布 `patentDeadline` 服务（不是新建包）；工作台侧已完成软探测 + `shared/patentDeadline.ts`（案卷/官文 → 引擎入参、报告 → 期限行，唯一映射处）+ `POST /api/workbench/matters/:id/deadlines/recompute`，引擎缺失时 409 明确降级。**待做**：期限看板 UI（归到阶段 5）与实机装盘 |
 | 4 删除通用功能 | ✅ | 分五片（D4）：**A** 日报/周报（`6ea289f`，−544 行，工具 17→16）；**B** 点子/点子王（`a15dc51`，34 文件 −2326 行，工具 16→14）；**C** 容量账本（`def51ad`，−3223 行，`capacity.ts` → `dailyPlanCandidates.ts`，迁移 21 = 两个 meta 键）；**D** 重复任务（`d746305`，`db/repo/recurring.ts` 整删）；**E** 迁移 22（`DROP TABLE` ×4 + `DROP COLUMN` ×4 + 16 行字典 `active=0` + 破坏性迁移前自动备份）。**留存的**：`daily_plans` + AI 智能排序、`estimatedMinutes`、`planIncludeOverdue`（原 `dailyCapacityIncludeOverdue`） |
-| 5 知识库加法 + UI | ◐ | **5A 已完成**：出厂分类扩到专利域 10 类（`05546f2`）；`matter_id` 全链路接线（列在迁移 20 就加了、此前代码一处未读写）+ AI 工具 `workbench_link_knowledge_matter` + 知识条目「归入案卷」下拉；召回候选集加**本案卷**域（`recallScopeRank` 唯一定义：本任务 0 → 本案卷 1 → 全库 2；打分/阈值/闸门/日志字段未动）。**5B 已完成**：顶级视图「案件」（列表 + 详情 + 时间线，`matterTimeline.ts` 纯模块合成三源）；**5C 已完成**：跨案卷「近 7 天到期」看板（新聚合端点 `GET /matter-deadlines/upcoming`）+ 案卷详情期限区（重算按钮、状态标记、日历未覆盖提示）+ `bootstrap.deadlineEngineAvailable` 软探测（引擎缺失时明确降级）。**待做**：5D 文案 / 域名词 |
+| 5 知识库加法 + UI | ◐ | **5A 已完成**：出厂分类扩到专利域 10 类（`05546f2`）；`matter_id` 全链路接线（列在迁移 20 就加了、此前代码一处未读写）+ AI 工具 `workbench_link_knowledge_matter` + 知识条目「归入案卷」下拉；召回候选集加**本案卷**域（`recallScopeRank` 唯一定义：本任务 0 → 本案卷 1 → 全库 2；打分/阈值/闸门/日志字段未动）。**5B 已完成**：顶级视图「案件」（列表 + 详情 + 时间线，`matterTimeline.ts` 纯模块合成三源）；**5C 已完成**：跨案卷「近 7 天到期」看板（新聚合端点 `GET /matter-deadlines/upcoming`）+ 案卷详情期限区（重算按钮、状态标记、日历未覆盖提示）+ `bootstrap.deadlineEngineAvailable` 软探测（引擎缺失时明确降级）。**5D 已完成**：产品名与实体称谓统一（界面/模型可见串自称「专利工作台」；实体统称「**案卷**」，DOM 前缀与数据目录**刻意保留**）；README 亮点补齐专利域能力、`package.json` 描述不再宣传已删功能。**阶段 5 完成**，剩阶段 6 bridge 收口 |
 | 6 bridge 收口 | ⬜ | `workbench_link_patent_case` → `_matter-log.md` → `matter_events` 只读投影 |
 
 已落地的额外事实（供阶段 3 核对）：`matter_notices.notice_kind` / `delivery_mode` 与 `matters.patent_kind` 的值域**逐字**取自 `@deepseek-ai/dsh-patent-deadline` 的 `NoticeKind` / `DeliveryMode` / `PatentKind`，起算时无需翻译层；`replaceMatterDeadlines` 重算时会保留用户已确认的期限状态（done / waived）。

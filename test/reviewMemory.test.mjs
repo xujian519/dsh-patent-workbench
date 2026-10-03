@@ -71,7 +71,7 @@ test('复盘写入团队记忆：按 lesson 拆条 + 回链 + 落盘格式与 No
     // 回链：能从记忆库回溯到任务与复盘
     assert.match(first, new RegExp(task.id))
     assert.match(first, new RegExp(reviewId))
-    assert.match(first, /来源：个人工作台任务「交付 V1\.14\.0」/)
+    assert.match(first, /来源：专利工作台任务「交付 V1\.14\.0」/)
 
     // 入队：交给 dsh-team-memory 的定时器补传
     const queued = readdirSync(join(home, 'queue')).filter((name) => name.endsWith('.json'))

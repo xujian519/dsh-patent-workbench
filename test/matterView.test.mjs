@@ -57,7 +57,12 @@ test('5B：案卷载荷的字段名在四处必须一致（客户端 → 路由 
 test('5B：案件视图已接进视图联合与顶栏（否则代码在、点不进去）', () => {
   assert.match(clientSource, /useState<'today' \| 'calendar' \| 'list' \| 'knowledge' \| 'matters'>/, 'view 联合里必须有 matters')
   assert.match(clientSource, /view === 'matters' \? 'on' : ''/, '顶栏要有「案件」入口且带选中态')
-  assert.match(clientSource, /<Icon name="folder" \/>案件/, '入口文案是「案件」')
+  /**
+   * 入口文案用「案卷」而不是「案件」：本仓对**实体**的既有称谓是「案卷」（阶段 2/3 的注释、
+   * 工具描述、设计文档、`workspacePath` 的界面标签都用它），只有"案卷所在的目录"才叫案卷目录。
+   * 术语统一由 `test/matterView.test.mjs` 这条 + `docs` 里的称谓一起守。
+   */
+  assert.match(clientSource, /<Icon name="folder" \/>案卷/, '入口文案是「案卷」（与阶段 2/3 的既有称谓一致）')
   assert.match(clientSource, /view === 'matters' && \(/, '视图主体要挂在 matters 上')
 })
 
@@ -298,4 +303,76 @@ test('5C：前端全部走服务端 —— 重算/状态/看板都打端点，�
   // 引擎可用性来自服务端软探测，而不是客户端猜
   assert.match(read('src/api/routes.ts'), /deadlineEngineAvailable: deps\.patentDeadline\?\.\(\) !== undefined/, 'bootstrap 要暴露引擎可用性')
   assert.match(clientSource, /bootstrap\?\.deadlineEngineAvailable === true/, '客户端读服务端的探测结果')
+})
+
+// ---------------------------------------------------------------------------
+// 阶段 5 · 5D：域名词（产品名 + 实体称谓）统一
+// ---------------------------------------------------------------------------
+
+test('5D：界面/模型可见的字符串一律自称「专利工作台」（DOM 前缀与数据目录不在此列）', () => {
+  /**
+   * 判据的边界要说清：**改的是文案，不是标识**。以下三类**必须保留** `personal-workbench`：
+   * `data-dsh-personal-workbench-*`（DOM 前缀，阶段 1 决定保留）、`~/.dsh/workbench/`（数据目录，
+   * 改名等于知识库"消失"）、以及 fork 出处链接。所以这里只扫"会说给人/模型听"的字符串。
+   */
+  const files = [
+    'src/index.ts', 'src/tools.ts', 'src/knowledge-tools.ts', 'src/knowledge-recall.ts',
+    'src/review-memory.ts', 'src/client/index.tsx', 'src/client/quickAttachments.ts',
+  ]
+  for (const file of files) {
+    const source = read(file)
+    assert.doesNotMatch(source, /个人工作台/, `${file} 里还有旧产品名「个人工作台」`)
+  }
+  // 反向：改名不许改到标识上
+  assert.match(read('src/client/styles.ts'), /data-dsh-personal-workbench-view/, 'DOM 前缀必须保留（阶段 1 的决定）')
+  assert.match(read('src/db/database.ts'), /'\.dsh', 'workbench'|workbench\.db/, '数据目录必须保留（改名等于知识库消失）')
+})
+
+test('5D：实体的既有称谓是「案卷」—— 界面文案不再出现「案件」', () => {
+  /**
+   * 术语不统一是**可核实**的问题：同一屏里「案件」与「案卷」混用，用户会以为它们是两个东西。
+   * 历史迁移注释里的旧表述（"案件 = 根任务"）是**当时的记录**，按纪律不改写，所以只扫这几处文案源。
+   */
+  const uiSources = ['src/client/index.tsx', 'src/client/components/MattersView.tsx', 'src/client/matterTimeline.ts']
+  for (const file of uiSources) {
+    const stripped = read(file).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, '')
+    assert.doesNotMatch(stripped, /案件/, `${file} 的用户可见文案里还有「案件」`)
+  }
+  assert.match(read('src/api/routes/matters.ts'), /案卷事件/, '路由注释的术语同步')
+  assert.match(read('src/client/index.tsx'), /案卷目录/, '工作目录仍叫「案卷目录」（那是目录，不是实体）')
+})
+
+test('5D：package.json 描述与 README 已不宣称被删掉的功能（日报周报/点子/容量/重复）', () => {
+  /**
+   * 阶段 4 删了四块功能，但 `package.json` 的描述里还写着「日报周报」——
+   * 这类"装盘页/仓库页上还宣传已删功能"的代价是用户照着找，找不到就说插件坏了。
+   */
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+  for (const word of ['日报', '周报', '点子', '容量', '重复任务']) {
+    assert.doesNotMatch(pkg.description, new RegExp(word), `package.json 描述里还在宣传已删功能：${word}`)
+  }
+  assert.match(pkg.description, /案卷/, '描述要说出这个工作台的核心实体')
+  assert.match(pkg.description, /期限/, '描述要说出期限看板')
+  const readme = read('README.md')
+  assert.doesNotMatch(readme, /仍是改造前的通用工作台形态/, 'README 的"现状"段不该再说改造前')
+  /**
+   * ⚠️ 只扫**功能列表**（版本历史之前）：`## 版本历史` 里 "1.15.2 …容量账本透明化" 是
+   * **历史发版记录**，按本仓纪律不改写（它是"当时确实发过这个版"的事实）。
+   */
+  /**
+   * 扫的是**功能条目行**（`- ✨ …` 那种），不是整段散文：
+   * "现状"那段会**点名说"删掉了 X / Y"**（那是告知，不是宣传），把它算作违规会让判据变成噪声。
+   * 真正的风险是功能列表里还挂着已删功能的卖点。
+   */
+  const bullets = readme.split('\n').filter((line) => line.startsWith('- ') || line.startsWith('- **')).join('\n')
+  assert.ok(bullets.length > 0, '找不到 README 的功能条目 —— 判据失去对照物')
+  for (const word of ['容量账本', '点子', '日报周报']) {
+    assert.doesNotMatch(bullets, new RegExp(word), `README 功能列表里还在宣传已删功能：${word}`)
+  }
+  assert.match(bullets, /案卷/, 'README 功能列表要说出这个工作台的核心实体')
+  /**
+   * 历史部分（版本历史）**不许**被这条判据牵连：里面的 "容量账本透明化" 是发版记录，
+   * 按纪律不改写。这里反向确认一下它确实还在（防止有人"顺手清理"历史）。
+   */
+  assert.match(readme.slice(readme.indexOf('## 版本历史')), /容量账本/, '版本历史里的发版记录不许被清理')
 })
