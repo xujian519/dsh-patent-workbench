@@ -1,6 +1,17 @@
 /**
  * 知识库域（V2.5：个人知识库 / 错题集）。
  *
+ * ## `matter_id`（阶段 5 · 决策 5.2.1）
+ *
+ * 列在迁移 20 就加了（可空、老条目 `NULL`、行为不变），但当时**没有任何读写方** ——
+ * 阶段 5 才接上。语义与 `source_task_id` **并存**，两者回答不同问题：
+ *
+ * - `source_task_id` = "这条经验是哪次干活沉淀的"（自动写入，人不管）；
+ * - `matter_id` = "这条经验属于哪个案卷"（**用户/AI 显式归入**，可改可清）。
+ *
+ * 于是召回可以做"本案卷优先"（`knowledge-recall.ts#candidates`），
+ * 而"来源任务"的溯源链一点不受影响。
+ *
  * 从 repo.ts 原样抽出（行为不变）。对外符号由 repo.ts 再导出，调用方无需改 import。
  */
 import { randomUUID } from 'node:crypto'
@@ -17,6 +28,8 @@ export interface KnowledgeInput {
   sourceTaskId?: string | null
   sourceSessionId?: string | null
   sourceReviewId?: string | null
+  /** 归入的案卷（`matters.id`；null = 未归入）。与 `sourceTaskId` 并存，语义不同（见文件头）。 */
+  matterId?: string | null
   fileLink?: string | null
   /** 本条已被哪条取代（非空即在召回时压制，见 schema v18）。 */
   supersededById?: string | null
@@ -33,6 +46,8 @@ export interface KnowledgeRow {
   sourceTaskId: string | null
   sourceSessionId: string | null
   sourceReviewId: string | null
+  /** 归入的案卷（`matters.id`；null = 未归入）。 */
+  matterId: string | null
   fileLink: string | null
   /** 已被哪条取代（null = 仍然有效）。 */
   supersededById: string | null
@@ -51,6 +66,7 @@ interface RawKnowledgeRow {
   source_task_id: string | null
   source_session_id: string | null
   source_review_id: string | null
+  matter_id?: string | null
   file_link: string | null
   superseded_by_id?: string | null
   valid_until?: string | null
@@ -86,6 +102,7 @@ function parseKnowledge(row: RawKnowledgeRow | undefined): KnowledgeRow | undefi
     sourceTaskId: row.source_task_id,
     sourceSessionId: row.source_session_id,
     sourceReviewId: row.source_review_id,
+    matterId: row.matter_id ?? null,
     fileLink: row.file_link ?? null,
     supersededById: row.superseded_by_id ?? null,
     validUntil: row.valid_until ?? null,
@@ -94,13 +111,28 @@ function parseKnowledge(row: RawKnowledgeRow | undefined): KnowledgeRow | undefi
   }
 }
 
+/**
+ * 案卷 id 的存在性校验：给一个不存在的 `matter_id` 就报错，**不静默写 NULL**。
+ *
+ * 为什么必须有：`matter_id` 是纯 TEXT 列（SQLite 的 `ALTER TABLE ADD COLUMN` 加不了外键，
+ * 而且我们只前向迁移），所以库里会出现悬空引用。悬空引用的后果是**召回悄悄少东西**：
+ * 知识归入了一个不存在的案卷 → "本案卷优先"永远命中不到它 → 用户只会觉得"它怎么不出现"。
+ * 静默改写/静默丢件是本仓明令禁止的，所以这里显式抛错（调用方是 HTTP 路由 → 400 中文原因）。
+ */
+function assertKnownMatter(db: DatabaseSync, matterId: string | null | undefined): string | null {
+  if (matterId === undefined || matterId === null || matterId === '') return null
+  const row = db.prepare('SELECT id FROM matters WHERE id = ?').get(matterId)
+  if (row === undefined) throw new Error(`案卷不存在：${matterId}`)
+  return matterId
+}
+
 export function createKnowledge(db: DatabaseSync, input: KnowledgeInput, at = nowIso()): KnowledgeRow {
   const id = randomUUID()
   const fileLink = assertValidFileLink(input.fileLink)
   db.prepare(`
-    INSERT INTO knowledge_entries (id, kind_code, title, content_md, tags_json, source_task_id, source_session_id, source_review_id, file_link, superseded_by_id, valid_until, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, input.kindCode ?? 'note', input.title, input.contentMd ?? '', JSON.stringify(input.tags ?? []), input.sourceTaskId ?? null, input.sourceSessionId ?? null, input.sourceReviewId ?? null, fileLink, input.supersededById ?? null, input.validUntil ?? null, at, at)
+    INSERT INTO knowledge_entries (id, kind_code, title, content_md, tags_json, source_task_id, source_session_id, source_review_id, matter_id, file_link, superseded_by_id, valid_until, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, input.kindCode ?? 'note', input.title, input.contentMd ?? '', JSON.stringify(input.tags ?? []), input.sourceTaskId ?? null, input.sourceSessionId ?? null, input.sourceReviewId ?? null, assertKnownMatter(db, input.matterId), fileLink, input.supersededById ?? null, input.validUntil ?? null, at, at)
   return getKnowledge(db, id)!
 }
 
@@ -108,12 +140,13 @@ export function getKnowledge(db: DatabaseSync, id: string): KnowledgeRow | undef
   return parseKnowledge(db.prepare('SELECT * FROM knowledge_entries WHERE id = ?').get(id) as RawKnowledgeRow | undefined)
 }
 
-export function listKnowledge(db: DatabaseSync, opts: { q?: string; kindCode?: string; sourceTaskId?: string; sourceReviewId?: string; limit?: number } = {}): KnowledgeRow[] {
+export function listKnowledge(db: DatabaseSync, opts: { q?: string; kindCode?: string; sourceTaskId?: string; sourceReviewId?: string; matterId?: string; limit?: number } = {}): KnowledgeRow[] {
   const conditions: string[] = []
   const params: Array<string | number> = []
   if (opts.kindCode !== undefined) { conditions.push('kind_code = ?'); params.push(opts.kindCode) }
   if (opts.sourceTaskId !== undefined) { conditions.push('source_task_id = ?'); params.push(opts.sourceTaskId) }
   if (opts.sourceReviewId !== undefined) { conditions.push('source_review_id = ?'); params.push(opts.sourceReviewId) }
+  if (opts.matterId !== undefined) { conditions.push('matter_id = ?'); params.push(opts.matterId) }
   if (typeof opts.q === 'string' && opts.q.trim() !== '') {
     const like = `%${opts.q.trim()}%`
     conditions.push('(title LIKE ? OR content_md LIKE ? OR tags_json LIKE ? OR file_link LIKE ?)')
@@ -142,15 +175,16 @@ export function updateKnowledge(db: DatabaseSync, id: string, patch: Partial<Kno
     sourceTaskId: patch.sourceTaskId === undefined ? before.sourceTaskId : patch.sourceTaskId,
     sourceSessionId: patch.sourceSessionId === undefined ? before.sourceSessionId : patch.sourceSessionId,
     sourceReviewId: patch.sourceReviewId === undefined ? before.sourceReviewId : patch.sourceReviewId,
+    matterId: patch.matterId === undefined ? before.matterId : assertKnownMatter(db, patch.matterId),
     fileLink: patch.fileLink === undefined ? before.fileLink : assertValidFileLink(patch.fileLink),
     supersededById: patch.supersededById === undefined ? before.supersededById : patch.supersededById,
     validUntil: patch.validUntil === undefined ? before.validUntil : patch.validUntil,
     updatedAt: at,
   }
   db.prepare(`
-    UPDATE knowledge_entries SET kind_code = ?, title = ?, content_md = ?, tags_json = ?, source_task_id = ?, source_session_id = ?, source_review_id = ?, file_link = ?, superseded_by_id = ?, valid_until = ?, updated_at = ?
+    UPDATE knowledge_entries SET kind_code = ?, title = ?, content_md = ?, tags_json = ?, source_task_id = ?, source_session_id = ?, source_review_id = ?, matter_id = ?, file_link = ?, superseded_by_id = ?, valid_until = ?, updated_at = ?
     WHERE id = ?
-  `).run(next.kindCode, next.title, next.contentMd, JSON.stringify(next.tags), next.sourceTaskId, next.sourceSessionId, next.sourceReviewId, next.fileLink, next.supersededById, next.validUntil, next.updatedAt, id)
+  `).run(next.kindCode, next.title, next.contentMd, JSON.stringify(next.tags), next.sourceTaskId, next.sourceSessionId, next.sourceReviewId, next.matterId, next.fileLink, next.supersededById, next.validUntil, next.updatedAt, id)
   return next
 }
 

@@ -35,6 +35,7 @@ import { getKnowledge, getTask, listKnowledge } from './db/repo.js'
 import type { KnowledgeRow } from './db/repo/knowledge.js'
 import { findTaskIdBySession } from './db/repo/task-sessions.js'
 import { readMeta } from './db/repo/meta.js'
+import { findMatterIdByWorkspacePath } from './db/repo/matters.js'
 import { appendRecallLog, citeRecallLog, readSessionOverrides, writeSessionOverride } from './knowledge-recall-log.js'
 import {
   citationMatch,
@@ -400,7 +401,7 @@ export class KnowledgeRecallManager {
       this.log(`读取知识库失败（本回合不召回）：${error instanceof Error ? error.message : String(error)}`)
       rows = []
     }
-    this.candidateCache = { at: now, rows, stats: termStatsOf(rows.map((entry) => ({ entry, fromTask: false }))) }
+    this.candidateCache = { at: now, rows, stats: termStatsOf(rows.map((entry) => ({ entry, fromTask: false, fromMatter: false }))) }
     return rows
   }
 
@@ -456,22 +457,48 @@ export class KnowledgeRecallManager {
   }
 
   /**
-   * 候选集：**本任务/本任务树在前，全局在后**（验收要求"优先本任务…再扩到全局"）。
+   * 会话的 `cwd` → 案卷 id（"本案卷优先"的判定键，阶段 5 · 决策 5.2.3）。
    *
-   * 同一条不会出现两次（按 id 去重，保留任务域那份）。
+   * 判定实现只有一处：`db/repo/matters.ts#findMatterIdByWorkspacePath`。这里只包一层 try
+   * —— 解析失败**不是**致命错误，按"不在任何案卷目录里"处理并留一行日志，
+   * 绝不因为案卷查不出来就让这一回合不检索。
    */
-  candidates(taskId: string | null): RecallCandidate[] {
+  resolveMatterId(cwd?: string): string | null {
+    try {
+      return findMatterIdByWorkspacePath(this.db, cwd)
+    } catch (error) {
+      this.log(`解析案卷失败（按"不在案卷里"处理）：${error instanceof Error ? error.message : String(error)}`)
+      return null
+    }
+  }
+
+  /**
+   * 候选集：**本任务/本任务树在前 → 本案卷其次 → 全局最后**。
+   *
+   * 验收要求"优先本任务…再扩到全局"；阶段 5 把中间的**本案卷**补上（同一案卷目录下的
+   * 知识对当前会话比"全库"更相关）。
+   *
+   * 同一条不会出现两次（按 id 去重，保留**更强的域**那份：任务 > 案卷 > 全局）。
+   * 域只影响**顺序**，不参与打分 —— 打分/阈值/闸门/日志字段一律没动（决策 5.1）。
+   */
+  candidates(taskId: string | null, cwd?: string): RecallCandidate[] {
     const rows = this.allEntries()
-    if (taskId === null) return rows.map((entry) => ({ entry, fromTask: false }))
-    const chain = this.taskChain(taskId)
+    const matterId = this.resolveMatterId(cwd)
+    if (taskId === null && matterId === null) return rows.map((entry) => ({ entry, fromTask: false, fromMatter: false }))
+    const chain = taskId === null ? new Set<string>() : this.taskChain(taskId)
     const inTask: RecallCandidate[] = []
+    const inMatter: RecallCandidate[] = []
     const global: RecallCandidate[] = []
     for (const entry of rows) {
-      const linked = entry.sourceTaskId !== null && chain.has(entry.sourceTaskId)
-      if (linked) inTask.push({ entry, fromTask: true })
-      else global.push({ entry, fromTask: false })
+      if (taskId !== null && entry.sourceTaskId !== null && chain.has(entry.sourceTaskId)) {
+        inTask.push({ entry, fromTask: true, fromMatter: false })
+      } else if (matterId !== null && entry.matterId === matterId) {
+        inMatter.push({ entry, fromTask: false, fromMatter: true })
+      } else {
+        global.push({ entry, fromTask: false, fromMatter: false })
+      }
     }
-    return [...inTask, ...global]
+    return [...inTask, ...inMatter, ...global]
   }
 
   /** 会话 → 任务 id：先查 `task_sessions`（权威），再退到工作目录命名（兜底）。 */
@@ -500,6 +527,8 @@ export class KnowledgeRecallManager {
     trigger: 'session_start' | 'turn' | 'tool'
     /** 工具路径：不去重、不受开关限制（用户/模型显式要查就查）。 */
     explicit?: boolean
+    /** 会话工作目录（用来认"本案卷"，阶段 5；缺省 = 不认案卷域）。 */
+    cwd?: string
   }): RecallOutcome {
     const sessionId = input.sessionId ?? ''
     const state = sessionId === '' ? undefined : this.state(sessionId)
@@ -508,7 +537,7 @@ export class KnowledgeRecallManager {
       taskId: input.taskId,
       query: input.query,
       trigger: input.trigger,
-      candidates: this.candidates(input.taskId),
+      candidates: this.candidates(input.taskId, input.cwd),
       seen: state?.seenIds,
       explicit: input.explicit,
     })
@@ -636,7 +665,7 @@ export class KnowledgeRecallManager {
     const state = this.state(sessionId)
     const outcome = mergeRecallOutcomes(queries.map((query) => ({
       query,
-      outcome: this.recallWith({ sessionId, taskId, query, candidates: this.candidates(taskId), trigger: 'session_start', seen: state.seenIds }),
+      outcome: this.recallWith({ sessionId, taskId, query, candidates: this.candidates(taskId, cwd), trigger: 'session_start', seen: state.seenIds }),
     })), { maxEntries: this.maxEntries() })
     this.logOutcome({ trigger: 'session_start', query: outcome.query, outcome, injected: willInject(outcome), sessionId, taskId })
     state.primed = true
@@ -696,7 +725,7 @@ export class KnowledgeRecallManager {
         sessionId,
         taskId,
         query,
-        candidates: this.candidates(taskId),
+        candidates: this.candidates(taskId, cwd),
         trigger: 'turn',
         seen: state.seenIds,
       })
@@ -1044,10 +1073,10 @@ export class KnowledgeRecallManager {
    * 那样脚本就得自己拿候选集、自己定阈值 —— 三处各算一遍，测出来的数字与线上行为无关。
    * 这里复用**同一个** `candidates()` 与同一份 `RECALL_DEFAULTS`。
    */
-  recallToText(input: { sessionId?: string; taskId: string | null; query: string }): RecallOutcome {
+  recallToText(input: { sessionId?: string; taskId: string | null; query: string; cwd?: string }): RecallOutcome {
     return recallKnowledge({
       query: input.query,
-      candidates: this.candidates(input.taskId),
+      candidates: this.candidates(input.taskId, input.cwd),
       stats: this.corpusStats(),
       minScore: this.options.minScore ?? RECALL_DEFAULTS.minScore,
       maxEntries: this.options.maxEntries ?? RECALL_DEFAULTS.maxEntries,
@@ -1086,7 +1115,7 @@ export class KnowledgeRecallManager {
           hits: input.hits.map((hit) => ({
             id: hit.id, title: hit.title, score: hit.relevance, relevance: hit.relevance,
             reason: hit.reason ?? '模型主动检索',
-            snippet: '', terms: [], tags: [], fromTask: false, updatedAt: '', fileLink: null, sourceTaskId: null, kindCode: '',
+            snippet: '', terms: [], tags: [], fromTask: false, fromMatter: false, updatedAt: '', fileLink: null, sourceTaskId: null, kindCode: '',
           })),
           matched: input.matched ?? input.hits.length,
           droppedByScore: input.droppedByScore ?? 0,

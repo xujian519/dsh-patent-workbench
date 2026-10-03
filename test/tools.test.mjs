@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { openWorkbenchDb } from '../lib/db/database.js'
 import { seedDictionaries } from '../lib/db/seed.js'
 import { proposeDailyPlanTool, submitKnowledgeTool, submitTaskTool, updateTaskTool, requestCompletionTool, saveTaskMemoryTool } from '../lib/tools.js'
-import { createDraft, createTask, confirmDailyPlanDraft, confirmTaskDraft, getTask, getTaskMemoryContext, getDraftBySession, getPendingDailyPlanDraft, getPendingDraftForTask, linkTaskSession, updateTask } from '../lib/db/repo.js'
+import { createDraft, createKnowledge, createMatter, createTask, confirmDailyPlanDraft, confirmTaskDraft, getKnowledge, getTask, getTaskMemoryContext, getDraftBySession, getPendingDailyPlanDraft, getPendingDraftForTask, linkTaskSession, updateTask } from '../lib/db/repo.js'
+import { linkKnowledgeMatterTool } from '../lib/matter-tools.js'
 
 /**
  * 删临时目录，容忍 Windows 上刚 `close()` 时文件句柄尚未释放导致的 EPERM。
@@ -371,6 +372,50 @@ test('workbench_submit_task 在同名任务已存在时给出提醒（尤其是�
     assert.match(repeat, /已经存在/)
     assert.match(repeat, /几乎肯定是重复录入/)
     assert.match(repeat, new RegExp(task.id.slice(0, 8)))
+  } finally {
+    rmTempDir(dir)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 阶段 5：workbench_link_knowledge_matter（知识 ↔ 案卷的显式写入口）
+// ---------------------------------------------------------------------------
+
+test('link_knowledge_matter：归入 / 改归 / 移出 / 三种坏输入都给可读中文原因', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-patent-workbench-matter-tool-'))
+  try {
+    const db = openWorkbenchDb({ dbPath: join(dir, 'workbench.db') })
+    seedDictionaries(db)
+    const tool = linkKnowledgeMatterTool(db)
+    const matterA = createMatter(db, { caseNumber: '2026-UM-001', title: '甲案', matterType: 'drafting' })
+    const matterB = createMatter(db, { caseNumber: '2026-UM-002', title: '乙案', matterType: 'drafting' })
+    const entry = createKnowledge(db, { title: '答复策略：三步法' })
+    const run = (args) => tool.execute(args, {})
+
+    // 归入
+    const linked = await run({ knowledge_id: entry.id, case_number: '2026-UM-001' })
+    assert.match(linked, /已归入案卷「2026-UM-001 · 甲案」/)
+    assert.equal(getKnowledge(db, entry.id).matterId, matterA.id)
+    assert.equal(getKnowledge(db, entry.id).contentMd, '', '只改归属，不动内容')
+
+    // 重复归入同一个是幂等的（不做无意义的写）
+    assert.match(await run({ knowledge_id: entry.id, case_number: '2026-UM-001' }), /已经归在案卷/)
+
+    // 改归另一个（明确说出"原先归在别的案卷下"）
+    assert.match(await run({ knowledge_id: entry.id, case_number: '2026-UM-002' }), /原先归在别的案卷下/)
+    assert.equal(getKnowledge(db, entry.id).matterId, matterB.id)
+
+    // 移出
+    assert.match(await run({ knowledge_id: entry.id, unlink: true }), /已移出案卷「2026-UM-002」/)
+    assert.equal(getKnowledge(db, entry.id).matterId, null)
+    assert.match(await run({ knowledge_id: entry.id, unlink: true }), /本来就没有归入任何案卷/, '再移出一次要说清"无需改动"')
+
+    // 坏输入：都要可读原因，且不许半写
+    assert.match(await run({ knowledge_id: 'no-such-entry', case_number: '2026-UM-001' }), /^错误：没有这条知识条目/)
+    assert.match(await run({ knowledge_id: entry.id, case_number: '不存在的案号' }), /^错误：没有这个案卷/)
+    assert.match(await run({ knowledge_id: entry.id }), /^错误：要么给 case_number/)
+    assert.equal(getKnowledge(db, entry.id).matterId, null, '坏输入不许改到任何东西')
+    db.close()
   } finally {
     rmTempDir(dir)
   }

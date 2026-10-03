@@ -52,8 +52,9 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
             const kindCode = url.searchParams.get('kind_code') ?? undefined
             const sourceTaskId = url.searchParams.get('source_task_id') ?? undefined
             const sourceReviewId = url.searchParams.get('source_review_id') ?? undefined
+            const matterId = url.searchParams.get('matter_id') ?? undefined
             if (kindCode !== undefined && getDictionary(db, 'knowledge_kind', kindCode) === undefined) return writeJson(res, 400, { error: 'unknown knowledge_kind' })
-            return writeJson(res, 200, { ok: true, entries: listKnowledge(db, { q, kindCode, sourceTaskId, sourceReviewId }) })
+            return writeJson(res, 200, { ok: true, entries: listKnowledge(db, { q, kindCode, sourceTaskId, sourceReviewId, matterId }) })
           }
           if (method === 'POST') {
             if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })
@@ -73,6 +74,11 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
                 sourceTaskId: typeof body.sourceTaskId === 'string' ? body.sourceTaskId : null,
                 sourceSessionId: typeof body.sourceSessionId === 'string' ? body.sourceSessionId : null,
                 sourceReviewId: typeof body.sourceReviewId === 'string' ? body.sourceReviewId : null,
+                /**
+                 * 归入案卷（阶段 5）：`matterId` 给了非空串才归入；不存在时 `createKnowledge`
+                 * 会抛「案卷不存在」（→ 400），**不静默写 NULL**。
+                 */
+                matterId: typeof body.matterId === 'string' && body.matterId.trim() !== '' ? body.matterId.trim() : null,
                 fileLink,
               })
               return writeJson(res, 201, { ok: true, knowledge: entry })
@@ -98,6 +104,11 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
           if ('sourceReviewId' in body) patch.sourceReviewId = typeof body.sourceReviewId === 'string' ? body.sourceReviewId : null
           if ('fileLink' in body) patch.fileLink = typeof body.fileLink === 'string' ? body.fileLink : null
           /**
+           * 归入/移出案卷：显式 `null` 或空串 = 移出；给了不存在的 id → `updateKnowledge`
+           * 抛「案卷不存在」（下面的 catch 转 400 中文原因）。
+           */
+          if ('matterId' in body) patch.matterId = typeof body.matterId === 'string' && body.matterId.trim() !== '' ? body.matterId.trim() : null
+          /**
            * P2：取代 / 有效期。
            *
            * `supersededById` 显式传 `null` 表示**解除取代**（用户把标注撤了）；
@@ -121,7 +132,17 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
               patch.validUntil = body.validUntil.trim()
             } else return writeJson(res, 400, { error: 'validUntil 必须是时间串或 null' })
           }
-          const entry = updateKnowledge(db, id, patch)
+          /**
+           * ⚠️ `updateKnowledge` 会为**不存在**的案卷抛错（见 `repo/knowledge.ts#assertKnownMatter`），
+           * 所以这里必须包 try —— 与本文件 POST 分支同形。不包的话一个错案卷 id 会变成 500，
+           * 而本仓的纪律是"坏输入 → 400 + 可读中文原因"。
+           */
+          let entry: ReturnType<typeof updateKnowledge>
+          try {
+            entry = updateKnowledge(db, id, patch)
+          } catch (error) {
+            return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          }
           if (entry === undefined) return writeJson(res, 404, { error: 'knowledge not found' })
           return writeJson(res, 200, { ok: true, knowledge: entry })
         }

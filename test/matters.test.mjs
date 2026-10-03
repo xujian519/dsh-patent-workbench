@@ -7,7 +7,8 @@ import { makeRoutes } from '../lib/api/routes.js'
 import {
   appendMatterEvent, createKnowledge, createMatter, createMatterNotice, deleteMatter, deleteMatterNotice,
   getMatter, getKnowledge, getMatterByCaseNumber, listMatterDeadlines, listMatterEvents, listMatterNotices,
-  listMatters, replaceMatterDeadlines, setMatterDeadlineStatus, updateMatter,
+  listMatters, replaceMatterDeadlines, setMatterDeadlineStatus, updateMatter, updateKnowledge, listKnowledge,
+  findMatterIdByWorkspacePath,
   MATTER_STAGE_CODES, PATENT_KINDS, NOTICE_KINDS, REPEATABLE_NOTICE_KINDS, DELIVERY_MODES,
 } from '../lib/db/repo.js'
 
@@ -423,4 +424,118 @@ test('路由：必填缺失时重算返回 400 中文原因（不静默丢字段
     const notFound = await fetch(`${base}/no-such-matter/deadlines/recompute`, { method: 'POST' })
     assert.equal(notFound.status, 404)
   }, { patentDeadline: () => stubEngine(seen) })
+})
+
+// ---------------------------------------------------------------------------
+// 阶段 5 · 决策 5.2.1：knowledge_entries.matter_id 的读写（此前列在、代码全空）
+// ---------------------------------------------------------------------------
+
+test('知识条目归入案卷：create/update/list 三条路都通，且 list 能按案卷过滤', () => {
+  const db = freshDb()
+  try {
+    const m = createMatter(db, baseMatter())
+    const other = createMatter(db, baseMatter({ caseNumber: 'CN-2026-0002' }))
+    const attached = createKnowledge(db, { title: '答复策略：三步法怎么答', matterId: m.id })
+    const loose = createKnowledge(db, { title: '通论：三步法', sourceTaskId: null })
+    assert.equal(attached.matterId, m.id, 'createKnowledge 必须落库 matter_id')
+    assert.equal(loose.matterId, null, '不给就是不归入（不是静默挂到某个案子下）')
+    assert.equal(getKnowledge(db, attached.id).matterId, m.id, '读回来也要在')
+
+    // 过滤：只拿这个案子的
+    assert.deepEqual(listKnowledge(db, { matterId: m.id }).map((entry) => entry.id), [attached.id])
+    assert.equal(listKnowledge(db, { matterId: other.id }).length, 0)
+
+    // 改归属（含"移出"）
+    assert.equal(updateKnowledge(db, loose.id, { matterId: m.id }).matterId, m.id)
+    assert.equal(listKnowledge(db, { matterId: m.id }).length, 2)
+    assert.equal(updateKnowledge(db, loose.id, { matterId: null }).matterId, null, '显式 null = 移出案卷')
+
+    // 与 sourceTaskId 并存、语义不互相干扰
+    const both = createKnowledge(db, { title: '既来自任务又属于案卷', sourceTaskId: null, matterId: other.id })
+    assert.equal(both.matterId, other.id)
+    assert.equal(both.sourceTaskId, null)
+  } finally {
+    db.close()
+  }
+})
+
+test('归入不存在的案卷必须**当场报错**，不许静默写 NULL（否则召回会悄悄少东西）', () => {
+  const db = freshDb()
+  try {
+    for (const call of [
+      () => createKnowledge(db, { title: '坏归属', matterId: 'no-such-matter' }),
+      () => updateKnowledge(db, createKnowledge(db, { title: '待改' }).id, { matterId: 'no-such-matter' }),
+    ]) {
+      assert.throws(call, /案卷不存在/, '悬空引用必须显式失败')
+    }
+    // 失败不许留下半截数据
+    assert.equal(listKnowledge(db).filter((entry) => entry.title === '坏归属').length, 0)
+  } finally {
+    db.close()
+  }
+})
+
+test('删案卷会把归入它的知识移出案卷（内容与来源一点不动）', () => {
+  const db = freshDb()
+  try {
+    const m = createMatter(db, baseMatter())
+    const entry = createKnowledge(db, { title: '归入后删案卷', contentMd: '正文', matterId: m.id })
+    const result = deleteMatter(db, m.id)
+    assert.deepEqual(result, { deleted: true, detachedKnowledge: 1 })
+    const after = getKnowledge(db, entry.id)
+    assert.equal(after.matterId, null, '归属被清空')
+    assert.equal(after.contentMd, '正文', '内容不许被"顺手"改写')
+  } finally {
+    db.close()
+  }
+})
+
+test('findMatterIdByWorkspacePath：目录边界 + 最长优先 + 归一化（"本案卷优先"的判定键）', () => {
+  const db = freshDb()
+  try {
+    const a = createMatter(db, baseMatter({ caseNumber: 'CN-1', workspacePath: '/w/案1' }))
+    const ten = createMatter(db, baseMatter({ caseNumber: 'CN-10', workspacePath: '/w/案10' }))
+    const deep = createMatter(db, baseMatter({ caseNumber: 'CN-2', workspacePath: '/w/案1/子案' }))
+    createMatter(db, baseMatter({ caseNumber: 'CN-3' }))  // 没登记目录 → 不参与匹配
+    assert.equal(findMatterIdByWorkspacePath(db, '/w/案1'), a.id)
+    assert.equal(findMatterIdByWorkspacePath(db, '/w/案1/'), a.id, '尾斜杠归一化')
+    assert.equal(findMatterIdByWorkspacePath(db, String.raw`/w/案1\子`), a.id, '反斜杠归一化（Windows 路径；用 String.raw 才能真的带一个反斜杠进字符串）')
+    assert.equal(findMatterIdByWorkspacePath(db, '/w/案10/x'), ten.id, '/w/案1 不许吃掉 /w/案10')
+    assert.equal(findMatterIdByWorkspacePath(db, '/w/案1/子案/x'), deep.id, '子目录认更具体的那个')
+    assert.equal(findMatterIdByWorkspacePath(db, '/w/其他'), null)
+    assert.equal(findMatterIdByWorkspacePath(db, ''), null)
+    assert.equal(findMatterIdByWorkspacePath(db, undefined), null, '没有 cwd 不报错，就是不认案卷')
+  } finally {
+    db.close()
+  }
+})
+
+test('routes: 知识条目归入案卷（PATCH matterId）—— 合法 200、坏案卷 400 中文原因', async () => {
+  await withServer(async (mattersBase) => {
+    const knowledgeBase = mattersBase.replace('/api/workbench/matters', '/api/workbench/knowledge')
+    const post = (body) => fetch(knowledgeBase, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const patch = (id, body) => fetch(`${knowledgeBase}/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+    const created = await fetch(mattersBase, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ caseNumber: 'R-K-1', title: '带知识的路由案卷', matterType: 'drafting' }) })
+    const matterId = (await created.json()).matter.id
+
+    const first = await post({ title: '答复策略：三步法', matterId })
+    assert.equal(first.status, 201)
+    const entry = (await first.json()).knowledge
+    assert.equal(entry.matterId, matterId, 'POST 就要能直接归入案卷')
+
+    const listed = await fetch(`${knowledgeBase}?matter_id=${matterId}`)
+    const listedBody = await listed.json()
+    assert.deepEqual(listedBody.entries.map((item) => item.id), [entry.id], '列表能按案卷过滤')
+
+    // 坏案卷 id：必须是 400 + 可读原因，不是 500、也不是静默写 NULL
+    const bad = await patch(entry.id, { matterId: 'no-such-matter' })
+    assert.equal(bad.status, 400)
+    assert.match((await bad.json()).error, /案卷不存在/)
+
+    // 移出案卷：显式 null
+    const detached = await patch(entry.id, { matterId: null })
+    assert.equal(detached.status, 200)
+    assert.equal((await detached.json()).knowledge.matterId, null)
+  })
 })

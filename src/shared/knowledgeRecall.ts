@@ -107,11 +107,40 @@
  */
 import type { KnowledgeRow } from '../db/repo/knowledge.js'
 
-/** 一次召回的候选（任务域在前、全局在后，见 `recallScopeRank`）。 */
+/**
+ * 一次召回的**域**：本任务 > 本案卷 > 全库（顺序由 `recallScopeRank` 唯一定义）。
+ *
+ * 用两个布尔而不是一个"域码"，是为了不动既有的 `fromTask` 契约（测试与调用点都用它），
+ * 同时让"凭什么排在前面"只有一个说法 —— 注入文本、排序、日志、界面都印同一个标签
+ * （`recallScopeLabel`）。
+ */
 export interface RecallCandidate {
   entry: KnowledgeRow
-  /** 来自本任务/本任务树（true）还是全库（false）。 */
+  /** 来自本任务/本任务树（自身 + 祖先 + 后代）。 */
   fromTask: boolean
+  /**
+   * 来自**本案卷**（阶段 5 · 决策 5.2.3）—— 会话工作目录所属案卷下的知识条目。
+   *
+   * 与 `fromTask` 可以同时为真（既在同一任务链上、又归入了同一案卷），此时按**更强的域**
+   * 算（`recallScopeRank` 取任务域）—— 一条候选只有一个标签。
+   */
+  fromMatter: boolean
+}
+
+/**
+ * 域的**排序权重**（越小越前）：本任务 0 → 本案卷 1 → 全库 2。
+ *
+ * 这是"候选集排序"的唯一实现（决策 5.2.3 只允许动这里）：
+ * **不动打分、不动阈值、不动闸门、不动日志字段**。它被两处消费 ——
+ * 排序比较器与展示标签；同一件事两处各写一个 `if` 正是本项目最大的 bug 类别。
+ */
+export function recallScopeRank(candidate: { fromTask: boolean; fromMatter: boolean }): number {
+  return candidate.fromTask ? 0 : candidate.fromMatter ? 1 : 2
+}
+
+/** 域的展示标签（注入文本、单条 `reason`、界面共用一份）。 */
+export function recallScopeLabel(candidate: { fromTask: boolean; fromMatter: boolean }): string {
+  return candidate.fromTask ? '本任务' : candidate.fromMatter ? '本案卷' : '全库'
 }
 
 /** 单条命中：给注入文本、给日志、给 UI 用的是**同一份**判定结果。 */
@@ -134,6 +163,8 @@ export interface RecallHit {
   snippet: string
   tags: string[]
   fromTask: boolean
+  /** 来自本案卷（见 `recallScopeRank`）。 */
+  fromMatter: boolean
   updatedAt: string
   fileLink: string | null
   sourceTaskId: string | null
@@ -710,7 +741,7 @@ export function scoreCandidate(candidate: RecallCandidate, context: ScoreContext
       ? { label: '标签', terms: tagTerms, massHit: tagField.massHit }
       : { label: '正文', terms: bodyTerms, massHit: bodyField.massHit }
   const terms = [...new Set([...titleTerms, ...tagTerms, ...bodyTerms])]
-  const reason = `${candidate.fromTask ? '本任务' : '全库'} · ${winner.label}命中「${winner.terms.join('、')}」`
+  const reason = `${recallScopeLabel(candidate)} · ${winner.label}命中「${winner.terms.join('、')}」`
     + `（该字段信息量 ${winner.massHit.toFixed(2)}/${massQuery.toFixed(2)}，命中 ${winner.terms.length}/${totalTerms} 个关键词）`
     + ` → 相关度 ${formatRelevance(score)}`
 
@@ -727,6 +758,7 @@ export function scoreCandidate(candidate: RecallCandidate, context: ScoreContext
     snippet,
     tags: entry.tags,
     fromTask: candidate.fromTask,
+    fromMatter: candidate.fromMatter,
     updatedAt: entry.updatedAt,
     fileLink: entry.fileLink,
     sourceTaskId: entry.sourceTaskId,
@@ -768,11 +800,11 @@ export function recallKnowledge(input: RecallInput): RecallOutcome {
     anyTermHit += 1
     scored.push(hit)
   }
-  // 排序：分数降序 → 任务域优先 → 更新时间降序（最近度只在这里起作用）→ id
+  // 排序：分数降序 → 域优先（本任务 → 本案卷 → 全库）→ 更新时间降序（最近度只在这里起作用）→ id
   // （最后一项保证**结果稳定**：同分同时间的条目顺序不能每次跑都不一样，否则日志无法对比）
   scored.sort((a, b) =>
     b.score - a.score
-    || Number(b.fromTask) - Number(a.fromTask)
+    || recallScopeRank(a) - recallScopeRank(b)
     || recencyFactor(b.updatedAt, now) - recencyFactor(a.updatedAt, now)
     || a.id.localeCompare(b.id))
 
@@ -901,11 +933,11 @@ export function mergeRecallOutcomes(
   }
   const ranked = order
     .map((id) => best.get(id)!)
-    .sort((a, b) => b.score - a.score || Number(b.fromTask) - Number(a.fromTask) || a.id.localeCompare(b.id))
+    .sort((a, b) => b.score - a.score || recallScopeRank(a) - recallScopeRank(b) || a.id.localeCompare(b.id))
   const hits = ranked.slice(0, maxEntries)
   const nearMisses = nearOrder
     .map((id) => nearBest.get(id)!)
-    .sort((a, b) => b.score - a.score || Number(b.fromTask) - Number(a.fromTask) || a.id.localeCompare(b.id))
+    .sort((a, b) => b.score - a.score || recallScopeRank(a) - recallScopeRank(b) || a.id.localeCompare(b.id))
     .slice(0, RECALL_DEFAULTS.maxHints)
   const supersededIds = [...superseded]
   return { ...base, hits, nearMisses, matched, droppedByScore, droppedByLimit: ranked.length - hits.length, droppedAsSeen, droppedAsSuperseded: supersededIds.length, supersededIds }
@@ -983,7 +1015,7 @@ export function formatRecallText(outcome: RecallOutcome): string {
     + (terms.length === 0 ? '：' : `（关键词：${terms.join('、')}）：`),
   ]
   for (const hit of outcome.hits) {
-    const source = hit.fromTask ? '本任务' : '全库'
+    const source = recallScopeLabel(hit)
     const from = hit.query !== undefined && hit.query !== outcome.query ? ` · 来自「${hit.query.slice(0, 24)}」` : ''
     lines.push(`- [${hit.id}] ${hit.title}（${hit.kindCode} · ${source} · 相关度 ${formatRelevance(hit.score)} · 更新 ${hit.updatedAt.slice(0, 10)}${from}）`)
     if (hit.snippet !== '') lines.push(`  摘要：${hit.snippet}`)

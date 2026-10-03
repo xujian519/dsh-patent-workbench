@@ -452,6 +452,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [pickedPlanSession, setPickedPlanSession] = useState<{ sessionId: string } | null>(null)
   const [planRefreshKey, setPlanRefreshKey] = useState(0)
   const [knowledgeEntries, setKnowledgeEntries] = useState<KnowledgeEntry[]>([])
+  /** 案卷列表（只为「归入案卷」下拉；拉不到就是空列表 —— 下拉里显示"未归入"，不假装有关系）。 */
+  const [matters, setMatters] = useState<Array<{ id: string; caseNumber: string; title: string }>>([])
   /**
    * 知识库列表的筛选/排序/分页状态。
    *
@@ -460,7 +462,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    */
   const [knowledgeFilters, setKnowledgeFilters] = useState<KnowledgeFilters>(() => readKnowledgeFilters())
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntry | null>(null)
-  const [knowledgeDraft, setKnowledgeDraft] = useState<{ title: string; contentMd: string; kindCode: string; tags: string; sourceTaskId: string; sourceReviewId: string; fileLink: string } | null>(null)
+  const [knowledgeDraft, setKnowledgeDraft] = useState<{ title: string; contentMd: string; kindCode: string; tags: string; sourceTaskId: string; sourceReviewId: string; matterId: string; fileLink: string } | null>(null)
   const [knowledgeEditId, setKnowledgeEditId] = useState<string | null>(null)
   const [knowledgeRefreshKey, setKnowledgeRefreshKey] = useState(0)
   const [localDocPath, setLocalDocPath] = useState('')
@@ -617,6 +619,17 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     } finally { setSkillsLoading(false) }
   }, [])
 
+  /**
+   * 案卷列表（阶段 5）：只用来给「归入案卷」下拉提供选项。
+   *
+   * 为什么一次全拉：案子是**几十条**量级（一个人同时在办的案子），下拉要能即时过滤；
+   * 每次敲字都打库不可接受（与知识库同一判断）。案件视图（阶段 5 的后续片）会复用这份数据。
+   */
+  const loadMatters = useCallback(async () => {
+    const res = await api<{ matters: Array<{ id: string; caseNumber: string; title: string }> }>('/api/workbench/matters')
+    setMatters(res.matters)
+  }, [])
+
   // 知识库：一次取回后**全部在客户端**搜索/筛选/排序/分页 —— 千级规模下每次敲字都打库是不可接受的。
   const loadKnowledge = useCallback(async () => {
     const res = await api<{ entries: KnowledgeEntry[] }>('/api/workbench/knowledge')
@@ -625,6 +638,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   useEffect(() => {
     if (view === 'knowledge') void loadKnowledge().catch(() => undefined)
   }, [view, loadKnowledge, knowledgeRefreshKey])
+  useEffect(() => { void loadMatters().catch(() => undefined) }, [loadMatters])
   useEffect(() => { void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))) }, [refresh])
   useEffect(() => { void api<{ settings: WorkbenchSettings }>('/api/workbench/settings').then((r) => setSettings(withSettingsFallback(r.settings))).catch(() => undefined) }, [])
 
@@ -2988,7 +3002,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 total={knowledgePage.total}
                 onChange={updateKnowledgeFilters}
                 onClear={() => updateKnowledgeFilters({ keyword: '', kinds: ['all'], tags: [], page: 0 })}
-                onCreate={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', fileLink: '' }) }}
+                onCreate={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', matterId: '', fileLink: '' }) }}
                 onSummarizeDoc={openFilePicker}
                 busy={busy}
               />
@@ -2997,7 +3011,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                   <div style={{ marginBottom: 6, color: 'var(--dsw-alias-state-business-primary, #4f8ef7)' }}><Icon name="book" size={30} /></div>
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>还没有知识条目</div>
                   <div style={{ fontSize: 12, opacity: .8, marginBottom: 12 }}>沉淀经验教训、决策和可复用片段；也可以在 AI 复盘后一键写入</div>
-                  <button className="wb-btn primary" onClick={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', fileLink: '' }) }}>新建知识</button>
+                  <button className="wb-btn primary" onClick={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', matterId: '', fileLink: '' }) }}>新建知识</button>
                 </div>
               ) : (
                 <>
@@ -3104,7 +3118,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                   if (knowledgeDraft.title.trim() === '') return
                   const tags = knowledgeDraft.tags.split(/[,#，\s]+/).map((tag) => tag.trim()).filter((tag) => tag !== '').slice(0, 20)
                   const isEdit = knowledgeEditId !== null
-                  const payload = { title: knowledgeDraft.title.trim(), contentMd: knowledgeDraft.contentMd, kindCode: knowledgeDraft.kindCode, tags, sourceTaskId: knowledgeDraft.sourceTaskId.trim() === '' ? null : knowledgeDraft.sourceTaskId.trim(), sourceReviewId: knowledgeDraft.sourceReviewId.trim() === '' ? null : knowledgeDraft.sourceReviewId.trim(), fileLink: knowledgeDraft.fileLink.trim() === '' ? null : knowledgeDraft.fileLink.trim() }
+                  const payload = { title: knowledgeDraft.title.trim(), contentMd: knowledgeDraft.contentMd, kindCode: knowledgeDraft.kindCode, tags, sourceTaskId: knowledgeDraft.sourceTaskId.trim() === '' ? null : knowledgeDraft.sourceTaskId.trim(), sourceReviewId: knowledgeDraft.sourceReviewId.trim() === '' ? null : knowledgeDraft.sourceReviewId.trim(), matterId: knowledgeDraft.matterId === '' ? null : knowledgeDraft.matterId, fileLink: knowledgeDraft.fileLink.trim() === '' ? null : knowledgeDraft.fileLink.trim() }
                   void api(isEdit ? `/api/workbench/knowledge/${knowledgeEditId}` : '/api/workbench/knowledge', { method: isEdit ? 'PATCH' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
                     .then(() => { setKnowledgeDraft(null); setKnowledgeEditId(null); setKnowledgeRefreshKey((v) => v + 1); setNotice(isEdit ? '知识条目已更新' : '知识条目已创建') })
                     .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
@@ -3113,6 +3127,12 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                   <label className="full">标题<input value={knowledgeDraft.title} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, title: e.target.value })} placeholder="可检索的标题" /></label>
                   <label>分类<select value={knowledgeDraft.kindCode} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, kindCode: e.target.value })}>{dictOf('knowledge_kind').map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
                   <label>标签<input value={knowledgeDraft.tags} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, tags: e.target.value })} placeholder="用逗号/空格分隔，如 TTS, 踩坑" /></label>
+                  {/**
+                    * 归入案卷（阶段 5）：与「关联任务 id」是**两件事** ——
+                    * 关联任务是"这条经验是哪次干活沉淀的"（溯源），归入案卷是"它属于哪个案子"（归属）。
+                    * 归入后，该案卷目录下的会话会优先召回它（本任务 > 本案卷 > 全库）。
+                    */}
+                  <label>归入案卷（可选）<select value={knowledgeDraft.matterId} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, matterId: e.target.value })}><option value="">（不归入）</option>{matters.map((m) => <option key={m.id} value={m.id}>{m.caseNumber}{m.title === '' ? '' : ` · ${m.title}`}</option>)}</select></label>
                   <label className="full">本地文件链接（可选）<input value={knowledgeDraft.fileLink} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, fileLink: e.target.value })} placeholder="file:// 或绝对路径，如 D:\docs\方案.md、/mnt/d/docs/方案.md" /></label>
                   <label className="full">关联任务 id（可选）<input value={knowledgeDraft.sourceTaskId} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, sourceTaskId: e.target.value })} placeholder="留空表示不关联" /></label>
                   <label className="full">正文（Markdown）<textarea rows={12} value={knowledgeDraft.contentMd} onChange={(e) => setKnowledgeDraft((prev) => prev === null ? prev : { ...prev, contentMd: e.target.value })} /></label>
@@ -3124,12 +3144,23 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                   <div className="wb-card">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <h4 style={{ flex: 1, margin: 0 }}>{selectedKnowledge.title}</h4>
-                      <button className="wb-btn" onClick={() => { setKnowledgeEditId(selectedKnowledge.id); setKnowledgeDraft({ title: selectedKnowledge.title, contentMd: selectedKnowledge.contentMd, kindCode: selectedKnowledge.kindCode, tags: selectedKnowledge.tags.join(', '), sourceTaskId: selectedKnowledge.sourceTaskId ?? '', sourceReviewId: selectedKnowledge.sourceReviewId ?? '', fileLink: selectedKnowledge.fileLink ?? '' }) }}><Icon name="edit" />编辑</button>
+                      <button className="wb-btn" onClick={() => { setKnowledgeEditId(selectedKnowledge.id); setKnowledgeDraft({ title: selectedKnowledge.title, contentMd: selectedKnowledge.contentMd, kindCode: selectedKnowledge.kindCode, tags: selectedKnowledge.tags.join(', '), sourceTaskId: selectedKnowledge.sourceTaskId ?? '', sourceReviewId: selectedKnowledge.sourceReviewId ?? '', matterId: selectedKnowledge.matterId ?? '', fileLink: selectedKnowledge.fileLink ?? '' }) }}><Icon name="edit" />编辑</button>
                       <button className="wb-btn" onClick={() => { if (window.confirm('删除这条知识？')) { void api(`/api/workbench/knowledge/${selectedKnowledge.id}`, { method: 'DELETE' }).then(() => { setSelectedKnowledge(null); setKnowledgeRefreshKey((v) => v + 1); setNotice('已删除') }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err))) } }}><Icon name="trash" />删除</button>
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '8px 0' }}>
                       <Badge dict={dictOf('knowledge_kind')} code={selectedKnowledge.kindCode} />
                       {selectedKnowledge.tags.map((tag) => <span key={tag} style={{ fontSize: 12, color: '#999' }}>#{tag}</span>)}
+                      {/**
+                        * ⚠️ 用 `?? ''` 而不是 `=== null`：装盘完成、宿主还没重启的那段时间里，
+                        * 服务端还是**旧代码**，响应里根本没有 `matterId`（`undefined`）。
+                        * 直接判 `=== null` 会把"旧服务端"渲染成「案卷：（已删除的案卷）」——
+                        * 一句暴露给用户的假话（与 `withSettingsFallback` 防的是同一类事故）。
+                        */}
+                      {(selectedKnowledge.matterId ?? '') === '' ? null : (
+                        <span style={{ fontSize: 12, color: '#999' }}>
+                          案卷：{matters.find((m) => m.id === selectedKnowledge.matterId)?.caseNumber ?? '（已删除的案卷）'}
+                        </span>
+                      )}
                     </div>
                     {selectedKnowledge.fileLink !== null && selectedKnowledge.fileLink !== '' && (
                       <div style={{ margin: '8px 0', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -3424,7 +3455,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                                 <MarkdownText text={String(rv.summary_md ?? '')} />
                                 {existingKnowledge !== undefined
                                   ? <button className="wb-btn" style={{ marginTop: 6 }} onClick={() => { setKnowledgeDraft(null); setKnowledgeEditId(null); setSelectedKnowledge(existingKnowledge); setView('knowledge') }}><Icon name="book" />✅ 已沉淀，打开知识条目</button>
-                                  : <button className="wb-btn" style={{ marginTop: 6 }} onClick={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: `复盘：${selected.task.title}`, contentMd: String(rv.summary_md ?? ''), kindCode: 'lesson', tags: '复盘', sourceTaskId: selected.task.id, sourceReviewId: reviewId, fileLink: '' }); setSelectedKnowledge(null); setView('knowledge') }}><Icon name="book" />💡 沉淀为经验</button>}
+                                  : <button className="wb-btn" style={{ marginTop: 6 }} onClick={() => { setKnowledgeEditId(null); setKnowledgeDraft({ title: `复盘：${selected.task.title}`, contentMd: String(rv.summary_md ?? ''), kindCode: 'lesson', tags: '复盘', sourceTaskId: selected.task.id, sourceReviewId: reviewId, matterId: '', fileLink: '' }); setSelectedKnowledge(null); setView('knowledge') }}><Icon name="book" />💡 沉淀为经验</button>}
                               </div>
                             )
                           })}

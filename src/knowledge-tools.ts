@@ -54,7 +54,7 @@ export function searchKnowledgeTool(manager: KnowledgeRecallManager) {
       + '③写/改代码前查相关约定与踩坑记录；④提交验收/复盘前查相关历史经验。'
       + '自动召回每回合也会带出条目，但报错原文、代码里的关键词常常只有你当场才看得到，所以这四个时机请主动查一次。'
       + '两种用法：①关键词检索（默认）——现象词/报错原文/模块名当 query，返回摘要（每条截 160 字符）；②按 id 读全文——把召回或上次检索结果里的 [id]（完整 uuid，可直接带方括号）当 query，返回该条的**完整正文**（带 file_link 的条目会一并给出本地文档路径）。相关度是归一化的 0~1（标题档满分 1.00 / 标签档 0.82 / 正文档 0.45），过线约等于 >= ${formatRelevance(RECALL_DEFAULTS.minScore)}。'
-      + '排序规则：本任务/本任务树优先，其次全库。'
+      + '排序规则：本任务/本任务树优先，其次**本案卷**（会话工作目录所属案卷下、且被显式归入该案卷的知识），最后全库。'
       + '结果里的 [id] 可用于 report_usage 回报引用。',
     parameters: {
       query: { type: 'string', required: true, description: '检索关键词（现象词/报错原文片段/模块名/函数名都行；中文逐字匹配），或某条知识条目的完整 id（取全文）' },
@@ -129,12 +129,13 @@ export function searchKnowledgeTool(manager: KnowledgeRecallManager) {
       if (explicitTask !== undefined && !manager.taskExists(explicitTask)) {
         return `错误：task_id 不存在：${explicitTask}。可省略该参数，让系统按当前会话关联的任务推断范围。`
       }
+      const cwd = exec.agent?.session?.header?.cwd
       const resolvedTask = explicitTask
-        ?? (sessionId === '' ? null : manager.resolveTaskId(sessionId, exec.agent?.session?.header?.cwd))
+        ?? (sessionId === '' ? null : manager.resolveTaskId(sessionId, cwd))
       const terms = extractTerms(query)
       const outcome = recallKnowledge({
         query,
-        candidates: manager.candidates(resolvedTask),
+        candidates: manager.candidates(resolvedTask, cwd),
         // 词信息量统计与候选集同源（同一个管理器实例，同一份缓存）
         stats: manager.corpusStats(),
         /**

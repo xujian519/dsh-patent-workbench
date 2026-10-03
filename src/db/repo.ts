@@ -226,7 +226,7 @@ export {
   normalizeCalendarDate, getMatter, getMatterByCaseNumber, listMatters, createMatter, updateMatter, deleteMatter,
   listMatterNotices, createMatterNotice, deleteMatterNotice,
   listMatterDeadlines, replaceMatterDeadlines, setMatterDeadlineStatus,
-  listMatterEvents, appendMatterEvent,
+  listMatterEvents, appendMatterEvent, findMatterIdByWorkspacePath,
 } from './repo/matters.js'
 export type {
   MatterStageCode, PatentKind, NoticeKind, DeliveryMode,

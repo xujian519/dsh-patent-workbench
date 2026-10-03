@@ -60,7 +60,7 @@ export interface DailyPlanView {
   diagnostics?: string[]
 }
 // 提醒相关类型来自共享契约（前后端单一事实来源），此处不再重复定义。
-export interface KnowledgeEntry { id: string; kindCode: string; title: string; contentMd: string; tags: string[]; sourceTaskId: string | null; sourceSessionId: string | null; sourceReviewId: string | null; fileLink: string | null; createdAt: string; updatedAt: string }
+export interface KnowledgeEntry { id: string; kindCode: string; title: string; contentMd: string; tags: string[]; sourceTaskId: string | null; sourceSessionId: string | null; sourceReviewId: string | null; /** 归入的案卷（阶段 5）；null = 未归入。 */ matterId: string | null; fileLink: string | null; createdAt: string; updatedAt: string }
 export interface Bootstrap {
   dictionaries: Dict[]
   stats: { overdue: number; todayDue: number; doing: number; total: number }

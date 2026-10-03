@@ -26,6 +26,8 @@ import {
   normalizeText,
   mergeRecallOutcomes,
   recallKnowledge,
+  recallScopeLabel,
+  recallScopeRank,
   recencyFactor,
   relevanceOf,
   RELEVANCE_CEILING,
@@ -674,4 +676,31 @@ test('P4 引用判定：命中标题前缀或 id 才算引用，普通复述不�
   assert.deepEqual(citationMatch('先看 id-jia 那条', twins), ['id-jia'], '但明确写了 id 的那条要标上')
 })
 
+// ---------------------------------------------------------------------------
+// 阶段 5 · 决策 5.2.3：域的排序权重与标签（唯一实现，两处消费）
+// ---------------------------------------------------------------------------
 
+test('recallScopeRank / recallScopeLabel：本任务 0 → 本案卷 1 → 全库 2，且标签与权重一一对应', () => {
+  const cases = [
+    [{ fromTask: true, fromMatter: true }, 0, '本任务', '既在任务链又在案卷里时，按更强的域算'],
+    [{ fromTask: true, fromMatter: false }, 0, '本任务'],
+    [{ fromTask: false, fromMatter: true }, 1, '本案卷'],
+    [{ fromTask: false, fromMatter: false }, 2, '全库'],
+  ]
+  for (const [input, rank, label, why] of cases) {
+    assert.equal(recallScopeRank(input), rank, `${JSON.stringify(input)} 的权重应为 ${rank} ${why ?? ''}`)
+    assert.equal(recallScopeLabel(input), label, `${JSON.stringify(input)} 的标签应为 ${label}`)
+  }
+})
+
+test('三域同分时按域排序（分数优先，域只在同分时决定次序）', () => {
+  const entry = (id) => ({ id, kindCode: 'lesson', title: '盘符根目录', contentMd: 'x', tags: [], sourceTaskId: null, sourceSessionId: null, sourceReviewId: null, matterId: null, fileLink: null, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' })
+  const pool = [
+    { entry: entry('global'), fromTask: false, fromMatter: false },
+    { entry: entry('matter'), fromTask: false, fromMatter: true },
+    { entry: entry('task'), fromTask: true, fromMatter: false },
+  ]
+  const outcome = recallKnowledge({ query: '盘符根目录', candidates: pool, now: NOW })
+  assert.deepEqual(outcome.hits.map((hit) => hit.id), ['task', 'matter', 'global'])
+  assert.deepEqual(outcome.hits.map((hit) => hit.fromMatter), [false, true, false], 'fromMatter 必须原样带到命中结果上（界面与注入文本都要用）')
+})

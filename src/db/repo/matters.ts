@@ -435,6 +435,47 @@ export function updateMatter(db: DatabaseSync, id: string, patch: MatterPatch): 
  * 删除案卷。连带清除引用它的知识条目上的 `matter_id`（不留悬空指针），
  * 官文/期限/事件由外键级联删除（`PRAGMA foreign_keys = ON`）。
  */
+/**
+ * 会话的工作目录 → 案卷 id（阶段 5 · 决策 5.2.3「本案卷优先」的判定键）。
+ *
+ * ## 为什么用目录当键
+ *
+ * 案卷与任务/会话之间**没有**别的连接点：`matters` 是一等实体（D1），任务不承载案卷；
+ * 而 `matters.workspace_path` 与会话的 `cwd` 是同一个东西 —— `patent-workspace/<案号>/`。
+ * 这也是本仓已有的做法：`knowledge-recall.ts#resolveTaskId` 在没有 `task_sessions` 关联时
+ * 就退到"按工作目录命名"反查任务。零新表、零新状态。
+ *
+ * ## 匹配规则（顺序即优先级）
+ *
+ * 1. **路径归一化**：分隔符统一成 `/`、去尾斜杠、转小写 ——
+ *    与客户端 `client/workspacePath.ts` 的去重口径一致（Windows/macOS 都可能大小写不敏感）；
+ * 2. **最长者优先**：`/a/案1` 与 `/a/案1/子` 都登记时，会话在子目录里要认**更具体**的那个；
+ *    同长度按 `updated_at` 新的在前（SQL 里排好，取第一条即返回）；
+ * 3. 只认**目录边界**（`target === base` 或以 `base + '/'` 开头），不做子串匹配 ——
+ *    `/a/案1` 不许匹配到 `/a/案10`。
+ *
+ * 未登记 `workspace_path` 的案卷不参与匹配（没有可比的东西，不猜）。
+ */
+export function findMatterIdByWorkspacePath(db: DatabaseSync, cwd: string | null | undefined): string | null {
+  if (typeof cwd !== 'string') return null
+  const target = normalizeWorkspacePath(cwd)
+  if (target === '') return null
+  const rows = db.prepare(`SELECT id, workspace_path FROM matters
+    WHERE workspace_path IS NOT NULL AND workspace_path <> ''
+    ORDER BY length(workspace_path) DESC, updated_at DESC`).all() as unknown as Array<{ id: string; workspace_path: string }>
+  for (const row of rows) {
+    const base = normalizeWorkspacePath(row.workspace_path)
+    if (base === '') continue
+    if (target === base || target.startsWith(`${base}/`)) return row.id
+  }
+  return null
+}
+
+/** 路径比较用的归一化（分隔符、尾斜杠、大小写）。只用于**比较**，不用于落库。 */
+function normalizeWorkspacePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/\/+$/, '').trim().toLowerCase()
+}
+
 export function deleteMatter(db: DatabaseSync, id: string): { deleted: boolean; detachedKnowledge: number } {
   const existing = getMatter(db, id)
   if (existing === undefined) return { deleted: false, detachedKnowledge: 0 }

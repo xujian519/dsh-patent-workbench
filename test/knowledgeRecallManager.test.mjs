@@ -9,6 +9,7 @@
  * | 同一回合内文本稳定 | 每回合改写提示前缀 = DeepSeek 前缀缓存全废（团队记忆写进代码注释的硬约束） |
  * | 注入过的条目不再重复注入 | 噪声控制的唯一机制；没有它，同一个任务连开 10 个回合就会看到同一批条目 10 次 |
  * | 本任务/任务树优先于全库 | 需求原文"优先本任务 / 本任务树，再扩到全局" |
+ * | 本案卷优先于全库 | 阶段 5 · 决策 5.2.3 把中间那一档补上（会话工作目录所属案卷） |
  *
  * 判据全部落在**可观测的结论**上（注入文本、召回日志行、开关状态），
  * 不靠"读代码看得出来"。
@@ -20,7 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openWorkbenchDb } from '../lib/db/database.js'
 import { seedDictionaries } from '../lib/db/seed.js'
-import { createKnowledge, createTask } from '../lib/db/repo.js'
+import { createKnowledge, createMatter, createTask } from '../lib/db/repo.js'
 import { linkTaskSession } from '../lib/db/repo/task-sessions.js'
 import { KnowledgeRecallManager } from '../lib/knowledge-recall.js'
 import { listRecallLog, readSessionOverrides } from '../lib/knowledge-recall-log.js'
@@ -365,3 +366,71 @@ test('P1 提示档：提示过的条目**将来真命中了仍然会被完整注
   })
 })
 
+// ---------------------------------------------------------------------------
+// 阶段 5 · 决策 5.2.3：本案卷优先（候选集排序；打分/阈值/闸门/日志字段都没动）
+// ---------------------------------------------------------------------------
+
+/** 建一个案卷（只要 caseNumber/title/workspacePath 三项，其余给迁移 20 的缺省）。 */
+function matter(db, over = {}) {
+  return createMatter(db, { caseNumber: '2026-UM-001', title: '某实用新型', matterType: 'drafting', stageCode: 'open', ...over })
+}
+
+test('本案卷优先：会话工作目录落在案卷下 → 该案卷的知识排在"全库"之前，且标签是「本案卷」而不是「本任务」', () => {
+  withDb((db) => {
+    const m = matter(db, { workspacePath: '/Users/x/patent-workspace/2026-UM-001' })
+    // 三条都含同一个关键词，确保它们**都能进池**；差别只在域
+    createKnowledge(db, { title: '审查尺度：创造性三步法', contentMd: '三步法 三步法 三步法', matterId: m.id })
+    createKnowledge(db, { title: '全库：三步法的通论', contentMd: '三步法 三步法' })
+    const manager = new KnowledgeRecallManager(db, { log: () => {} })
+    const outcome = manager.recallToText({ sessionId: 's-matter', taskId: null, query: '三步法', cwd: '/Users/x/patent-workspace/2026-UM-001/src' })
+    assert.equal(outcome.hits.length, 2, '两条都该召回（案卷域只改顺序，不减条数）')
+    assert.equal(outcome.hits[0].title, '审查尺度：创造性三步法', '案卷内的那条必须排在前面')
+    assert.equal(outcome.hits[0].fromMatter, true)
+    assert.equal(outcome.hits[0].fromTask, false, '它不来自任务链，不许标成"本任务"')
+    assert.match(outcome.hits[0].reason, /^本案卷 · /, '标签必须是「本案卷」（标成"本任务"就是撒谎）')
+    assert.equal(outcome.hits[1].fromMatter, false)
+    assert.match(outcome.hits[1].reason, /^全库 · /)
+  })
+})
+
+test('本案卷判定：目录边界与最长匹配（/案1 不许吃掉 /案10；子目录要认更具体的那个）', () => {
+  withDb((db) => {
+    const a = matter(db, { caseNumber: '2026-UM-001', workspacePath: '/w/案1' })
+    const b = matter(db, { caseNumber: '2026-UM-010', workspacePath: '/w/案10' })
+    const deeper = matter(db, { caseNumber: '2026-UM-002', workspacePath: '/w/案1/子案' })
+    const manager = new KnowledgeRecallManager(db, { log: () => {} })
+    assert.equal(manager.resolveMatterId('/w/案1'), a.id)
+    assert.equal(manager.resolveMatterId('/w/案1/'), a.id, '尾斜杠要归一化')
+    // ⚠️ 子串匹配会在这里出错：'/w/案10' 以 '/w/案1' 开头，但它不是案1 的目录
+    assert.equal(manager.resolveMatterId('/w/案10'), b.id, '/w/案1 不许吃掉 /w/案10')
+    assert.equal(manager.resolveMatterId('/w/案1/子案/x'), deeper.id, '子目录要认更具体的那个（最长优先）')
+    assert.equal(manager.resolveMatterId('/w/别的'), null)
+    assert.equal(manager.resolveMatterId(undefined), null, '没有 cwd → 不认案卷域（不是报错）')
+  })
+})
+
+test('三段域同时在场：本任务 > 本案卷 > 全库（同分时的稳定顺序）', () => {
+  withDb((db) => {
+    /**
+     * 任务标题就是那个关键词：`prime` 的 query 是**标题 + 描述两句分开检索**
+     *（拼成一句会把覆盖率分母翻倍，最相关的那条会掉到阈值以下 —— 文件头有推导）。
+     * 这里刻意让描述为空，把注意力放在"域的顺序"上。
+     */
+    const t = task(db, { title: '三步法', description: '' })
+    const m = matter(db, { workspacePath: '/w/案1' })
+    linkTaskSession(db, { taskId: t.id, sessionId: 'sess-3', roleCode: 'execute' })
+    /**
+     * 关键词放进**标题**（三条都一样）：标题档的权重能把分数抬过 0.33 的闸门
+     *（只写正文时正文档上限只有 0.34，实测 0.25 会被挡成"可能相关"）。
+     * 域只影响顺序、不改分数，所以三条同分才最能暴露顺序问题。
+     */
+    createKnowledge(db, { title: '三步法 · 本任务那条', contentMd: '正文', sourceTaskId: t.id })
+    createKnowledge(db, { title: '三步法 · 本案卷那条', contentMd: '正文', matterId: m.id })
+    createKnowledge(db, { title: '三步法 · 全库那条', contentMd: '正文' })
+    const manager = new KnowledgeRecallManager(db, { log: () => {} })
+    const outcome = manager.prime('sess-3', '/w/案1/sub')
+    assert.ok(outcome !== undefined && outcome.hits.length === 3, `三条都要在，实测 ${outcome?.hits.length}`)
+    assert.deepEqual(outcome.hits.map((h) => h.title), ['三步法 · 本任务那条', '三步法 · 本案卷那条', '三步法 · 全库那条'])
+    assert.deepEqual(outcome.hits.map((h) => [h.fromTask, h.fromMatter]), [[true, false], [false, true], [false, false]])
+  })
+})

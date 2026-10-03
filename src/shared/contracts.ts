@@ -311,6 +311,8 @@ export interface KnowledgeView {
   tags: string[]
   sourceTaskId: string | null
   sourceReviewId: string | null
+  /** 归入的案卷（阶段 5）；null = 未归入。与 `sourceTaskId` 语义不同（来源 vs 归属）。 */
+  matterId: string | null
   fileLink: string | null
   createdAt: string
   updatedAt: string
