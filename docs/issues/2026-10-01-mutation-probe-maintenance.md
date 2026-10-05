@@ -56,16 +56,46 @@
 2. **两种汇总约定**（**已修**：`scripts/lib/releasePreflight.mjs` 两种都认，认不出按不通过）：
    约定 A `✅ N/N 条变异都被断言抓到`（knowledge-recall / draft-overwrite / model-picker / quick-workspace）；
    约定 B `变异探针：N/M 条变异都变红`（capacity / listview）。
+3. **残留会进发布产物**（**已修，2026-10-05**）—— 这一条**不在本单范围内**，是审计
+   [`2026-10-05-深度审计.md`](2026-10-05-深度审计.md) §4.3 补的**新后果**：
+   上面第 1 条说的"假红"是**跑得下去**时的噪声；这一条说的是**跑不下去**时（SIGKILL / 断电 /
+   被门禁超时杀掉 / 构建失败分支没走到还原）残留的变异体会**被下一次 `pnpm build` 烘焙进 `lib/`**，
+   而**只改 `lib/` 的探针**（本仓有 1 个：`probe-knowledge-recall-mutations`）残留时**连再构建都不用**
+   就已经是要发布的字节。
+   **修法**：四个探针全部改走 [`scripts/lib/mutationGuard.mjs`](../../scripts/lib/mutationGuard.mjs)
+   （写前备份 + `SIGINT`/`SIGTERM`/异常/`exit` 还原 + 崩溃后下次启动恢复），门禁在整批前后
+   对 `src` + `lib` 拍指纹逐字节比对（[`workspaceFingerprint.mjs`](../../scripts/lib/workspaceFingerprint.mjs)），
+   并且**所有命令都有墙钟上限**、探针调用**不经 shell**。
+   **两份文档的分工**：本单管"探针自身准不准"（判据有没有牙、锚点有没有失效），
+   §4.3 管"探针会不会污染发布产物"；两处的探针名单与债务清单**是同一份**
+   （`KNOWN_PROBE_DEBT`），不许各写一套。
+
+> ⚠️ **两者共同的前提**：探针**必须真的改写工作区**才能证明断言有牙（改 `src/` 或 `lib/`）。
+> 所以"让探针不在工作区上改文件"（比如改到临时目录再复制回来）**不是**解法 ——
+> 那会把探针变成另一件需要被验证的工具。解法是给它配**可恢复的账本 + 独立的指纹判据**。
 
 ## D. 复现与验收
 
 ```powershell
-# 门禁一键跑（探针已在其中，且每个之间自动 pnpm build）
+# 门禁一键跑（探针已在其中，且每个之间自动 pnpm build；整批前后核对 src+lib 指纹）
 node scripts/release-preflight.mjs --only probes
 
 # 单独跑某个探针时，**它前面要有一次 pnpm build**
-pnpm build; node scripts\repro\probe-capacity-mutations.mjs
+pnpm build; node scripts\repro\probe-knowledge-recall-mutations.mjs
+
+# ⚠️ 例子必须指向**现役**文件：`probe-capacity-mutations` / `probe-listview-mutations`
+#    已随容量功能于 2026-10-03 删除。写一条跑不起来的命令，就是 v1.16.1 漏跑门禁的
+#    那个形态（"路径过时，照着敲根本找不到文件"）—— 现役探针列表以
+#    `scripts/repro/probe-*-mutations.mjs` 为准（门禁也是按这个 glob 发现的）。
+
+# 探针被强杀后残留？先看有没有没走完的账本，再恢复（2026-10-05 起）
+node scripts/repro/repro-mutation-residue.mjs            # dry-run：只报当前状态
+node scripts/lib/workspaceFingerprint.mjs --verify _local-build/fp-before-probes.json   # 手工核对漂移
 ```
+
+> 单独跑某个探针时若被 `Ctrl-C` / 强杀：账本留在 `_local-build/mutation-backup/<探针名>.json`
+> （`state:open`），**下一次门禁开跑时会自动从备份还原并报出来**（`recoverCrashedSessions()`）。
+> 备份是**逐字节原文**，不是"我记得改回去了"。
 
 **修完这一单的判据**：`KNOWN_PROBE_DEBT`（`scripts/release-preflight.mjs`）清空后，
 `--only probes` 仍然 exit 0。**清空名单是硬要求** —— 名单里已经不红的项会让 preflight 直接判失败，

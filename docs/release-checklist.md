@@ -36,6 +36,8 @@ pnpm test               # 构建 + node --test test/*.test.mjs，0 fail
 - [ ] `pnpm typecheck` 退出码 0。
 - [ ] `pnpm test` 输出 `fail 0`，且**测试条数不少于上一个发布**（少了说明有用例被删/被跳过，
       要么补回来，要么在 Release Notes 里说明原因）。
+- [ ] `node scripts/check-lint-directives.mjs` 退出码 0（`eslint-disable` 指令台账一致、
+      每处都有规则名与理由）。**它不是 lint** —— 本仓还没有 lint 工具，这条只管"disable 不许静默增长"。
 - [ ] 版本级验收要求：Release Notes 里**逐条对应**本版本的子任务。
 
 ## 2. 本机安装验证（**先本机，后发布**）
@@ -70,16 +72,33 @@ node scripts/dev-install.mjs --apply    # 真装：自动备份 + 零增量 diff
       注意它只看**版本号声明**，管不住"同版本号内容不同"，所以上面那条指纹校验不能省。
 - [ ] `dsh --profile web --dump-config` 退出码 0、无 `pending`（插件树能组装）。
 
-> 需要**在浏览器里自动验一遍**（不用人点）时，仓库里有零依赖的 CDP 脚本
-> （Node 24 自带 WebSocket，不需要 browser-use / Playwright）：
+> 需要**在浏览器里自动验一遍**（不用人点）时，用仓库里的验收链（零依赖 CDP，Node 自带
+> WebSocket，不需要 browser-use / Playwright）：
 >
 > ```sh
-> node .pwtest/verify-ui.mjs "http://127.0.0.1:3080/?token=<token>"      # 入口/面板/单一实例
-> node .pwtest/verify-draft.mjs "http://127.0.0.1:3080/?token=<token>"   # 草稿弹框行为
+> # 只读预检：打印阶段计划，零写入（先跑这个看清会动什么）
+> node scripts/dev-verify.mjs --url http://127.0.0.1:3080 --profile web \
+>   --profile-dir "<测试 profile 绝对目录>" --db-path "<独立测试 DB 绝对路径>" --dry-run
+>
+> # 真跑：构建 → 装盘 → 零增量 diff → dump-config → 只重启 3080 → health → token → 套件 → 证据
+> node scripts/dev-verify.mjs --url http://127.0.0.1:3080 --profile web \
+>   --profile-dir "<测试 profile 绝对目录>" --db-path "<独立测试 DB 绝对路径>"
 > ```
 >
-> 它们会另开一个独立调试实例（独立 profile + 端口），**不影响你正在用的浏览器窗口**。
-> token 在 `dsh web` 的启动日志里（`[dsh web: http://127.0.0.1:3080/?token=...]`）。
+> 规格见 [`docs/adr/0006-dev-verify-chain.md`](adr/0006-dev-verify-chain.md)，套件在
+> `scripts/verify/suites/`（清单 `suites.json`），怎么加套件见
+> [`.dsh/skills/dsh-plugin-change/SKILL.md`](../.dsh/skills/dsh-plugin-change/SKILL.md) §14。
+> token 只从 `DSH_VERIFY_TOKEN` 环境变量取，**不进 argv**；`--db-path` 缺省时预检 fail-closed 拒绝
+> （默认库跨 profile 共用，不隔离就会把正式库迁到新 schema）。
+>
+> ⚠️ **这条链在 macOS 上跑不到底**（2026-10-05 审计）：`scripts/verify/runtime.mjs` 的
+> "重启后端口归属"判据只在 Windows 上成立，非 Windows 一律判失败，而 restart 是必需阶段 ——
+> 于是整链在 mac 上必然停在 restart，后面的套件一个都跑不到。要本机自动验浏览器请如实说明
+> "未跑通"，**不要把它当成"验过了"**（见
+> [`docs/issues/2026-10-05-深度审计.md`](issues/2026-10-05-深度审计.md) §4.2，属待修项）。
+>
+> 早先的 `.pwtest/*.mjs` 脚本**已不在仓库里**（该目录被 `.gitignore` 忽略，本机也已不存在）。
+> 历史发行说明里对 `.pwtest/…` 的引用只能当**当时**的证据读，不要照抄命令。
 
 ## 3. 重启与本机实操验证
 
@@ -164,6 +183,45 @@ node scripts/release-preflight.mjs --phase post --version <version>  # 发布后
 发布后覆盖：`dist-tags` → **tarball 200 + sha1 与 `dist.shasum` 对账** → 用户视角安装 →
 GitHub `releases/latest`。欠账（历史失败 / 已知盲点 / 良性 PII）**显式登记在脚本里**，
 名单外的红会 exit 1；**名单里已经不红的也会 exit 1**（还清了必须删名单）。
+
+**探针那一段的三条额外保障**（2026-10-05 起，审计 §4.3；细节见
+[`docs/issues/2026-10-05-深度审计.md`](issues/2026-10-05-深度审计.md) §4.3 与
+[`docs/releases/v1.17.0.md`](releases/v1.17.0.md) §3.9）：
+
+1. **开跑前先做崩溃恢复**：上一次被 `SIGKILL` / 断电打断留下的账本
+   （`_local-build/mutation-backup/*.json`，`state:open`）会**自动从逐字节备份还原**并报出来。
+   手工看有没有没走完的账本：`node scripts/repro/repro-mutation-residue.mjs`（dry-run，只读）。
+2. **整批前后核对工作区指纹**（`src` + `lib` 逐字节）：跑完必须回到跑前，
+   否则记失败并列出漂移。手工核对：`node scripts/lib/workspaceFingerprint.mjs --verify <快照>`。
+   这一条防的是"**门禁自己污染发布产物**"——残留的 `src/` 会被下一次构建烘焙进 `lib/`，
+   残留的 `lib/` 直接随包发出。
+3. **每条命令都有墙钟上限**（构建 15 min / 单测 30 min / 探针 20 min），超时**记失败**而不是挂住；
+   探针调用**不经 shell**（`runNode()`），这样超时信号能直达探针的护栏并完成还原。
+   ⚠️ `spawnSync` 的超时**只杀直接子进程**，所以"加了超时"不等于"进程树已经死了" ——
+   兜底判据是第 2 条那个指纹。
+
+> **探针期间不要并行做别的构建**：探针会改写 `src/` 与 `lib/`，同时跑 `pnpm build` / `pnpm test`
+> 会让指纹判据把**你自己的**改动报成残留。
+
+**验收链那一段的平台事实**（2026-10-06 起，审计 §4.2；细节见
+[`docs/releases/v1.17.0.md`](releases/v1.17.0.md) §3.10 与
+[`docs/adr/0006-dev-verify-chain.md`](adr/0006-dev-verify-chain.md) 的"修订"节）：
+
+1. `node scripts/dev-verify.mjs` **不再只有 Windows 能跑完**：macOS / Linux 上端口归属走 `lsof` + `ps`，
+   停旧实例走 `SIGTERM` 并**等它真的退出**（不静默 SIGKILL），`--launcher` 走 `sh <launcher>`。
+2. **`--launcher` 必须自己返回**：在后台把实例拉起来（POSIX `&`、Windows `Start-Process`）。
+   前台等实例会让链挂到 180s 超时（会报退出码 3 与这句话）。
+3. **`blocked` 不是"过了"**：本机证明不了端口归属（没装 `lsof` 等）或找不到 dsh 的 `bin.js` 时，
+   `restart` 记 `blocked`、下游照跑、**退出码 2 且绝不报绿**；而"归属判据拒绝 / 停不掉旧进程"是**硬停**，
+   一个套件都不跑（否则套件会跑在别的实例、也就是别的库上）。
+4. 手工复核这三件事（真 `lsof` / 真信号 / 真拉起，自带清理，只碰它自己起的诱饵进程）：
+
+   ```sh
+   node scripts/repro/repro-dev-verify-posix.mjs
+   ```
+
+5. ⚠️ **CI 仍然不跑浏览器套件**（只跑 `node scripts/check-verify-scripts.mjs` 这个零依赖关卡）。
+   "非 Windows 可跑"目前指 restart 这一段具备能力并已实测，**不等于**整链已在 macOS 上端到端验证过。
 
 下面是它执行的判据本身（也是手工复核时的顺序）：
 

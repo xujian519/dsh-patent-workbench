@@ -228,6 +228,28 @@ node scripts/dev-verify.mjs --url http://127.0.0.1:3080 --profile web \
 **默认拒绝不是 bug**：目标 profile 没显式配独立 `dbPath` 时，预检 fail-closed 拒绝（默认库跨 profile 共用，
 不隔离就会把正式库迁到新 schema）。`--force` 只能绕"profile 名相同但目录不同"这一条。
 
+平台（2026-10-06 起，审计 §4.2）：
+
+| | Windows | macOS / Linux |
+|---|---|---|
+| 端口归属 | PowerShell `Get-NetTCPConnection`（`.ps1` 文件） | `lsof -nP -iTCP:<port> -sTCP:LISTEN -t` + `ps -ww -o comm=/-o command=` |
+| 停旧实例 | `Stop-Process -Force` | `SIGTERM` + 轮询 `kill(pid,0)` 等它真的退出；**不静默升级 SIGKILL** |
+| `--launcher` | `cmd /c "<launcher>"` | `sh "<launcher>"` |
+| dsh 入口发现 | `%APPDATA%\npm\...\dsh\lib\bin.js` | 与当前 Node 同前缀的全局安装 / `~/.local/lib/dsh/backend/lib/bin.js` / Homebrew 两个前缀 |
+
+- **`--launcher` 必须自己返回**：把实例丢到后台（POSIX `&`、Windows `Start-Process`）。
+  前台等实例 = 链挂到 180s 超时（2026-10-06 实测撞到，报的是退出码 3 与"启动器必须自己返回"）。
+- **`blocked`**：本机证明不了端口归属（没装 `lsof`、`ps` 读不到）或找不到 dsh 的 `bin.js` 时，
+  `restart` 阶段记 `blocked`：**下游 health/token/套件照跑**（人工已手工重启时它们仍然有判据意义），
+  但 `blockers` 留一条、verdict 记 `blocked`、退出码 2 —— **绝不报绿**。
+  与它相对的是**硬停**（拒绝 kill 非目标进程 / 停不掉旧进程）：那种情况一个套件都不许跑，
+  免得把套件跑在别的实例（也就等于别的库）上。
+- 真机复核这条链的这三件事（真 `lsof`/真信号/真拉起，自带清理，不动任何别人的进程）：
+
+  ```sh
+  node scripts/repro/repro-dev-verify-posix.mjs
+  ```
+
 ### 14.2 加一套件要动的地方
 
 1. 写 `scripts/verify/suites/<id>.mjs`；**共享脚手架是 `scripts/verify/suites/_harness.mjs`**
@@ -257,6 +279,7 @@ node scripts/dev-verify.mjs --url http://127.0.0.1:3080 --profile web \
 
 ```sh
 node --test test/verifySafety.test.mjs test/devVerify.test.mjs   # 自锁/白名单/脱敏的唯一防线
+node scripts/repro/repro-dev-verify-posix.mjs                    # 端口归属/停机/重启的真机复核（macOS/Linux）
 ```
 
 ---
