@@ -31,6 +31,7 @@ import { normalizeRecentWorkspaces } from '../shared/quickWorkspaceRecent.js'
 import type { PatentDeadlineService } from '../shared/patentDeadline.js'
 import { classifyTaskDay } from '../shared/dailyPlanPolicy.js'
 import { isOpenTask } from '../shared/taskProgress.js'
+import { isAbsoluteNativePath } from '../shared/hostPath.js'
 import type { WorkbenchSettings } from '../shared/contracts.js'
 import { readPersonaSettings, writePersonaSettings } from '../db/repo/personas.js'
 
@@ -189,6 +190,26 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
      */
     ...makePersonaRoutes(db, deps.personas ?? {}),
     // ------------------------------------------------------------------ workspace ensure
+    /**
+     * 建目录（`mkdir -p` 语义）。**这是全仓唯一的 HTTP 写盘端点**（`src/api/` 下唯一的
+     * `mkdirSync`），所以闸门必须在这。
+     *
+     * 另外三处 `mkdirSync` 都不是端点、也都不接受请求方给的路径：
+     * `db/database.ts`（库所在目录，源自 DSH_HOME 配置）、
+     * `review-memory.ts`（笔记/队列目录，源自 home）、
+     * `index.ts`（`/workbench` 命令建任务资料夹 —— 它与这里**用同一个判据**
+     * `shared/hostPath.ts#isAbsoluteNativePath`，2026-10-05 一并补上）。
+     *
+     * 原判据只有"非空字符串"，后果（本仓实测存在）：
+     * - 相对路径 → 落进**服务进程的 cwd**（建到哪取决于 dsh 从哪启动）；
+     * - `~/x` → 建出一个字面量名为 `~` 的目录（没有任何一层做 `~` 展开）；
+     * - macOS/Linux 上 `D:\Code` → 建出一个名叫 `D:\Code` 的单层目录
+     *   —— 与本仓记录过的 WSL 同源事故（`shared/hostPath.ts` 头部）一模一样。
+     *
+     * 判据是**绝对路径**（唯一实现在 `shared/hostPath.ts#isAbsoluteNativePath`），
+     * 现在我们**只做校验、不改写**用户给的路径：不猜 cwd、不替它展开 `~`，
+     * 判不过就明确 400 让调用方自己给完整路径。
+     */
     {
       kind: 'exact',
       path: '/api/workbench/workspaces/ensure',
@@ -198,6 +219,12 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
         const body = await readJsonBody(req)
         const path = typeof body?.path === 'string' && body.path.trim() !== '' ? body.path.trim() : undefined
         if (path === undefined) return writeJson(res, 400, { error: 'path is required' })
+        if (!isAbsoluteNativePath(path)) {
+          return writeJson(res, 400, {
+            error: `path must be an absolute path (got ${JSON.stringify(path)})：相对路径会建到服务进程的当前目录，` +
+              '`~` 也不会被展开，请给完整绝对路径（如 /Users/me/DSHWorkspace/xxx 或 D:\\DSHWorkspace\\xxx）',
+          })
+        }
         try {
           mkdirSync(path, { recursive: true })
           return writeJson(res, 200, { ok: true, path })

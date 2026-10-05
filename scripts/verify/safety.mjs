@@ -46,7 +46,7 @@ export const STAGE_PLAN = [
   { name: 'profile-diff', readonly: true, detail: '零增量 diff：除本插件外其余依赖与装盘版本一个都不许变' },
   { name: 'dump-config', readonly: true, detail: '插件树能否组装（dsh --profile web --dump-config）' },
   { name: 'version-after', readonly: false, detail: '装盘后版本一致性门禁（必须 0）' },
-  { name: 'restart', readonly: false, detail: '只重启目标实例（校验端口归属后 kill 归属进程，再以清洗过的环境启动）' },
+  { name: 'restart', readonly: false, detail: '只重启目标实例（先校验端口归属，再停掉归属进程并用清洗过的环境启动）；Windows = PowerShell + Stop-Process，POSIX = lsof + ps + SIGTERM；本机证明不了归属时判 blocked（下游照跑、本轮不报绿）' },
   { name: 'health', readonly: true, detail: `HTTP health ≤120s（每次 ≤5s）：ok + version + schema + buildId 必须与本次包一致` },
   { name: 'token', readonly: true, detail: '从本次启动的日志抓 token（≤60s），只进内存，证据里脱敏' },
   { name: 'suites', readonly: false, detail: '跑白名单套件（单套 ≤180s；必需套件缺失/空计数/required skipped 都不算通过）' },

@@ -73,15 +73,10 @@ function completeTaskCascadeInTx(db: DatabaseSync, taskId: string, actor: string
 export function completeTaskCascade(db: DatabaseSync, taskId: string, actor = 'user', at = nowIso()): TaskRow | undefined {
   const task = getTask(db, taskId)
   if (task === undefined) return undefined
-  db.exec('BEGIN IMMEDIATE')
-  try {
+  return withTransaction(db, () => {
     completeTaskCascadeInTx(db, taskId, actor, at)
-    db.exec('COMMIT')
     return getTask(db, taskId)
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
 }
 
 /**
@@ -97,18 +92,13 @@ export function updateTaskWithCompletion(
 ): TaskRow | undefined {
   const before = getTask(db, id)
   if (before === undefined) return undefined
-  db.exec('BEGIN IMMEDIATE')
-  try {
+  return withTransaction(db, () => {
     const task = updateTask(db, id, patch, actor, at)
     if (task !== undefined && patch.statusCode === 'done') {
       completeTaskCascadeInTx(db, id, actor, at)
     }
-    db.exec('COMMIT')
     return getTask(db, id)
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
 }
 
 /**
@@ -161,19 +151,14 @@ export function archiveTask(
     subtree.push(current)
     for (const child of listTasks(db, { parentId: current, includeArchived: true })) stack.push(child.id)
   }
-  db.exec('BEGIN')
-  try {
+  return withTransaction(db, () => {
     let updated: TaskRow | undefined
     for (const taskId of subtree) {
       const row = updateTask(db, taskId, { archived: true }, actor)
       if (taskId === id) updated = row
     }
-    db.exec('COMMIT')
     return updated
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
 }
 
 export function restoreTask(db: DatabaseSync, id: string, actor = 'user'): TaskRow | undefined {
@@ -222,7 +207,7 @@ export function createTaskReview(db: DatabaseSync, input: TaskReviewInput, at = 
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(id, input.taskId, input.sessionId ?? null, input.summaryMd, JSON.stringify(input.lessonsJson ?? []), at)
     appendEvent(db, input.taskId, 'review_created', { actor: 'ai', note: `review:${id}`, at })
-  })
+  }, { immediate: true })
   return id
 }
 

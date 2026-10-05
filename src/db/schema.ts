@@ -1,5 +1,11 @@
 /**
- * dsh-patent-workbench DB schema（对应 docs/DSH个人工作台/01_数据模型.md）
+ * dsh-patent-workbench DB schema。
+ *
+ * 「数据模型」的**权威源就是本文件**（`V1_DDL` + `MIGRATIONS`），不再指向任何外部文档：
+ * 这里曾经写着「对应 `docs/DSH个人工作台/01_数据模型.md`」—— 那是改名前的仓库路径，
+ * 本仓从来不存在这个文件（2026-10-05 审计发现的两处失效引用之一）。
+ * 建模定案与阶段划分见 `docs/design/2026-10-03-patent-workbench-redesign.md`。
+ *
  * 迁移只前向；所有“枚举”都走 dictionaries 表。
  */
 import { randomUUID } from 'node:crypto'
@@ -25,9 +31,11 @@ export interface Migration {
   /**
    * 这个迁移会**不可逆地丢东西**（DROP TABLE / DROP COLUMN / DELETE 数据）。
    *
-   * 标记本身不改变迁移行为，只驱动一件事：`openWorkbenchDb` 在跑它之前先把
+   * 标记本身不改变迁移行为，只驱动一件事：`migrate()` 在跑它之前先把
    * **整库备份**到同目录的 `backups/`（决策 D4「迁移前自动备份」，
-   * 实现见 `database.ts#backupBeforeDestructiveMigrations`）。
+   * 实现见 `database.ts#backupBeforeDestructiveMigrations` —— 用 `VACUUM INTO` 做一致快照，
+   * 并在生成后回读断言版本；2026-10-05 审计 §3.1。备份**长在 `migrate()` 里**而不是
+   * `openWorkbenchDb` 里：备份是迁移的前置条件，放在一起才不会有人新开一条建库路径忘了它）。
    *
    * ⚠️ 新增"删表/删列"的迁移必须带上它 —— 否则用户就没有回滚点了。
    */

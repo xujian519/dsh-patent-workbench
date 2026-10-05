@@ -26,7 +26,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { nowIso, safeJsonParse } from './shared.js'
+import { nowIso, safeJsonParse, withTransaction } from './shared.js'
 import { matterLogEventKey } from '../../shared/matterLog.js'
 
 /** 案卷阶段：逐字对齐 patent-matter 技能的六态（L1–L5）。 */
@@ -480,16 +480,11 @@ function normalizeWorkspacePath(value: string): string {
 export function deleteMatter(db: DatabaseSync, id: string): { deleted: boolean; detachedKnowledge: number } {
   const existing = getMatter(db, id)
   if (existing === undefined) return { deleted: false, detachedKnowledge: 0 }
-  db.exec('BEGIN')
-  try {
+  return withTransaction(db, () => {
     const detached = db.prepare('UPDATE knowledge_entries SET matter_id = NULL, updated_at = ? WHERE matter_id = ?').run(nowIso(), id)
     db.prepare('DELETE FROM matters WHERE id = ?').run(id)
-    db.exec('COMMIT')
     return { deleted: true, detachedKnowledge: Number(detached.changes) }
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
 }
 
 function parseNotice(row: Record<string, unknown>): MatterNoticeRow {
@@ -595,8 +590,7 @@ export function replaceMatterDeadlines(db: DatabaseSync, matterId: string, rows:
   }
 
   const at = nowIso()
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     db.prepare('DELETE FROM matter_deadlines WHERE matter_id = ?').run(matterId)
     const insert = db.prepare(`
       INSERT INTO matter_deadlines (id, matter_id, deadline_key, label, due_date, due_date_raw, basis, status, computed_at, computed_from)
@@ -606,11 +600,7 @@ export function replaceMatterDeadlines(db: DatabaseSync, matterId: string, rows:
       insert.run(randomUUID(), matterId, row.deadlineKey, row.label, row.dueDate, row.dueDateRaw,
         row.basis ?? null, existing.get(row.deadlineKey) ?? row.status ?? 'pending', at, JSON.stringify(row.computedFrom ?? {}))
     }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
   return listMatterDeadlines(db, matterId)
 }
 
@@ -677,8 +667,7 @@ export function projectMatterLogEvents(
     return true
   })
   if (fresh.length === 0) return { added: 0, existing: events.length, total: events.length }
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     const insert = db.prepare(`
       INSERT INTO matter_events (id, matter_id, action, artifact, approver, note, at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -686,11 +675,7 @@ export function projectMatterLogEvents(
     for (const event of fresh) {
       insert.run(randomUUID(), matterId, event.action, event.artifact, event.approver, event.note, event.at)
     }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
   return { added: fresh.length, existing: events.length - fresh.length, total: events.length }
 }
 

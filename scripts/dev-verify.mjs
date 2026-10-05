@@ -17,12 +17,24 @@
  * |---|---|
  * | 0 | 所有必需阶段/套件通过 |
  * | 1 | 构建/装盘/断言失败，或 health 200 但构建标识不匹配（旧构建） |
- * | 2 | 配置/自锁拒绝/前置资源缺失（含必需套件还没迁入） |
+ * | 2 | 配置/自锁拒绝/前置资源缺失（含必需套件还没迁入，以及 **restart 被判 `blocked`** —— 见下） |
  * | 3 | 等待超时（health 120s / token 60s / 单套件 180s） |
+ *
+ * ## `blocked`：本机做不到的必需阶段（2026-10-06 加，审计 §4.2）
+ *
+ * 有些阶段失败**不是配置错、也不是代码错**，而是"这台机器上没有这个能力" ——
+ * 典型是 macOS 上既没有 `lsof` 又没给 `--launcher`，链无法校验端口归属、也就无法重启目标实例。
+ * 老写法直接 `stop()`：整条链停在那里，后面的 health / token / 套件**一个都跑不到**，
+ * 而在 macOS 开发机上这条链**永远**走不完。
+ *
+ * 现在：这类失败标 `blocked`，**继续跑下游**（人工已经把实例重启好时，下游判据仍然是真的），
+ * 但阶段状态记 `blocked`、`blockers` 里留一条、最终 verdict 记 `blocked`、退出码 2 ——
+ * **绝不报绿**。给诊断信息，不给绿灯。
  *
  * ## 不许出现的失败模式（每条都有负向判据）
  *
  * - **缺套件/认证失败/空测试计数当通过** → 一律 blocked（AX-V07）。
+ * - **blocked 当通过** → 汇总口统一拦：`blockers` 非空 ⇒ 退出码 2 / verdict `blocked`（同上）。
  * - **finally 把失败吞成 0** → `finally` 只做清理与落盘，绝不改退出码（AX-V09）。
  * - **token 进证据** → 抓到那一刻就注册进脱敏表，之后所有写盘都过 redact（AX-V08）。
  * - **清理误伤** → 只删本次 run 的临时目录子树，不碰用户浏览器/别的进程（AX-V09）。
@@ -218,7 +230,7 @@ export async function runDevVerify(options, deps = {}) {
 
   const record = (name, status, detail, extra = {}) => {
     stages.push({ name, status, detail, exitCode: extra.exitCode, ms: extra.ms ?? 0 })
-    log(`  ${status === 'pass' ? '✅' : status === 'timeout' ? '⏱' : status === 'refused' ? '⛔' : '✖'} [${name}] ${detail}`)
+    log(`  ${status === 'pass' ? '✅' : status === 'timeout' ? '⏱' : status === 'refused' ? '⛔' : status === 'blocked' ? '⏸' : '✖'} [${name}] ${detail}`)
   }
 
   // ── 预检（唯一在 dry-run 也会跑的阶段；只读）───────────────────────────────
@@ -345,7 +357,25 @@ export async function runDevVerify(options, deps = {}) {
         childEnv: verdict.plan.childEnv,
         env: options.env ?? process.env,
       }, d)
-      if (restarted.ok !== true) { terminal = stop(restarted.exitCode ?? EXIT.FAILED, 'restart', `重启目标失败：${restarted.reason}`) }
+      if (restarted.ok !== true) {
+        /**
+         * `blocked` = **这台机器**做不到重启（非 Windows 又没有 `lsof` / 找不到 dsh 的 bin.js）。
+         * 原来的写法一律 `stop()`，于是 macOS 上整条链**必然**停在 restart，
+         * 后面的 health / token / 套件一个都跑不到（审计 §4.2）。
+         *
+         * 现在的写法：**继续跑**（人工已经把实例重启好时，下游那些判据仍然是真的），
+         * 但登记一条 blocker —— 只要它还在，本轮**一律不报绿**。
+         * 这正是"缺一步不算通过"（AX-V07）与"别让整链白跑"之间那条线：
+         * 给诊断信息，不给绿灯。
+         */
+        if (restarted.blocked === true) {
+          blockers.push(`[RESTART-BLOCKED] 本机做不到重启目标实例：${restarted.reason}`)
+          record('restart', 'blocked', `跳过重启：${restarted.reason}`)
+          log('     ↳ 后面的 health / token / 套件**照跑**（若您已手工重启，它们仍然有判据意义），但本轮不会报绿')
+        } else {
+          terminal = stop(restarted.exitCode ?? EXIT.FAILED, 'restart', `重启目标失败：${restarted.reason}`)
+        }
+      }
       else {
         sideEffects.restarted = true
         context.logOffset = restarted.logOffset
@@ -498,6 +528,17 @@ export async function runDevVerify(options, deps = {}) {
       }
     }
 
+    // ── 未满足的必需条件 ⇒ 一律不报绿（AX-V07 的汇总口）────────────────────
+    if (terminal === undefined && blockers.length > 0) {
+      /**
+       * 走到这里说明所有阶段都跑完了，但 `blockers` 里还压着未满足的必需条件
+       * （目前唯一来源是 `restart` 被判 blocked）。**不许**因为"后面的都过了"就报绿：
+       * 退出码 2 的语义里就有"前置资源缺失"，verdict 用 `blocked` 把原因说得更准。
+       */
+      terminal = { exitCode: EXIT.REFUSED, verdict: 'blocked' }
+      record('verdict', 'blocked', `${blockers.length} 条必需条件没满足（见 blockers）—— 其余阶段已跑完，证据仍会落盘`)
+    }
+
     // ── 证据包 ──────────────────────────────────────────────────────────────
     if (terminal === undefined) {
       /**
@@ -586,6 +627,10 @@ if (isMain) {
   const options = parseArgs(process.argv.slice(2))
   if (options.help) {
     console.log('用法：node scripts/dev-verify.mjs --url http://127.0.0.1:3080 --profile web --profile-dir <目录> --db-path <独立DB> [--dry-run] [--force] [--launcher <启动器>] [--suites a,b] [--json]')
+    console.log('  Windows 的 restart 走 PowerShell 端口归属 + Stop-Process；macOS/Linux 走 lsof + ps + SIGTERM。')
+    console.log('  本机证明不了端口归属（没装 lsof）或找不到 dsh 的 bin.js 时，restart 判 blocked：下游阶段照跑，但本轮不报绿。')
+    console.log('  这两种情况都可以用 --launcher <您自己的启动脚本> 绕过（Windows 走 cmd /c，POSIX 走 sh）。')
+    console.log('  ⚠️ 启动器必须**自己返回**：在后台把实例拉起（POSIX `&`，Windows `Start-Process`），不要前台等它 —— 前台会挂到 180s 超时。')
     process.exit(0)
   }
   if (options.bad !== undefined) { console.error(`✖ ${options.bad}`); process.exit(2) }

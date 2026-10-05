@@ -310,6 +310,59 @@ export function judgePostArtifact(input) {
   return v
 }
 
+/**
+ * 变异探针的**工作区残留**判据（审计 §4.3）—— 唯一一条"门禁自己污染发布产物"的路径。
+ *
+ * ## 它守的是什么
+ *
+ * 探针把变异体写进 `src/`（会被下一次 `pnpm build` 烘焙进 `lib/`）或者**直接写 `lib/`**
+ * （`lib/` 就是随包产物，连再构建一次都不需要）。所以整批跑完之后，工作区必须
+ * **逐字节**回到跑之前（`workspaceFingerprint.mjs` 的口径：`src` + `lib`）。
+ *
+ * ## 三种输入，三种处置
+ *
+ * - `drift`（跑前跑后指纹不一致）→ **失败**：确实有残留，必须人来看。
+ * - `recovery.damaged`（账本需要人工确认：备份坏了 / 崩溃后文件被别人改过）→ **失败**。
+ *   不允许门禁在"上一次没弄清"的状态上继续走 —— 那是"先发了再说"的机械版本。
+ * - `recovery.restored`（上次被 SIGKILL/断电，这次启动时已从备份自动还原）→ **note**：
+ *   工作区此刻是干净的，但**上一次门禁没跑完**，所以本次必须重新跑完整批。
+ *
+ * `before.count === 0` 也算失败：量不到文件说明**这个判据此刻不在工作**，
+ * 而"判据不在工作"与"判据通过"必须分开（与 `judgeProbes` 的"一个探针都没跑"同规）。
+ *
+ * @param {{drift: Array<{kind: string, path: string}>, recovery: {restored: any[], damaged: any[], skipped: any[]}, before: {count: number}}} input
+ */
+export function judgeWorkspaceResidue({ drift, recovery, before }) {
+  const v = emptyVerdict()
+  if ((before?.count ?? 0) === 0) {
+    v.ok = false
+    v.failures.push('工作区指纹量到 0 个文件 —— 残留判据此刻不在工作（src/lib 路径对不上？），不能当成通过')
+  }
+  for (const s of recovery?.skipped ?? []) {
+    v.notes.push(`上一轮探针账本 ${s.manifest} 属于仍在运行的进程（pid ${s.pid}）：已跳过，不抢它的文件`)
+  }
+  for (const r of recovery?.restored ?? []) {
+    v.notes.push(`上次门禁被强杀（SIGKILL/断电）留下账本 ${r.manifest}，本次启动已从备份还原 ${r.file}`)
+  }
+  for (const d of recovery?.damaged ?? []) {
+    v.ok = false
+    v.failures.push(`探针账本 ${d.manifest}${d.file ? ` / ${d.file}` : ''} 需要人工确认：${d.reason}`)
+  }
+  if ((drift?.length ?? 0) > 0) {
+    v.ok = false
+    const label = (kind) => (kind === 'changed' ? '内容变了' : kind === 'added' ? '多出文件' : '文件没了')
+    const shown = drift.slice(0, 6).map((d) => `${label(d.kind)} ${d.path}`).join('；')
+    v.failures.push(`变异探针跑完后工作区有 ${drift.length} 处残留（src/lib 没回到跑前的内容）：${shown}${drift.length > 6 ? '；…' : ''}`)
+    v.notes.push('处置：`node scripts/lib/workspaceFingerprint.mjs --verify _local-build/fp-before-probes.json` 看全量差异；'
+      + '被强杀留下的账本会在下次门禁启动时自动还原（`recoverCrashedSessions`）。')
+  }
+  if ((recovery?.restored?.length ?? 0) === 0 && (recovery?.damaged?.length ?? 0) === 0
+    && (recovery?.skipped?.length ?? 0) === 0 && (drift?.length ?? 0) === 0 && (before?.count ?? 0) > 0) {
+    v.notes.push(`工作区跑完后逐字节回到跑前（${before.count} 个文件：src + lib）`)
+  }
+  return v
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 
 /**

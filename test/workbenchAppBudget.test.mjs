@@ -71,8 +71,12 @@ test('H4-9：WorkbenchApp 内 useState / useMemo / useEffect / useRef 不超上�
    * §3 的规则是"只有可以随视图卸载一起丢的 state 才允许搬进视图"，所以 H4 全程
    * **0 个 state 搬走**（105 → 105）。这条断言不是"要求变少"，而是"不许变多"：
    * 容器里 state 变多，通常意味着某个视图的逻辑又回了家。
+   *
+   * 2026-10-05 下调 **useMemo 16 → 15**（审计 §4.4 / §3.2）：列表树与类型 Tab 的条数
+   * 合并成一次建树、一个 memo，容器里少了一处派生计算。**下调是棘轮**：既然做小了，
+   * 就不许再涨回去（审计那条"不要让上界先涨"的反面）。
    */
-  const budget = { useState: 105, useMemo: 16, useEffect: 20, useRef: 8 }
+  const budget = { useState: 105, useMemo: 15, useEffect: 20, useRef: 8 }
   for (const [hook, limit] of Object.entries(budget)) {
     const hit = occurrences(BODY, new RegExp(`${hook}[<(]`, 'g'))
     assert.ok(hit <= limit, `WorkbenchApp 内 ${hook} 已 ${hit} 处（上界 ${limit}）`)

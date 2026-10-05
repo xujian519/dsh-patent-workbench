@@ -6,17 +6,21 @@
  * 覆盖率归一化又让真实提问全被挡在门外）。每条变异都对应一个**实测踩过的坑**，
  * 撤掉它 → 必须有断言变红。
  *
- * 每条变异跑完立刻从内存还原原文件（`finally`），工作区不留改动。
+ * **还原由 `scripts/lib/mutationGuard.mjs` 负责**（审计 §4.3）：变异前先把原文备份到
+ * `_local-build/mutation-backup/`，`SIGINT`/`SIGTERM`/未捕获异常都会走到还原；
+ * 连 `SIGKILL` 也留下账本供下次启动恢复。工作区不留改动。
  * 任何一条"照样全绿"就以非零码退出。
  *
  * 用法：node scripts/repro/probe-knowledge-recall-mutations.mjs
  */
-import { readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { createMutationGuard } from '../lib/mutationGuard.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+/** 护栏账本名（= 探针文件名）：崩溃后 `recoverCrashedSessions()` 靠它指认是谁留下的。 */
+const PROBE_LABEL = 'probe-knowledge-recall-mutations'
 const CORE = join(ROOT, 'lib', 'shared', 'knowledgeRecall.js')
 const MANAGER = join(ROOT, 'lib', 'knowledge-recall.js')
 const LOG = join(ROOT, 'lib', 'knowledge-recall-log.js')
@@ -419,20 +423,22 @@ if (baseline.status !== 0) {
 console.log(`基线：${TEST_FILES.join(' + ')} 全绿\n`)
 
 let failures = 0
+const guard = createMutationGuard({ root: ROOT, label: PROBE_LABEL })
 for (const mutation of MUTATIONS) {
-  const original = readFileSync(mutation.file, 'utf8')
+  const original = guard.stage(mutation.file).original
   // 支持 `edits: [{from,to}, …]`（有些缺陷必须同时撤掉两道防线才可观测）
   const edits = mutation.edits ?? [{ from: mutation.from, to: mutation.to }]
   const unmatched = edits.filter((edit) => !edit.from.test(original))
   if (unmatched.length > 0) {
     console.error(`✖ ${mutation.name}\n    变异点没匹配上（源码结构变了，需要同步本探针）`)
+    guard.restore(mutation.file) // 没匹配上就没改过：出账，别把无关文件留在账本里
     failures += 1
     continue
   }
   try {
     let mutated = original
     for (const edit of edits) mutated = mutated.replace(edit.from, edit.to)
-    writeFileSync(mutation.file, mutated)
+    guard.write(mutation.file, mutated)
     const result = run()
     const firstFail = (result.stdout.match(/✖ ([^\n]*)/g) ?? [])[0]?.trim() ?? '(无失败行)'
     if (result.status === 0) {
@@ -442,7 +448,11 @@ for (const mutation of MUTATIONS) {
       console.log(`✔ ${mutation.name}\n    变红：${firstFail}`)
     }
   } finally {
-    writeFileSync(mutation.file, original)
+    const back = guard.restore(mutation.file)
+    if (!back.ok) {
+      console.error(`✖ 还原失败：${back.file} —— ${back.reason}`)
+      failures += 1
+    }
   }
 }
 
@@ -453,6 +463,14 @@ if (restored.status !== 0) {
 }
 
 const total = MUTATIONS.length
+// 护栏收尾：账本清零 + 硬断言"没有任何改写留在盘上"（审计 §4.3）
+try {
+  guard.close()
+} catch (error) {
+  console.error(`✖ 护栏收尾失败：${error instanceof Error ? error.message : String(error)}`)
+  process.exit(2)
+}
+
 if (failures > 0) {
   console.error(`\n❌ ${failures}/${total} 条变异没有被断言发现`)
   process.exit(1)

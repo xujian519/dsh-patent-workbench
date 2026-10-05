@@ -17,7 +17,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, getDraft, withDraftConfirm, type DraftRow } from '../repo.js'
-import { parseDraft, safeJsonParse, type RawDraftRow } from './shared.js'
+import { parseDraft, safeJsonParse, withTransaction, type RawDraftRow } from './shared.js'
 import { knowledgeDraftRejection, normalizeKnowledgeDraftPayload } from '../../shared/knowledgeDraftPayload.js'
 
 
@@ -205,19 +205,14 @@ export function updateKnowledge(db: DatabaseSync, id: string, patch: Partial<Kno
  * 静默改写字段是本仓禁止的，这里也一样：用户需要知道"删这条会连带恢复 N 条"。
  */
 export function deleteKnowledgeWithRefs(db: DatabaseSync, id: string): { deleted: boolean; clearedRefs: number } {
-  db.exec('BEGIN')
-  try {
+  return withTransaction(db, () => {
     // 先看有哪些行会被牵连（要在 UPDATE 之前数，UPDATE 之后条件已不成立）
     const rows = db.prepare('SELECT id FROM knowledge_entries WHERE superseded_by_id = ?').all(id) as unknown as Array<{ id: string }>
     const clearedRefs = rows.length
     if (clearedRefs > 0) db.prepare('UPDATE knowledge_entries SET superseded_by_id = NULL, updated_at = updated_at WHERE superseded_by_id = ?').run(id)
     const deleted = db.prepare('DELETE FROM knowledge_entries WHERE id = ?').run(id).changes > 0
-    db.exec('COMMIT')
     return { deleted, clearedRefs }
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
 }
 
 export function deleteKnowledge(db: DatabaseSync, id: string): boolean {

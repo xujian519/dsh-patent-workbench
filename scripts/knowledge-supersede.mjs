@@ -25,10 +25,10 @@
  *   node scripts/knowledge-supersede.mjs --old <被取代的id> --by <取代它的id> --apply    # 真写
  *   node scripts/knowledge-supersede.mjs --list                                        # 找候选
  */
-import { copyFileSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { openWorkbenchDb } from '../lib/db/database.js'
+import { openWorkbenchDb, snapshotDatabase } from '../lib/db/database.js'
 import { getKnowledge, updateKnowledge } from '../lib/db/repo.js'
 import { KnowledgeRecallManager } from '../lib/knowledge-recall.js'
 
@@ -116,7 +116,9 @@ if (flag('--apply') !== true) {
 
 const backup = `${DB}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`
 try {
-  copyFileSync(DB, backup)
+  // 一致快照（VACUUM INTO）：活库的 WAL 里可能还有没 checkpoint 的事务，
+  // 只拷主文件会得到一份**看着健康、实际缺事务**的备份（实测丢过 3 条）。
+  snapshotDatabase(db, backup)
   console.log(`\n已备份 → ${backup}`)
 } catch (error) {
   console.error(`✘ 备份失败，已中止（不写库）：${error instanceof Error ? error.message : String(error)}`)

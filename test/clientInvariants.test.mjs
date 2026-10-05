@@ -253,3 +253,47 @@ test('客户端 defaultSettings() 与 WorkbenchSettings 契约逐字段对齐', 
   assert.deepEqual(defaultFields.slice().sort(), contractFields.slice().sort(),
     'defaultSettings() 必须与 WorkbenchSettings 契约字段完全一致（少了 → 界面显示 undefined；多了 → 契约已删的残留）')
 })
+
+/**
+ * A1（2026-10-05 审计）：**「打开本地文件」的判定必须两条腿都过**。
+ *
+ * ## 这条测试为什么必须是源码扫描
+ *
+ * `open-file` 是全仓唯一把用户可控路径交给**本机程序**的入口，而客户端有两条腿：
+ * 宿主原生 `workspaces.openPath`（优先）与后端 `/knowledge/open-file`（回退）。
+ * 只在后端路由里做白名单，在"装得全"的机器上原生那条腿会**完全绕过**它 ——
+ * 而这正是一台正常机器的默认状态。
+ *
+ * 为什么不用渲染测试钉：`openKnowledgeFile` 是 `WorkbenchApp` 里的闭包，
+ * 而 `WorkbenchApp` **没有任何测试真渲染过**（它只有行数预算那条源码扫描）。
+ * 所以这里退到源码层：**判定的调用必须出现在原生调用之前**（顺序才是关键，
+ * 用 `indexOf` 比大小而不是正则，改格式不会假失败）。
+ */
+test('A1：open-file 的白名单判定必须在客户端原生腿之前（否则原生腿绕过它）', () => {
+  const index = sources.find(({ path }) => rel(path) === 'client/index.tsx')?.text
+  assert.ok(index !== undefined, 'client/index.tsx 必须存在')
+
+  // 判定与实现都必须来自唯一判定处（不许在调用点另写一套扩展名判断）。
+  assert.match(index, /import \{ isOpenableDocument \} from '\.\.\/shared\/openableFile\.js'/,
+    '客户端必须 import 唯一判定处 shared/openableFile.ts')
+
+  const start = index.indexOf('const openKnowledgeFile = async')
+  assert.ok(start > 0, '找不到 openKnowledgeFile —— 改名了请同步本测试')
+  const body = index.slice(start, index.indexOf('\n  }\n', start))
+  assert.ok(body.length > 100 && body.length < 3000, `openKnowledgeFile 提取异常（${body.length} 字符）`)
+
+  const gate = body.indexOf('isOpenableDocument(')
+  const native = body.indexOf('workspaces.openPath')
+  assert.ok(gate > 0, 'openKnowledgeFile 必须先问判定处（isOpenableDocument）')
+  assert.ok(native > 0, 'openKnowledgeFile 应当仍保留原生 openPath 这条腿')
+  assert.ok(gate < native,
+    '⚠️ 判定必须在原生 openPath **之前**：放到后面等于两条腿各判一次、原生那条必然绕过白名单')
+
+  // 真执行本机程序的那份实现同样必须过判定（别只修客户端）。
+  const route = sources.find(({ path }) => rel(path) === 'api/openFileRoute.ts')?.text
+  assert.ok(route !== undefined, 'api/openFileRoute.ts 必须存在')
+  assert.match(route, /const decision = decideOpenMode\(filePath\)/,
+    '路由必须先算出 decision，再决定走 open 还是 reveal（不许直接 openLocalFile）')
+  assert.ok(route.indexOf('decideOpenMode(filePath)') < route.indexOf('openFileImpl(filePath)'),
+    '判定必须发生在真正打开之前')
+})

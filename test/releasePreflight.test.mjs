@@ -15,8 +15,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  dedupe, judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests, merge,
-  parsePiiRules, parseProbeResult, parseTestSummary,
+  dedupe, judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests, judgeWorkspaceResidue,
+  merge, parsePiiRules, parseProbeResult, parseTestSummary,
 } from '../scripts/lib/releasePreflight.mjs'
 
 // ── 真实样本（2026-10-01 发 v1.16.1 当天抓的）────────────────────────────────
@@ -277,6 +277,93 @@ test('发布后：tarball 200 但拿不到哈希 → 失败（不许"看起来�
   })
   assert.equal(v.ok, false)
   assert.match(v.failures.join('\n'), /无法对账/)
+})
+
+// ── 探针残留（审计 §4.3：门禁自己污染发布产物）────────────────────────────────
+
+const HEALTHY_RESIDUE = { drift: [], recovery: { restored: [], damaged: [], skipped: [] }, before: { count: 476 } }
+
+test('残留：跑前跑后逐字节相同 → 通过，并**留下"判据确实跑了"的证据**', () => {
+  const v = judgeWorkspaceResidue(HEALTHY_RESIDUE)
+  assert.equal(v.ok, true)
+  assert.match(v.notes.join('\n'), /逐字节回到跑前/)
+})
+
+test('残留：src/ 里的变异体没还原 → 失败（它会被下一次构建烘焙进 lib/）', () => {
+  const v = judgeWorkspaceResidue({
+    ...HEALTHY_RESIDUE,
+    drift: [{ kind: 'changed', path: 'src/client/index.tsx' }],
+  })
+  assert.equal(v.ok, false)
+  assert.match(v.failures.join('\n'), /src\/client\/index\.tsx/)
+  assert.match(v.notes.join('\n'), /workspaceFingerprint\.mjs --verify/)
+})
+
+test('残留：只改 lib/ 也必须拦住（lib 就是随包产物，连再构建一次都不用）', () => {
+  const v = judgeWorkspaceResidue({
+    ...HEALTHY_RESIDUE,
+    drift: [{ kind: 'changed', path: 'lib/client/quickWorkspaceDefault.js' }],
+  })
+  assert.equal(v.ok, false)
+  assert.match(v.failures.join('\n'), /lib\/client\/quickWorkspaceDefault\.js/)
+})
+
+test('残留：多出文件 / 文件没了 都算漂移（删除也能毁掉判据）', () => {
+  const v = judgeWorkspaceResidue({
+    ...HEALTHY_RESIDUE,
+    drift: [{ kind: 'added', path: 'src/leaked.ts' }, { kind: 'removed', path: 'lib/gone.js' }],
+  })
+  assert.equal(v.ok, false)
+  assert.match(v.failures.join('\n'), /多出文件 src\/leaked\.ts/)
+  assert.match(v.failures.join('\n'), /文件没了 lib\/gone\.js/)
+})
+
+test('残留：漂移条目很多时折叠展示，但条数如实', () => {
+  const drift = Array.from({ length: 11 }, (_, i) => ({ kind: 'changed', path: `src/f${i}.ts` }))
+  const v = judgeWorkspaceResidue({ ...HEALTHY_RESIDUE, drift })
+  assert.match(v.failures.join('\n'), /有 11 处残留/)
+  assert.match(v.failures.join('\n'), /；…/)
+})
+
+test('残留：量到 0 个文件 → 失败（"判据不在工作"不能读成"判据通过"）', () => {
+  const v = judgeWorkspaceResidue({ drift: [], recovery: HEALTHY_RESIDUE.recovery, before: { count: 0 } })
+  assert.equal(v.ok, false)
+  assert.match(v.failures.join('\n'), /不在工作/)
+})
+
+test('残留：崩溃恢复需要人工确认 → 失败（不许在"上次没弄清"的状态上继续走）', () => {
+  const v = judgeWorkspaceResidue({
+    ...HEALTHY_RESIDUE,
+    recovery: { restored: [], damaged: [{ manifest: 'probe-x.json', file: 'src/a.ts', reason: '备份坏了' }], skipped: [] },
+  })
+  assert.equal(v.ok, false)
+  assert.match(v.failures.join('\n'), /需要人工确认：备份坏了/)
+})
+
+test('残留：上次被强杀但已自动还原 → 只提示、不阻塞（但要说出来）', () => {
+  const v = judgeWorkspaceResidue({
+    ...HEALTHY_RESIDUE,
+    recovery: { restored: [{ manifest: 'probe-x.json', file: 'src/a.ts' }], damaged: [], skipped: [] },
+  })
+  assert.equal(v.ok, true)
+  assert.match(v.notes.join('\n'), /被强杀.*已从备份还原/)
+  // 有恢复动作时不再打印"逐字节回到跑前"那句 —— 那会让人以为这轮什么都没发生
+  assert.doesNotMatch(v.notes.join('\n'), /逐字节回到跑前/)
+})
+
+test('残留：账本属于仍在运行的进程 → 提示（不抢别人的文件）', () => {
+  const v = judgeWorkspaceResidue({
+    ...HEALTHY_RESIDUE,
+    recovery: { restored: [], damaged: [], skipped: [{ manifest: 'probe-y.json', pid: 4242 }] },
+  })
+  assert.equal(v.ok, true)
+  assert.match(v.notes.join('\n'), /仍在运行.*4242/)
+})
+
+test('残留：缺字段不抛错（门禁自己崩掉比判错更糟）', () => {
+  const v = judgeWorkspaceResidue({})
+  assert.equal(v.ok, false) // count 视作 0 → 判据不在工作
+  assert.equal(judgeWorkspaceResidue({ before: { count: 5 } }).ok, true)
 })
 
 // ── 汇总 ────────────────────────────────────────────────────────────────────

@@ -4,10 +4,21 @@
  */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
-import { readFile, stat } from 'node:fs/promises'
+import { open as openFile, readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { assertValidFileLink, createKnowledge, deleteKnowledgeWithRefs, getDictionary, getKnowledge, listKnowledge, updateKnowledge } from '../../db/repo.js'
 import { KNOWLEDGE_PREFIX, MAX_LOCAL_DOC_BYTES, badRequest, methodNotAllowed, pathSegments, readJsonBody, requireCode, requireLoopback, toNativePath, writeJson } from './helpers.js'
+
+/**
+ * 按**字节**截断 UTF-8 时，最后一个字符可能被切一半、变成 U+FFFD。
+ * 只在这个位置去掉它，用户就不会在正文末尾看到一个"�"。
+ *
+ * 注意不能改用 `String.slice(0, N)` 按字符截 —— 那要求先把整个文件解码成字符串，
+ * 正是这里要修掉的开销（见下面 `read-local-file` 的注释）。
+ */
+function dropSplitTailChar(text: string): string {
+  return text.endsWith('\uFFFD') ? text.slice(0, -1) : text
+}
 
 export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
   return [
@@ -31,14 +42,39 @@ export function makeKnowledgeRoutes(db: DatabaseSync): WebRoute[] {
             const filePath = toNativePath(fileLink)
             const info = await stat(filePath)
             if (!info.isFile()) return writeJson(res, 400, { error: 'path is not a file' })
-            const content = await readFile(filePath, 'utf8')
-            const truncated = content.length > MAX_LOCAL_DOC_BYTES
+            /**
+             * ⚠️ 必须先按 `info.size` 判、再决定怎么读 —— **不能"整读进来再 slice"**。
+             *
+             * 原写法是 `const content = await readFile(filePath, 'utf8')` 之后才比
+             * `content.length > MAX_LOCAL_DOC_BYTES`：`readFile` 会把**整个文件**物化成
+             * 字符串（1 GB 的日志 ≈ 2 GB 堆），而这条路由的入参是知识条目的 `fileLink`，
+             * 它指向多大的文件不由我们决定 —— 上限形同虚设。
+             *
+             * 超限时改从**文件句柄**读前 MAX 字节：内存恒为 1 MiB，对外契约不变
+             * （照旧 200 + `truncated: true`，客户端弹窗无需改动）。
+             * 顺带把 `truncated` 的口径修正成**字节**（与常量名 `MAX_LOCAL_DOC_BYTES` 一致；
+             * 原来用 `content.length` 是**字符**数，1 MiB 的中文文档被判成"没超限"却仍整读过）。
+             */
+            const truncated = info.size > MAX_LOCAL_DOC_BYTES
+            let content: string
+            if (truncated) {
+              const handle = await openFile(filePath, 'r')
+              try {
+                const buffer = Buffer.allocUnsafe(MAX_LOCAL_DOC_BYTES)
+                const { bytesRead } = await handle.read(buffer, 0, MAX_LOCAL_DOC_BYTES, 0)
+                content = dropSplitTailChar(buffer.subarray(0, bytesRead).toString('utf8'))
+              } finally {
+                await handle.close()
+              }
+            } else {
+              content = await readFile(filePath, 'utf8')
+            }
             return writeJson(res, 200, {
               ok: true,
               path: filePath,
               fileLink,
               name: basename(filePath),
-              content: truncated ? content.slice(0, MAX_LOCAL_DOC_BYTES) : content,
+              content,
               truncated,
               size: info.size,
             })

@@ -34,6 +34,7 @@ import { WORKBENCH_CSS } from './styles.js'
 import { ACTIVE_ATTR, OFFICIAL_ATTR, PANEL_NAME, PENDING_ATTR, VIEW_ATTR } from './constants.js'
 import { HOST_SIDEBAR_COLLAPSED_ATTR, HOST_SIDEBAR_WIDTH_VAR, HOST_TITLEBAR_HEIGHT_VAR, HOST_WINDOWS_TITLEBAR_ATTR } from './hostShellMarkers.js'
 import { panelDataOpen, shouldShowPanel } from './panelState.js'
+import { BOOTSTRAP_VOLATILE_KEYS, keepIfEqual, startPolling } from './pollPolicy.js'
 import { WORKBENCH_BUILD_ID } from './buildId.js'
 import { isAiSessionReusable } from './aiSessionReuse.js'
 import { checkHostCapabilities, refuseToStart, type SlotsProbe } from './capabilities.js'
@@ -78,6 +79,8 @@ import { MatterPane } from './components/views/MatterPane.js'
 import { TasksView } from './components/views/TasksView.js'
 import { QuickEntryModal } from './components/dialogs/QuickEntryModal.js'
 import { MatterDraftModal } from './components/dialogs/MatterDraftModal.js'
+import { MatterImportModal } from './components/dialogs/MatterImportModal.js'
+import { useMatterImport } from './useMatterImport.js'
 import { NoticeDraftModal } from './components/dialogs/NoticeDraftModal.js'
 import { ReminderModal } from './components/dialogs/ReminderModal.js'
 import { DuplicatePromptModal } from './components/dialogs/DuplicatePromptModal.js'
@@ -90,6 +93,7 @@ import { buildMatterTimeline, type MatterTimelineEvent } from './matterTimeline.
 import {
   clientFileLinkToPath, fmtTime, localDateString, startOfDay, toLocalInput,
 } from './format.js'
+import { isOpenableDocument } from '../shared/openableFile.js'
 import type {
   Bootstrap, DailyPlanItemView, DailyPlanView, Dict, DshSessionListState, DshSessionSummary,
   KnowledgeEntry, ModelDirectoryRuntime, ModelDirectoryState, ModelProviderGroup, PromptContentPart, QuickModelSelection,
@@ -569,7 +573,16 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
        */
       api<PendingCompletionsResponse>('/api/workbench/tasks/pending-completions').then((res) => res.pending).catch(() => null),
     ])
-    setBootstrap(boot); setTasks(list.tasks); setPendingCompletions(pending)
+    /**
+     * 全部走 `keepIfEqual`（v1.17.0，审计 §3.2）：列表/详情每轮也是新对象身份，
+     * 值没变就不写 state —— 否则每次轮询都会把整棵任务树连同视图重算一遍。
+     *
+     * `bootstrap` 多带一个"忽略键"清单：它的 `now`（服务端时间戳）每轮都变而客户端
+     * 从不消费，不排掉就等于短路永不生效（清单里有实测记录）。
+     */
+    setBootstrap((prev) => keepIfEqual(prev, boot, BOOTSTRAP_VOLATILE_KEYS))
+    setTasks((prev) => keepIfEqual(prev, list.tasks))
+    setPendingCompletions((prev) => keepIfEqual(prev, pending))
     if (selectedRef.current !== null) {
       try {
         const [detail, ev, rv] = await Promise.all([
@@ -578,7 +591,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
           api<{ reviews: Array<Record<string, unknown>> }>(`/api/workbench/tasks/${selectedRef.current}/reviews`).catch(() => ({ reviews: [] })),
           loadTaskKnowledge(selectedRef.current).catch(() => setTaskKnowledge([])),
         ])
-        setSelected({ ...detail, events: ev.events, reviews: rv.reviews })
+        setSelected((prev) => keepIfEqual(prev, { ...detail, events: ev.events, reviews: rv.reviews }))
       } catch { setSelected(null); selectedRef.current = null }
     }
   }, [])
@@ -623,6 +636,17 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     const res = await api<{ matters: MatterView[] }>('/api/workbench/matters')
     setMatters(res.matters)
   }, [])
+
+  /**
+   * 扫描导入：九份状态（开没开 / 哪一步 / 扫到什么 / 勾了什么 / 结果如何）搬进 `useMatterImport`，
+   * 这里只留一条回执。`index.tsx` 已经三千行，再摊开两百行状态会让入口无处可找。
+   */
+  const matterImport = useMatterImport({
+    onImported: async (created: number) => {
+      await loadMatters()
+      setNotice(created === 0 ? '没有新建案卷（选中的都已存在）' : `已导入 ${created} 个案卷`)
+    },
+  })
 
   /**
    * 拉某个案卷的三份明细（官文 / 期限 / 事件）。
@@ -1028,13 +1052,19 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
             setDraftSwitchedFrom(null)
           }
           bannerDraftRef.current = nextDraft
-          setPendingDraft(nextDraft)
-          setAllPendingDrafts(serverDrafts)
-          setDeferredDrafts(res.deferredDrafts ?? [])
+          /**
+           * ⚠️ 三个都走 `keepIfEqual`（v1.17.0，审计 §3.2）：轮询每轮拿到的都是
+           * `JSON.parse` 出来的**新对象身份**，直接 `setState` 的话 `Object.is` 永不相等，
+           * 于是**每 5 秒必然重算一次**这个三千多行的容器。值没变就返回原引用，
+           * React 直接 bail out、不渲染。
+           */
+          setPendingDraft((prev) => keepIfEqual(prev, nextDraft))
+          setAllPendingDrafts((prev) => keepIfEqual(prev, serverDrafts))
+          setDeferredDrafts((prev) => keepIfEqual(prev, res.deferredDrafts ?? []))
         }
         const r = await api<{ reminders: Array<{ reminderId: string; taskId: string; title: string; dueAt: string; methodCode: string }> }>('/api/workbench/reminders/due')
         if (!alive) return
-        setReminders(r.reminders)
+        setReminders((prev) => keepIfEqual(prev, r.reminders))
         // 系统级桌面提醒：启用且浏览器已授权时，对每个到期提醒发一次系统通知。
         if (settings.desktopNotify && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
           let notifiedAny = false
@@ -1060,10 +1090,18 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         }
       } catch { /* 轮询失败下轮重试 */ }
     }
-    void tick()
-    const timer = setInterval(() => void tick(), 5000)
-    const refreshTimer = setInterval(() => { void refresh().catch(() => undefined) }, 15000)
-    return () => { alive = false; clearInterval(timer); clearInterval(refreshTimer) }
+    /**
+     * 节奏与"该不该跑"交给 `pollPolicy.startPolling`（审计 §3.2）：判据表、为什么
+     * 不能"面板关着就停"（草稿弹框是主要通知面）都写在那一个模块里，这里只给两个回调。
+     */
+    const stop = startPolling(
+      { doc: document },
+      {
+        tick: async () => { if (alive) await tick() },
+        refresh: async () => { if (alive) await refresh() },
+      },
+    )
+    return () => { alive = false; stop() }
   }, [refresh, settings.desktopNotify])
 
   useEffect(() => { setEditDraft(null); setSubtaskParent(null) }, [selected?.task.id])
@@ -1881,20 +1919,34 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     if (target === 'edit') { setEditDraft((prev) => (prev === null ? prev : { ...prev, workspacePath: picked })) }
   }
 
+  /**
+   * 打开知识条目挂的本地文件。
+   *
+   * ⚠️ 客户端有**两条腿**（原生 `workspaces.openPath` 优先，失败回退后端路由），
+   * 所以判定必须先问唯一判定处 `shared/openableFile.ts` —— 只在后端判，
+   * 装得全的机器上原生这条腿会绕过它。非文档类（`.command`/`.sh`/无扩展名脚本）
+   * 跳过原生腿，交后端降级成「在文件管理器中定位」（原生腿没有定位语义）。
+   * 后端返回的 `mode` 决定提示语：`reveal` 必须如实说是定位，不能报成"已打开"。
+   */
   const openKnowledgeFile = async (fileLink: string): Promise<void> => {
-    try {
-      const workspaces = safeService<WorkbenchRuntime['workspaces']>(runtime, 'workspaces')
-      if (workspaces?.openPath) {
-        await workspaces.openPath(clientFileLinkToPath(fileLink))
-        if (instanceAlive) setNotice('已调用系统打开文件')
-        return
+    const nativePath = clientFileLinkToPath(fileLink)
+    if (isOpenableDocument(nativePath)) {
+      try {
+        const workspaces = safeService<WorkbenchRuntime['workspaces']>(runtime, 'workspaces')
+        if (workspaces?.openPath) {
+          await workspaces.openPath(nativePath)
+          if (instanceAlive) setNotice('已调用系统打开文件')
+          return
+        }
+      } catch {
+        // 原生 openPath 不可用时回退到后端打开接口
       }
-    } catch {
-      // 原生 openPath 不可用时回退到后端打开接口
     }
     try {
-      await api('/api/workbench/knowledge/open-file', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileLink }) })
-      setNotice('已调用系统打开文件')
+      const opened = await api<{ mode?: string; revealed?: boolean }>('/api/workbench/knowledge/open-file', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileLink }) })
+      if (opened?.mode !== 'reveal') setNotice('已调用系统打开文件')
+      else if (opened.revealed === false) setNotice('该类型不会交给默认程序打开；请手动打开它所在的目录')
+      else setNotice('该类型不会交给默认程序打开，已在文件管理器中定位')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -2330,19 +2382,24 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const priorityWeights = useMemo(() => new Map(dictOf('priority').map((d) => [d.code, Number(d.config.weight ?? 99)])), [dicts])
   // 技能过滤已收进 `SkillPicker` 组件内部（两个弹窗共用同一份，不再各写一份）
   const taskSorter = useMemo(() => createTaskSorter(taskSortKey, taskSortDir, priorityWeights), [taskSortKey, taskSortDir, priorityWeights])
-  const visibleTaskTree = useMemo(() => {
-    const source = archivedMode ? archivedTasks : tasks
-    return filterTaskTree(buildTaskTree(source, undefined, taskSorter), (t) => matchesTaskFilter(t, taskFilter))
-  }, [archivedMode, archivedTasks, tasks, taskSorter, taskFilter])
   /**
-   * 任务页的类型 Tab：条数按"搜索 + 状态 + 优先级"算，**不含类型自身** ——
-   * 每个 Tab 显示的是"切过去能看到几条"（与知识库的 Tab 徽标同一套口径，走同一个 buildTabs）。
+   * 列表树与类型 Tab 的条数**共用一次建树**（审计 §4.4）：改动前两块各自
+   * `buildTaskTree(同参数)`，一次渲染建两遍，而 `countTasksByType` 内部还对
+   * 9 个类型码 + all 各走一遍整树（现在收敛成一遍）。
+   * 合并成一个 memo 不只是省一次建树 —— 预算测试里 hook 数已经零余量，
+   * 合并让"约束"与"优化"同向（本次还把 useMemo 上界从 16 下调到 15，锁住这一处）。
+   *
+   * 条数口径：按"搜索 + 状态 + 优先级"算，**不含类型自身**（见 countTasksByType）。
    */
   const taskTypeDicts = useMemo(() => dictOf('type'), [dictOf])
-  const taskTypeTabs = useMemo(() => {
+  const { tree: visibleTaskTree, tabs: taskTypeTabs } = useMemo(() => {
     const source = archivedMode ? archivedTasks : tasks
-    const { byType, all } = countTasksByType(buildTaskTree(source, undefined, taskSorter), taskFilter, taskTypeDicts.map((d) => d.code))
-    return buildTabs(taskTypeDicts, { ...byType, all }, { includeOther: false })
+    const tree = buildTaskTree(source, undefined, taskSorter)
+    const { byType, all } = countTasksByType(tree, taskFilter, taskTypeDicts.map((d) => d.code))
+    return {
+      tree: filterTaskTree(tree, (t) => matchesTaskFilter(t, taskFilter)),
+      tabs: buildTabs(taskTypeDicts, { ...byType, all }, { includeOther: false }),
+    }
   }, [archivedMode, archivedTasks, tasks, taskSorter, taskFilter, taskTypeDicts])
 
   /**
@@ -3109,6 +3166,31 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         />
       )}
 
+      {/* 扫描导入：三步弹窗（填根 → 核对勾选 → 回执），状态全在 `useMatterImport` 里，这里只转发。 */}
+      {matterImport.open && (
+        <MatterImportModal
+          step={matterImport.step}
+          root={matterImport.root}
+          busy={matterImport.busy}
+          error={matterImport.error}
+          scan={matterImport.scan}
+          rows={matterImport.rows}
+          query={matterImport.query}
+          result={matterImport.result}
+          summary={matterImport.summary}
+          matterTypeOptions={dictOf('matter_type')}
+          onRootChange={matterImport.setRoot}
+          onQueryChange={matterImport.setQuery}
+          onScan={matterImport.runScan}
+          onCommit={matterImport.runCommit}
+          onBack={matterImport.backToPick}
+          onToggleRow={matterImport.toggleRow}
+          onSetTier={matterImport.setTierChecked}
+          onPatchRow={matterImport.patchRow}
+          onClose={matterImport.closeImport}
+        />
+      )}
+
       {/**
         * 官文登记（H4-8）：表单搬去 `components/dialogs/NoticeDraftModal.tsx` ——
         * 官文是**期限的输入源**（没有官文就没有起算点），但这里只登记事实，算期限是引擎的职责（决策 3）。
@@ -3346,6 +3428,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               busy={busy}
               onOpen={(matter) => setSelectedMatterId(matter.id)}
               onCreate={() => openMatterForm(null)}
+              onImport={matterImport.openImport}
               onEdit={(matter) => openMatterForm(matter)}
               onAddNotice={openNoticeForm}
               onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
@@ -4160,7 +4243,14 @@ export function apply(ctx: unknown): () => void {
    */
   const openListeners = new Set<() => void>()
   const notifyOpenChange = (): void => { for (const listener of openListeners) { try { listener() } catch { /* 单个订阅者出错不影响其它 */ } } }
-  ensureStyle()
+  /**
+   * ⚠️ `ensureStyle()` **必须放在能力自检之后**（v1.17.0，2026-10-05 实测修正）。
+   *
+   * `capabilities.ts` 与本文件都写着"不满足能力门槛时**不注册任何东西、不写任何 DOM**"，
+   * 而旧顺序把它放在了能力自检**之前** —— 于是老宿主上虽然不启动，`<head>` 里仍被塞进一份
+   * 永远用不到的样式表。"几乎不写"和"不写"是两回事：文档里那句可核实的不变量，
+   * 恰恰是被这条顺序悄悄破坏的（写冒烟测试时量出来的：拒绝启动的那条路径 `head.children.length === 1`）。
+   */
 
   /** 清理幂等标记：`disposePreviousInstance()` 与 cordis 都可能调用清理。 */
   let disposed = false
@@ -4214,6 +4304,8 @@ export function apply(ctx: unknown): () => void {
    */
   const capability = checkHostCapabilities({ slots: slots as SlotsProbe | undefined, layout })
   if (!capability.ok) return refuseToStart(capability, (message) => console.error(message))
+  /** 能力门槛已过：**到这里才开始写 DOM**（样式表是启动的一部分，见上面的顺序说明）。 */
+  ensureStyle()
   /**
    * `layout.selectPanel` 的可用性**决定了走哪条腿**（v1.14.48 修正语义）。
    *

@@ -125,7 +125,14 @@ test('任务页：类型从多选下拉升为 Tab，且**其他下拉保留**', 
 })
 
 test('任务页：类型 Tab 的条数由 countTasksByType 给出（排除类型维度自身）', () => {
-  assert.match(indexSource, /countTasksByType\(buildTaskTree\(/, '条数走纯函数')
+  /**
+   * 2026-10-05（审计 §4.4）：条数原来写成 `countTasksByType(buildTaskTree(...))` ——
+   * 与 `visibleTaskTree` **入参完全相同**却各建一次树。改成共用一份已建好的树后，
+   * 这条断言的口径跟着改：**仍然必须走纯函数 `countTasksByType`**（不许自己 filter 自算），
+   * 且入参必须是那棵共用的树。
+   */
+  assert.match(indexSource, /const tree = buildTaskTree\(source, undefined, taskSorter\)/, '一次渲染只建一棵树')
+  assert.match(indexSource, /countTasksByType\(tree, /, '条数走纯函数，且用同一棵树')
   assert.match(indexSource, /buildTabs\(taskTypeDicts, \{ \.\.\.byType, all \}/, '拼装走共用 buildTabs')
 })
 

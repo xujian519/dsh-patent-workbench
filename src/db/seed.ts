@@ -2,6 +2,7 @@
  * 出厂字典种子。INSERT OR IGNORE：首次安装写入，之后用户改名/停用不会被覆盖。
  */
 import type { DatabaseSync } from 'node:sqlite'
+import { withTransaction } from './repo/shared.js'
 
 export interface DictionarySeed {
   kind: string
@@ -114,14 +115,9 @@ export function seedDictionaries(db: DatabaseSync, now: string = new Date().toIS
       (kind, code, name, config, builtin, active, sort_order, created_at, updated_at)
     VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)
   `)
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     for (const seed of DICTIONARY_SEEDS) {
       insert.run(seed.kind, seed.code, seed.name, JSON.stringify(seed.config), seed.sortOrder, now, now)
     }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
 }

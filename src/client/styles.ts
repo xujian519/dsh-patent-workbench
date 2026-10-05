@@ -1055,6 +1055,37 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-kb-pnum.on { border-color:var(--wb-accent-line); color:var(--wb-ink-1); background:var(--wb-accent-soft); font-weight:600; }
 .wb-kb-pnum:disabled { opacity:.35; cursor:default; }
 
+/* ---- 扫描导入（案卷） ---- */
+
+.wb-import-summary { font-size:12.5px; color:var(--wb-ink-2); padding:2px 0 8px; }
+.wb-import-summary b { color:var(--wb-ink-1); font-variant-numeric:tabular-nums; }
+
+.wb-import-search { width:100%; box-sizing:border-box; margin-bottom:9px; padding:6px 9px;
+  border:1px solid var(--wb-line); border-radius:8px; background:transparent; color:var(--wb-ink-1);
+  font:inherit; font-size:12.5px; }
+
+.wb-import-tier { border:1px solid var(--wb-line); border-radius:9px; margin-bottom:8px; overflow:hidden; }
+.wb-import-tier > summary { display:flex; align-items:center; gap:8px; padding:6px 9px; cursor:pointer;
+  font-size:12.5px; color:var(--wb-ink-2); }
+.wb-import-tier > summary .wb-field-note { flex:1; }
+.wb-import-tier > summary .wb-btn { padding:1px 7px; font-size:11px; }
+.wb-import-tier-label { font-weight:600; color:var(--wb-ink-1); }
+.wb-import-rows { max-height:320px; overflow:auto; border-top:1px solid var(--wb-line); }
+.wb-import-row { display:flex; gap:8px; align-items:flex-start; padding:6px 9px;
+  border-bottom:1px solid color-mix(in srgb, var(--wb-line) 55%, transparent); }
+.wb-import-row:last-child { border-bottom:none; }
+.wb-import-fields { display:flex; flex-wrap:wrap; gap:5px; flex:1; min-width:0; }
+.wb-import-fields input, .wb-import-fields select { padding:4px 7px; border:1px solid var(--wb-line);
+  border-radius:7px; background:transparent; color:var(--wb-ink-1); font:inherit; font-size:12px; }
+.wb-import-fields input { width:150px; }
+.wb-import-meta { display:flex; flex-direction:column; gap:2px; max-width:40%; flex:none; }
+.wb-import-path { font-size:11px; color:var(--wb-ink-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wb-import-badge { font-size:10.5px; color:var(--wb-ink-3); }
+
+.wb-import-failed { margin-top:9px; }
+.wb-import-failed-row { font-size:12px; color:var(--wb-ink-2); padding:4px 0;
+  border-bottom:1px solid color-mix(in srgb, var(--wb-line) 55%, transparent); }
+
 `
 
 /**

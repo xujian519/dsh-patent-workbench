@@ -31,10 +31,22 @@
  *   --db <path>  指定数据库（默认 ~/.dsh/workbench/workbench.db）
  */
 
-import { copyFileSync, existsSync } from 'node:fs'
+import { copyFileSync, existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+/**
+ * 备份用**唯一的**实现（`src/db/database.ts` 的 `snapshotDatabase`）。
+ *
+ * ⚠️ 这里曾经是 `source.backup(target)` —— 那个 API 在 `node:sqlite` 里
+ * **本机 Node v22.22.3 上是 `undefined`**（`package.json` 的 `engines` 允许
+ * `^22.19.0`，即本机是受支持配置），所以脚本一跑到备份就 `TypeError` 崩掉；
+ * 而它偏偏是"数据库已经脏到 API 走不通"时才用的**救援**脚本 —— 最需要它的时候它不在。
+ * 统一到 `VACUUM INTO`（一致快照、自包含单文件，见 `snapshotDatabase` 的注释）。
+ *
+ * 依赖 `lib/`（`pnpm build` 的产物）：本仓其他脚本（如 `knowledge-supersede.mjs`）同此约定。
+ */
+import { freeSnapshotPath, snapshotDatabase } from '../lib/db/database.js'
 
 function parseArgs(argv) {
   const out = { dryRun: false, backup: true }
@@ -55,6 +67,21 @@ function stamp() {
   return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
+/**
+ * 用一份 `VACUUM INTO` 快照覆盖目标库。
+ *
+ * ⚠️ **必须同时删掉残留的 `-wal` / `-shm`**：快照是自包含的
+ * （`journal_mode=delete`，全部数据都在主文件里），而目标库此前是 WAL 模式，
+ * 旧 `-wal` 里可能还留着**比快照新**的事务。只覆盖主文件、留下旧 WAL 的话，
+ * SQLite 下次打开会把旧 WAL 重放上去 —— 备份就白恢复回去了。
+ */
+function restoreFromSnapshot(snapshotPath, targetPath) {
+  copyFileSync(snapshotPath, targetPath)
+  for (const suffix of ['-wal', '-shm']) {
+    if (existsSync(targetPath + suffix)) rmSync(targetPath + suffix, { force: true })
+  }
+}
+
 const args = parseArgs(process.argv.slice(2))
 if (args.parent === undefined || args.tasks === undefined || args.tasks.length === 0) {
   console.error('用法: node scripts/reparent-tasks.mjs --parent <父任务id> --tasks <id1,id2,...> [--dry-run]')
@@ -71,14 +98,12 @@ console.log(`数据库: ${dbPath}`)
 console.log(`模式  : ${args.dryRun ? 'DRY-RUN（不写入）' : '实际写入'}`)
 console.log('')
 
-// ---------- 1. 备份（WAL 模式下用 sqlite backup API 才是一致快照） ----------
+// ---------- 1. 备份（VACUUM INTO：一致快照，自包含单文件） ----------
 let backupPath
 if (!args.dryRun && args.backup) {
-  backupPath = `${dbPath}.bak-reparent-${stamp()}`
+  backupPath = freeSnapshotPath(`${dbPath}.bak-reparent-${stamp()}`)
   const source = new DatabaseSync(dbPath, { readOnly: true })
-  const target = new DatabaseSync(backupPath)
-  source.backup(target)
-  target.close()
+  snapshotDatabase(source, backupPath)
   source.close()
   console.log(`✓ 已备份: ${basename(backupPath)}`)
 }
@@ -148,7 +173,7 @@ try {
   db.close()
   console.error(`✗ 失败已回滚: ${error}`)
   if (backupPath !== undefined) {
-    copyFileSync(backupPath, dbPath)
+    restoreFromSnapshot(backupPath, dbPath)
     console.error(`  已从备份恢复: ${basename(backupPath)}`)
   }
   process.exit(1)
@@ -165,4 +190,6 @@ console.log(`  共 ${total} 个子任务`)
 db.close()
 console.log('')
 console.log('⚠️ 直接改库绕过了事件日志：这次重组不会出现在任务详情的「记录」页签。')
-if (backupPath !== undefined) console.log(`如需回滚: copy "${backupPath}" "${dbPath}"`)
+if (backupPath !== undefined) {
+  console.log(`如需回滚: cp "${backupPath}" "${dbPath}" && rm -f "${dbPath}-wal" "${dbPath}-shm"`)
+}

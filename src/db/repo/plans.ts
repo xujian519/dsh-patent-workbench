@@ -27,7 +27,7 @@ import {
   type PlanItemShape,
   type PlanTaskRef,
 } from '../../shared/dailyPlanPolicy.js'
-import { parseDraft, safeJsonParse, type RawDraftRow } from './shared.js'
+import { parseDraft, safeJsonParse, withTransaction, type RawDraftRow } from './shared.js'
 
 export type DailyPlanItem = PlanItemShape
 
@@ -304,8 +304,7 @@ export function addDailyPlanItem(
     if (!check.ok) return { ok: false, error: check.reason }
   }
 
-  db.exec('BEGIN IMMEDIATE')
-  try {
+  return withTransaction(db, (tx) => {
     const existing = getDailyPlan(db, planDate)
     const previousItems = existing?.readable === true ? existing.items : []
     /*
@@ -317,17 +316,17 @@ export function addDailyPlanItem(
      */
     const already = previousItems.find((item) => item.taskId === input.taskId)
     if (already !== undefined && existing !== undefined) {
-      db.exec('ROLLBACK')
-      return { ok: true, plan: existing, added: false }
+      tx.rollback()
+      return { ok: true as const, plan: existing, added: false }
     }
     if (existing !== undefined && !existing.readable) {
-      db.exec('ROLLBACK')
-      return { ok: false, error: `计划 ${planDate} 的数据无法解析，不能追加（原数据未改动，请先备份后修复或清空）` }
+      tx.rollback()
+      return { ok: false as const, error: `计划 ${planDate} 的数据无法解析，不能追加（原数据未改动，请先备份后修复或清空）` }
     }
     const task = getTask(db, input.taskId)
     if (task === undefined) {
-      db.exec('ROLLBACK')
-      return { ok: false, error: `计划里的任务不存在：${input.taskId}` }
+      tx.rollback()
+      return { ok: false as const, error: `计划里的任务不存在：${input.taskId}` }
     }
 
     const minutes = input.minutes !== undefined
@@ -346,8 +345,8 @@ export function addDailyPlanItem(
     const tasks = loadPlanTasks(db)
     const check = checkPlanTaskSet(appended, new Map([...tasks].map(([id, item]) => [id, toPlanTaskRef(item)])), new Set(previousItems.map((item) => item.taskId)))
     if (!check.ok) {
-      db.exec('ROLLBACK')
-      return { ok: false, error: check.reason }
+      tx.rollback()
+      return { ok: false as const, error: check.reason }
     }
 
     if (existing === undefined) {
@@ -356,12 +355,8 @@ export function addDailyPlanItem(
       db.prepare('UPDATE daily_plans SET items_json = ?, source_code = ?, updated_at = ? WHERE plan_date = ?')
         .run(JSON.stringify(appended), 'manual', at, planDate)
     }
-    db.exec('COMMIT')
-    return { ok: true, plan: getDailyPlan(db, planDate)!, added: true }
-  } catch (error) {
-    try { db.exec('ROLLBACK') } catch { /* 已经回滚过就不能再回滚 */ }
-    throw error
-  }
+    return { ok: true as const, plan: getDailyPlan(db, planDate)!, added: true }
+  }, { immediate: true })
 }
 
 export type UpdatePlanItemResult =
@@ -395,38 +390,37 @@ export function updateDailyPlanItem(
     return { ok: false, error: 'effortDone 必须是布尔值（true=今日投入结束，false=继续投入）' }
   }
 
-  db.exec('BEGIN IMMEDIATE')
-  try {
+  return withTransaction(db, (tx) => {
     const existing = getDailyPlan(db, planDate)
     if (existing === undefined) {
-      db.exec('ROLLBACK')
-      return { ok: false, error: `计划 ${planDate} 不存在`, notFound: true }
+      tx.rollback()
+      return { ok: false as const, error: `计划 ${planDate} 不存在`, notFound: true }
     }
     if (!existing.readable) {
-      db.exec('ROLLBACK')
-      return { ok: false, error: `计划 ${planDate} 的数据无法解析，不能修改（原数据未改动）` }
+      tx.rollback()
+      return { ok: false as const, error: `计划 ${planDate} 的数据无法解析，不能修改（原数据未改动）` }
     }
     const index = existing.items.findIndex((item) => item.taskId === taskId)
     if (index < 0) {
-      db.exec('ROLLBACK')
-      return { ok: false, error: `计划 ${planDate} 里没有任务 ${taskId}`, notFound: true }
+      tx.rollback()
+      return { ok: false as const, error: `计划 ${planDate} 里没有任务 ${taskId}`, notFound: true }
     }
 
     const task = getTask(db, taskId)
     const current = existing.items[index]
     // 目标任务缺失/归档/关闭：这一项只能作为历史记录保留，不再允许结束/调分钟。
     if (task === undefined || task.archived === 1 || task.statusCode === 'done' || task.statusCode === 'cancelled') {
-      db.exec('ROLLBACK')
+      tx.rollback()
       const why = task === undefined ? '任务已不存在' : task.archived === 1 ? '任务已归档' : task.statusCode === 'done' ? '任务已完成' : '任务已取消'
-      return { ok: false, error: `${why}：计划项只能保留为历史记录，不能再结束今日投入或调分钟（如需移除请用全量编辑）` }
+      return { ok: false as const, error: `${why}：计划项只能保留为历史记录，不能再结束今日投入或调分钟（如需移除请用全量编辑）` }
     }
 
     const nextMinutes = patch.minutes ?? current.minutes
     const nextEffortDone = patch.effortDone ?? current.effortDone
     if (nextMinutes === current.minutes && nextEffortDone === current.effortDone) {
-      db.exec('ROLLBACK')
+      tx.rollback()
       // 幂等：不写事件、不刷 updatedAt，但回执给出当前值。
-      return { ok: true, plan: existing, changed: false }
+      return { ok: true as const, plan: existing, changed: false }
     }
 
     const items = existing.items.map((item, i) => (i === index
@@ -436,12 +430,8 @@ export function updateDailyPlanItem(
     const sourceCode = patch.minutes !== undefined ? 'manual' : existing.sourceCode
     db.prepare('UPDATE daily_plans SET items_json = ?, source_code = ?, updated_at = ? WHERE plan_date = ?')
       .run(JSON.stringify(items), sourceCode, at, planDate)
-    db.exec('COMMIT')
-    return { ok: true, plan: getDailyPlan(db, planDate)!, changed: true }
-  } catch (error) {
-    try { db.exec('ROLLBACK') } catch { /* 已回滚 */ }
-    throw error
-  }
+    return { ok: true as const, plan: getDailyPlan(db, planDate)!, changed: true }
+  }, { immediate: true })
 }
 
 /**

@@ -4,7 +4,7 @@
  */
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
-import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmKnowledgeDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, updateDraft, updateTaskWithCompletion } from '../../db/repo.js'
+import { abandonDraft, addTaskMemory, appendEvent, completeTaskCascade, confirmDailyPlanDraft, confirmKnowledgeDraft, confirmSubtaskPlanDraft, confirmTaskDraft, createDraft, createTaskReview, deferDraft, getDictionary, getDraft, getDraftBySession, getLatestActiveDraft, getTask, isDeferrableDraftKind, linkTaskSession, listDeferredDrafts, resumeDraft, setDraftStatus, updateDraft, updateTaskWithCompletion, withTransaction } from '../../db/repo.js'
 import { DRAFTS_PREFIX, badRequest, methodNotAllowed, pathSegments, publicTask, readJsonBody, requireLoopback, writeJson } from './helpers.js'
 import { writeReviewToTeamMemory, teamMemoryAvailable, type TeamMemoryService } from '../../review-memory.js'
 import { canonicalizeKnowledgeDraftPayload, knowledgeDraftRejection, knowledgeDraftUnknownKeys } from '../../shared/knowledgeDraftPayload.js'
@@ -196,12 +196,21 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
                * 存 payload 而不是加列：不需要 schema 变更（schema 只单向前进）。
                */
               const existingReviewId = typeof draft.payload.reviewId === 'string' ? draft.payload.reviewId : null
-              const reviewId = existingReviewId ?? createTaskReview(db, { taskId, sessionId, summaryMd, lessonsJson: draft.payload.lessons ?? [] })
-              if (existingReviewId === null) {
-                updateDraft(db, id, { ...draft.payload, reviewId })
-              }
-              const now = new Date().toISOString()
-              db.prepare('UPDATE task_drafts SET status_code = ?, updated_at = ? WHERE id = ?').run('confirmed', now, id)
+              /**
+               * DB 侧三件事收进**一个**事务（2026-10-05 审计 §3.3 的同类问题）：
+               * 建 review、把 reviewId 回写草稿、把草稿标 confirmed。
+               * 原先三步各写各的，`UPDATE … status_code` 还是裸语句（同一文件的两处裸 UPDATE 之一）。
+               * 团队记忆的写入留在事务**之外**：它是 async 且属于"额外沉淀"，
+               * 不能把 SQLite 事务跨越 await 挂着（更不能让它的失败牵连复盘本身）。
+               */
+              const reviewId = withTransaction(db, () => {
+                const createdId = existingReviewId ?? createTaskReview(db, { taskId, sessionId, summaryMd, lessonsJson: draft.payload.lessons ?? [] })
+                if (existingReviewId === null) {
+                  updateDraft(db, id, { ...draft.payload, reviewId: createdId })
+                }
+                setDraftStatus(db, id, 'confirmed', new Date().toISOString())
+                return createdId
+              }, { immediate: true })
               /**
                * v1.14.0：复盘确认时**顺带**把结论写进团队记忆库（否则复盘只活在本机）。
                *
@@ -234,15 +243,31 @@ export function makeDraftRoutes(db: DatabaseSync, deps: { teamMemory?: TeamMemor
               const task = getTask(db, taskId)
               if (task === undefined) return writeJson(res, 404, { error: 'task not found' })
               const sessionId = typeof draft.payload.sessionId === 'string' ? draft.payload.sessionId : null
-              const completedTask = completeTaskCascade(db, taskId, 'user')
-              if (sessionId !== null) linkTaskSession(db, { taskId, sessionId, roleCode: 'execute' })
               const summary = typeof draft.payload.summary === 'string' ? draft.payload.summary.trim() : ''
-              if (summary !== '') {
-                addTaskMemory(db, { taskId, kind: 'summary', content: summary, sourceSessionId: sessionId })
-              }
               const now = new Date().toISOString()
-              db.prepare('UPDATE task_drafts SET status_code = ?, updated_at = ? WHERE id = ?').run('confirmed', now, id)
-              return writeJson(res, 200, { ok: true, task: publicTask(completedTask ?? getTask(db, taskId)!) })
+              /**
+               * **一次验收 = 一个事务**（2026-10-05 审计 §3.3）。
+               *
+               * 历史行为把这件逻辑上的一件事拆成 4 个独立事务：`completeTaskCascade`（自带事务）
+               * → `linkTaskSession` → `addTaskMemory` → 最后一条**裸** `UPDATE task_drafts`。
+               * 崩在中间就留下"任务已 done、草稿仍 pending"，界面上继续催用户验收；
+               * 用户再点一次，`addTaskMemory` 又写一条 summary 共享记忆（无幂等键），
+               * 表现为"我已经验收过了，它还在让我验收"。
+               *
+               * 现在四步在同一事务里：要么全部生效，要么全部不生效（草稿仍是 pending，
+               * 用户可以重试，且不会留下半截状态）。这是**唯一**此前不走 `withDraftConfirm`
+               * 单事务口径的确认分支，现在口径统一了。
+               */
+              const completedTask = withTransaction(db, () => {
+                completeTaskCascade(db, taskId, 'user')
+                if (sessionId !== null) linkTaskSession(db, { taskId, sessionId, roleCode: 'execute' })
+                if (summary !== '') {
+                  addTaskMemory(db, { taskId, kind: 'summary', content: summary, sourceSessionId: sessionId })
+                }
+                setDraftStatus(db, id, 'confirmed', now)
+                return getTask(db, taskId)
+              }, { immediate: true })
+              return writeJson(res, 200, { ok: true, task: publicTask(completedTask ?? task) })
             }
             return writeJson(res, 400, { error: `unknown draft kind ${draft.kindCode}` })
           } catch (error) {

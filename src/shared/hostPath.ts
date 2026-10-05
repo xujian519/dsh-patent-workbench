@@ -79,3 +79,32 @@ export function toNativePath(link: string, platform: string): string {
   if (platform === 'win32') return path
   return isWindowsDrivePath(path) ? windowsDriveToWsl(path) : path
 }
+
+/**
+ * 归一化后的路径是否是**绝对路径**。
+ *
+ * 认三种形态：POSIX（`/mnt/d/…`、`/Users/…`）、Windows 盘符（`D:\` / `D:/`，**必须带分隔符**，
+ * 裸 `D:` 不算）、UNC（`\\server\share`、`//server/share`）。
+ *
+ * ## 为什么需要这条判据
+ *
+ * 凡是"把用户/设置给的路径直接拿去写盘"的地方都必须过它。目前有两个入口：
+ * `POST /api/workbench/workspaces/ensure`（`src/api/` 下唯一的 `mkdirSync`）与
+ * `/workbench` 命令建任务资料夹（`src/index.ts`）。两处原来都只看"非空字符串"或
+ * "过一遍平台归一化"，后果是相对路径落进**服务进程的 cwd**、`~/x` 建出一个字面量名为 `~`
+ * 的目录、macOS 上 `D:\Code` 建出一个名叫 `D:\Code` 的单层目录 ——
+ * 后者正是本模块头部记录过的同源事故（WSL 下 `node:path.join` 拼出的 `D:\...` 被直接 mkdir）。
+ * 判定放在这里是为了只有一处：调用点不得另写 `/^\//` 之类的简化版。
+ *
+ * @param path - 待判定的路径；`null` / `undefined` / 空白一律判 false（防御调用方没校验就传进来）。
+ */
+export function isAbsoluteNativePath(path: string | null | undefined): boolean {
+  const value = String(path ?? '').trim()
+  if (value === '') return false
+  // UNC：`\\server\share` 或 `//server/share`。
+  if (/^[\\/]{2}[^\\/]/.test(value)) return true
+  // Windows 盘符：必须带分隔符（带分隔符才是"某盘根下"，裸 `D:` 是盘内相对路径）。
+  if (WINDOWS_DRIVE_WITH_SEPARATOR_RE.test(value)) return true
+  // POSIX 绝对路径。
+  return value.startsWith('/')
+}

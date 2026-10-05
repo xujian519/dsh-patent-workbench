@@ -379,6 +379,60 @@ test('AX-V07：token 60s 内拿不到 → 退出码 3；套件一个都不跑', 
   assert.equal(calls.suites.length, 0)
 })
 
+test('§4.2：restart 判 blocked（本机做不到）→ 下游阶段照跑，但**绝不报绿**（退出码 2 / verdict blocked）', async () => {
+  const blocked = { ok: false, exitCode: 2, blocked: true, reason: '这台机器没有 lsof，无法证明端口归属' }
+  const { deps, calls } = makeEnv({ restartTarget: () => blocked })
+  const result = await runDevVerify(baseOptions(), deps)
+
+  // 1) 不报绿：退出码 2（"前置资源缺失"那一档）、verdict 用 blocked 把原因说得更准
+  assert.equal(result.exitCode, EXIT.REFUSED)
+  assert.equal(result.verdict, 'blocked')
+  assert.equal(result.summary.verdict, 'blocked')
+  assert.equal(result.summary.exitCode, EXIT.REFUSED)
+
+  // 2) 阶段状态与 blockers 都留痕（不许"看起来全过"）
+  const restart = findStage(result, 'restart')
+  assert.equal(restart?.status, 'blocked')
+  assert.match(restart?.detail ?? '', /没有 lsof/)
+  assert.ok(result.summary.blockers.some((text) => text.includes('RESTART-BLOCKED') && text.includes('没有 lsof')), `blockers 必须写明：${JSON.stringify(result.summary.blockers)}`)
+  assert.equal(findStage(result, 'verdict')?.status, 'blocked')
+
+  // 3) 下游**真的跑了**（这正是 blocked 与"整链停摆"的区别：给诊断信息）
+  assert.equal(calls.restarts, 1)
+  assert.equal(findStage(result, 'health')?.status, 'pass')
+  assert.equal(findStage(result, 'token')?.status, 'pass')
+  assert.ok(calls.suites.length > 0, '套件必须照跑（人工已手工重启时，这些判据仍然是真的）')
+  assert.equal(findStage(result, 'evidence')?.status, undefined, '被 blocked 拦下时不再走"证据包"那个阶段')
+  assert.equal(result.summary.sideEffects.restarted, false)
+  assert.equal(calls.finalized, 1, '失败/blocked 的那一轮也必须有证据包（summary 落盘）')
+
+  // 4) 对照组：同一个环境里 restart 正常 ⇒ 退出码 0 —— 上面那个 2 只可能来自 blocker
+  const control = await runDevVerify(baseOptions(), makeEnv({}).deps)
+  assert.equal(control.exitCode, EXIT.OK)
+  assert.equal(control.verdict, 'pass')
+  assert.equal(control.summary.blockers.length, 0)
+})
+
+test('§4.2：restart 的**硬失败**（拒绝 kill / 停不掉旧进程）仍然立刻停链，不许变成 blocked', async () => {
+  for (const hard of [
+    { ok: false, exitCode: 2, reason: '拒绝 kill：端口被非 node 进程占用（chrome.exe）' },
+    { ok: false, exitCode: 1, reason: '停止旧进程（PID 42）失败：SIGTERM 后 10000ms 仍在运行' },
+  ]) {
+    const { deps, calls } = makeEnv({ restartTarget: () => hard })
+    const result = await runDevVerify(baseOptions(), deps)
+    assert.equal(result.exitCode, hard.exitCode, hard.reason)
+    assert.notEqual(result.verdict, 'blocked')
+    assert.equal(findStage(result, 'restart')?.status, hard.exitCode === 2 ? 'refused' : 'fail')
+    assert.equal(calls.suites.length, 0, '硬失败后一个套件都不许跑（更不许把套件跑在别的实例上）')
+    assert.equal(result.summary.blockers.length, 0, '硬失败不是 blocker，理由是它自己有 detail')
+  }
+})
+
+
+  const { deps, calls } = makeEnv({
+    manifest: { suites: [{ id: 'persona', kind: 'new', required: true, status: 'pending-migration', repoPath: 'scripts/verify/suites/persona.mjs', reason: 'T6 迁' }] },
+  })
+  const result = await runDevVerify(baseOptions(), deps)
 test('AX-V07/G04：必需套件还没迁入 → 退出码 2（缺套件不通过，也不假绿）', async () => {
   const { deps, calls } = makeEnv({
     manifest: { suites: [{ id: 'persona', kind: 'new', required: true, status: 'pending-migration', repoPath: 'scripts/verify/suites/persona.mjs', reason: 'T6 迁' }] },

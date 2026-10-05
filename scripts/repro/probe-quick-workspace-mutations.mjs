@@ -6,17 +6,21 @@
  * 最近列表能删）。接线错了，纯函数单测全绿也照样出事 ——
  * 所以每条断言都要能证明它真的在守东西：撤掉修复 → 必须红。
  *
- * 每条变异跑完立刻从内存还原原文件（`finally`），工作区不留改动。
+ * **还原由 `scripts/lib/mutationGuard.mjs` 负责**（审计 §4.3）：变异前先把原文备份到
+ * `_local-build/mutation-backup/`，`SIGINT`/`SIGTERM`/未捕获异常都会走到还原；
+ * 连 `SIGKILL` 也留下账本供下次启动恢复。工作区不留改动。
  * 任何一条变异"照样全绿"就以非零码退出。
  *
  * 用法：node scripts/repro/probe-quick-workspace-mutations.mjs
  */
-import { readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { createMutationGuard } from '../lib/mutationGuard.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+/** 护栏账本名（= 探针文件名）：崩溃后 `recoverCrashedSessions()` 靠它指认是谁留下的。 */
+const PROBE_LABEL = 'probe-quick-workspace-mutations'
 const COMPONENT = join(ROOT, 'src', 'client', 'index.tsx')
 const MODULE = join(ROOT, 'lib', 'client', 'quickWorkspaceDefault.js')
 const SHARED = join(ROOT, 'lib', 'shared', 'quickWorkspaceRecent.js')
@@ -153,15 +157,17 @@ if (baseline.status !== 0) {
 console.log(`基线：${TEST_FILES.join(' + ')} 全绿\n`)
 
 let failures = 0
+const guard = createMutationGuard({ root: ROOT, label: PROBE_LABEL })
 for (const mutation of MUTATIONS) {
-  const original = readFileSync(mutation.file, 'utf8')
+  const original = guard.stage(mutation.file).original
   if (!mutation.from.test(original)) {
     console.error(`✖ ${mutation.name}\n    变异点没匹配上（源码结构变了，需要同步本探针）`)
+    guard.restore(mutation.file) // 没匹配上就没改过：出账，别把无关文件留在账本里
     failures += 1
     continue
   }
   try {
-    writeFileSync(mutation.file, original.replace(mutation.from, mutation.to))
+    guard.write(mutation.file, original.replace(mutation.from, mutation.to))
     const result = run()
     const firstFail = (result.stdout.match(/✖ ([^\n]*)/g) ?? [])[0]?.trim() ?? '(无失败行)'
     if (result.status === 0) {
@@ -171,7 +177,11 @@ for (const mutation of MUTATIONS) {
       console.log(`✔ ${mutation.name}\n    变红：${firstFail}`)
     }
   } finally {
-    writeFileSync(mutation.file, original)
+    const back = guard.restore(mutation.file)
+    if (!back.ok) {
+      console.error(`✖ 还原失败：${back.file} —— ${back.reason}`)
+      failures += 1
+    }
   }
 }
 
@@ -179,6 +189,14 @@ for (const mutation of MUTATIONS) {
 const restored = run()
 if (restored.status !== 0) {
   console.error('还原后单测反而红了 —— 探针没把文件还原干净')
+  process.exit(2)
+}
+
+// 护栏收尾：账本清零 + 硬断言"没有任何改写留在盘上"（审计 §4.3）
+try {
+  guard.close()
+} catch (error) {
+  console.error(`✖ 护栏收尾失败：${error instanceof Error ? error.message : String(error)}`)
   process.exit(2)
 }
 

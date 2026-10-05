@@ -142,27 +142,36 @@ export function useDayPanelModel(input: DayPanelModelInput): DayPanelModel {
     if (plan === null || plan.items.length === 0) return undefined
     return new Map(plan.items.map((item) => [item.taskId, item.order]))
   }, [plan])
+  /**
+   * **不带计划顺序**的那棵树只建一次（v1.17.0，审计 §4.4）。
+   *
+   * 逾期 / 未排期 / 已完成三棵树都只是"它 + 一个谓词"的派生视图，改动前各自
+   * `buildTaskTree(tasks)` —— 一次渲染把同一棵树建三遍。`filterTaskTree` 是纯的
+   * （返回新节点、不改入参），所以三处共用一份树是安全的；
+   * 计划树另建一份，因为它的兄弟排序用了 `planOrder`（不是同一棵树）。
+   */
+  const plainTree = useMemo(() => buildTaskTree(tasks), [tasks])
   const planTree = useMemo(
     () => filterTaskTree(buildTaskTree(tasks, planOrder), (task) => plannedIds.has(task.id)),
     [tasks, plannedIds, planOrder],
   )
   /** 逾期 / 未排期两棵树不带计划顺序（它们不是"这一天要按什么顺序做"，而是清欠与待安排）。 */
   const overdueTree = useMemo(
-    () => filterTaskTree(buildTaskTree(tasks), (task) => overdueKeep.has(task.id)),
-    [tasks, overdueKeep],
+    () => filterTaskTree(plainTree, (task) => overdueKeep.has(task.id)),
+    [plainTree, overdueKeep],
   )
   const unscheduledTree = useMemo(
-    () => filterTaskTree(buildTaskTree(tasks), (task) => unscheduledKeep.has(task.id)),
-    [tasks, unscheduledKeep],
+    () => filterTaskTree(plainTree, (task) => unscheduledKeep.has(task.id)),
+    [plainTree, unscheduledKeep],
   )
 
   /** 已完成：按 `completedAt` 落在这一天（与旧口径逐字一致）。 */
   const doneKeep = useCallback(
     (task: Task): boolean => task.completedAt !== null && sameDay(new Date(task.completedAt), isTodayView ? todayDate : pickedDate),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 同上
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 依赖用日键 day 代替 Date（同上面那条：日期变了必须重算，Date 对象每渲染都是新的）
     [day],
   )
-  const doneTree = useMemo(() => filterTaskTree(buildTaskTree(tasks), doneKeep), [tasks, doneKeep])
+  const doneTree = useMemo(() => filterTaskTree(plainTree, doneKeep), [plainTree, doneKeep])
   // 已完成面板中保留的父/祖父链只是上下文，不计入统计，也以灰色弱化展示。
   const doneContextIds = useMemo(() => contextIdsOf(doneTree, doneKeep), [doneTree, doneKeep])
   const overdueContextIds = useMemo(

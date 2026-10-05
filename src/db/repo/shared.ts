@@ -7,6 +7,20 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 /**
+ * 事务句柄：交给 `fn` 的**唯一**控制手段。
+ *
+ * 为什么需要 `rollback()`：本仓有一批"先读、发现不该写就返回"的函数
+ * （`addDailyPlanItem` / `updateDailyPlanItem` 最典型），历史上它们的写法是
+ * `db.exec('ROLLBACK'); return { ok: false, … }`。收敛到本原语后若没有显式回滚口，
+ * 这些分支只能变成"COMMIT 一个什么都没写的事务" —— 当下等价，但**下一个人在那个
+ * 分支前加一句写入，就会被静默提交**。留着显式回滚口，意图与安全性一起保住。
+ */
+export interface TxHandle {
+  /** 请求回滚：`fn` 正常返回后由本原语执行 `ROLLBACK`（而不是 `COMMIT`）。 */
+  rollback(): void
+}
+
+/**
  * 在事务里跑 `fn`；**已经在事务里时直接执行**。
  *
  * 为什么必须嵌套感知：`createTask` 之类的写入既被直接调用，也会在 `withDraftConfirm`
@@ -15,16 +29,45 @@ import type { DatabaseSync } from 'node:sqlite'
  *
  * 存在理由：实体写入与配套的 `task_events` 审计事件必须同生共死 ——
  * 原先各处裸写，第二条失败就留下"事件与实体不一致"的库。
+ *
+ * ## `immediate`（2026-10-05 补，替代各处的裸 `BEGIN IMMEDIATE`）
+ *
+ * 默认 `BEGIN` 是**延迟**事务：先只拿读锁，等第一条写入再升级成写锁。
+ * "先读后写"的事务（读快照 → 按快照改 JSON 列）若两个连接同时这样做，
+ * 后升级的那个会拿到 `SQLITE_BUSY`（且 sqlite 为了防死锁**不重试**这个升级），
+ * 于是一次读-改-写会平白失败。`immediate: true` 一进来就拿写锁，
+ * 配合 `busy_timeout`（见 `database.ts`）就是"排队等"而不是"当场失败"。
+ *
+ * 所以口径是：**只要事务里有写入，就该用 `immediate: true`**；
+ * 纯读事务用默认值即可。
  */
-export function withTransaction<T>(db: DatabaseSync, fn: () => T): T {
-  if (db.isTransaction) return fn()
-  db.exec('BEGIN')
+export function withTransaction<T>(
+  db: DatabaseSync,
+  fn: (tx: TxHandle) => T,
+  options: { immediate?: boolean } = {},
+): T {
+  if (db.isTransaction) {
+    /**
+     * 嵌套：外层事务拥有提交/回滚权，本层只借用它的原子性。
+     *
+     * 此时 `rollback()` 无法兑现 —— 单独回滚本层在 SQLite 里不存在这回事
+     * （没有 savepoint 的话）。**响亮拒绝，不假装成功**：静默降级成"不回滚"
+     * 会让调用方以为数据没写进去，是更坏的结果。
+     */
+    return fn({
+      rollback: () => {
+        throw new Error('嵌套事务里不能单独回滚：外层事务决定提交或回滚（要局部回滚请用 SAVEPOINT）')
+      },
+    })
+  }
+  db.exec(options.immediate === true ? 'BEGIN IMMEDIATE' : 'BEGIN')
+  let rollbackRequested = false
   try {
-    const result = fn()
-    db.exec('COMMIT')
+    const result = fn({ rollback: () => { rollbackRequested = true } })
+    db.exec(rollbackRequested ? 'ROLLBACK' : 'COMMIT')
     return result
   } catch (error) {
-    db.exec('ROLLBACK')
+    try { db.exec('ROLLBACK') } catch { /* 已回滚过/broken transaction 不能掩盖原始错误 */ }
     throw error
   }
 }
@@ -186,17 +229,12 @@ export function withDraftConfirm<T>(
    * `confirmResult`）—— 返回 `emptyValue`，由调用方给出可读结果，而不是"再建一条"。
    */
   if (draft.statusCode !== 'pending') return options.emptyValue
-  db.exec('BEGIN')
-  try {
+  return withTransaction(db, () => {
     const result = build(draft)
     // 先回写产出、再标记 confirmed：反过来 `updateDraft` 会因为状态不是 pending 而拒绝。
     const withResult = { ...draft.payload, confirmResult: result }
     db.prepare('UPDATE task_drafts SET payload_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(withResult), at, draftId)
     setDraftStatus(db, draftId, 'confirmed', at)
-    db.exec('COMMIT')
     return result
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
 }

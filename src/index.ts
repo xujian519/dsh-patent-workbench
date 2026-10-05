@@ -13,10 +13,12 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { makeDictionaryRoute } from './api/dictionaryRoute.js'
 import { makeLocalDirRoute } from './api/localDirRoute.js'
+import { makeMatterImportRoute } from './api/matterImportRoute.js'
 import { makeOpenFileRoute } from './api/openFileRoute.js'
 import { makeRoutes } from './api/routes.js'
 import type { LlmModalityProbe } from './api/routes/model-modalities.js'
 import { normalizeHostPath } from './api/routes/helpers.js'
+import { isAbsoluteNativePath } from './shared/hostPath.js'
 import { makeSkillRoutes } from './api/routes/skills.js'
 import { probeSkills } from './api/skills.js'
 import type { PatentDeadlineService } from './shared/patentDeadline.js'
@@ -182,6 +184,19 @@ export function workbenchCommandDefinition(db: DatabaseSync): CommandDefinitionP
          * 这里复用 `helpers.toNativePath`（既有的唯一实现），不再另写一套平台判断。
          */
         folderPath = normalizeHostPath(join(root, folderName))
+        /**
+         * ⚠️ 归一化还不够，**必须是绝对路径**（2026-10-05 审计，与
+         * `POST /workspaces/ensure` 的闸门同一处判据）。
+         *
+         * 归一化只管 `D:\…` → `/mnt/d/…` 这一个语义；`root` 本身若是个相对路径
+         * （用户在设置里填 `DSHWorkspace`），`join` 出来的仍是相对路径，
+         * `mkdirSync` 就会**建到 dsh 进程的 cwd**，而提示词里声明的资料夹路径与
+         * 会话实际落点对不上 —— 与上一条注释记录的 F5 事故同一形态，只换了触发入口。
+         * 现在明确失败并告诉用户怎么修，不猜也不静默建到别处。
+         */
+        if (!isAbsoluteNativePath(folderPath)) {
+          return { kind: 'error', text: `默认 AI 工作区不是绝对路径（读到 ${JSON.stringify(root)}），无法在其下创建任务资料夹。请到「工作台 → 设置」改成完整绝对路径（如 /Users/me/DSHWorkspace 或 D:\\DSHWorkspace）。` }
+        }
         try {
           mkdirSync(folderPath, { recursive: true })
         } catch (error) {
@@ -401,7 +416,7 @@ function applyReady(ctx: Context, db: DatabaseSync, config: Config): void {
   })
   // 独立路由文件：保证热重载时新增/修复的“选择文件”“打开文件”“字典管理”“技能目录”接口能随入口模块一起重新加载。
   // 技能目录每次请求实时探测宿主 skills 注册表（未安装时返回空列表，前端隐藏选择器）。
-  routes.unshift(makeDictionaryRoute(db), makeLocalDirRoute(), makeOpenFileRoute(), ...makeSkillRoutes({ probe: () => probeSkills(ctx) }))
+  routes.unshift(makeDictionaryRoute(db), makeLocalDirRoute(), makeOpenFileRoute(), ...makeMatterImportRoute(db), ...makeSkillRoutes({ probe: () => probeSkills(ctx) }))
 
   ctx.effect(
     () => {

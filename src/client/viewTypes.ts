@@ -250,7 +250,8 @@ export interface WorkbenchRuntime {
    * 所以决策是：**软探测，不进 `inject`**。理由是不可逆的成本不对称 ——
    * `dsh-client-ui-model-selection` 是**另一个客户端插件**，用户可以在 profile 里不装它；
    * 写进 `inject` 会让那种机器上**整个工作台面板 pending**（丢整块面板换一个下拉框）。
-   * 未声明 `inject` 的判定由 `test/injectPolicy.test.mjs` 钉住。
+   * 未声明 `inject` 的判定由 `test/pluginEntry.test.mjs` 钉住
+   * （原注释指向的 `test/injectPolicy.test.mjs` 从未存在过，2026-10-05 审计修正）。
    */
   modelDirectories?: {
     directoryFor(sessionId: string): ModelDirectoryRuntime

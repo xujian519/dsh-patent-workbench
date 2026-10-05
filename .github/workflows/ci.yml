@@ -27,6 +27,12 @@ jobs:
 
       - run: pnpm typecheck
 
+      # 验收链的脚本卫生 + 现役白名单（零依赖、只读）：
+      # 现役套件文件缺席、或套件目录里有未声明的 .mjs（静默丢件）一律退出码 1。
+      # 2026-10-06 加（审计 §4.2）：这条链此前在**任何** CI 上都不跑，
+      # 于是"套件改了名、白名单没跟上"只能靠人在本机发现。
+      - run: node scripts/check-verify-scripts.mjs
+
       # 不再单独 `pnpm build`：`pnpm test` 自己就是 `build && node --test`（见 package.json）。
       # 这里再 build 一次等于同一个产物连出三遍（install 的 `prepare` + 这一步 + test 内部）
       # —— CI 时间白花，而且掩盖了"测试到底验的是哪份产物"。

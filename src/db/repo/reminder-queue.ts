@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, listDueReminders, type DueReminder } from '../repo.js'
+import { withTransaction } from './shared.js'
 
 
 export interface ReminderQueueRow {
@@ -40,8 +41,7 @@ export interface ReminderQueueInput {
 
 export function enqueueReminder(db: DatabaseSync, input: ReminderQueueInput, at = nowIso()): string {
   const id = randomUUID()
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     db.prepare(`
       INSERT INTO reminder_queue
         (id, reminder_id, root_task_id, task_id, title, body, priority_code, due_at, attempts, next_attempt_at, last_error, created_at)
@@ -56,11 +56,7 @@ export function enqueueReminder(db: DatabaseSync, input: ReminderQueueInput, at 
         )
       `).run(drop)
     }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
   return id
 }
 

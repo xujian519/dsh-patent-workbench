@@ -25,15 +25,21 @@
  * 3. **发布复核一律直连 registry**，不用 `npm view` / `npm i` 当判据 ——
  *    它们会命中**本地 npm 缓存**，而中间态（元数据 200、tarball 404、网页显示 Published）
  *    正是靠直连才认出来的。
+ * 4. **探针批次前后必须核对工作区指纹**（`src` + `lib` 逐字节），且每条命令都有墙钟上限
+ *    （`run()` / `runNode()`；探针走不经 shell 的那条，好让超时信号直达探针的护栏）。
+ *    理由：探针是唯一一条**门禁自己改写发布产物**的路径 —— 残留的 `src/` 会被下一次
+ *    `pnpm build` 烘焙进 `lib/`，残留的 `lib/` 更是直接随包发出（审计 §4.3）。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
-  judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests, merge, parsePiiRules,
-  parseProbeResult, parseTestSummary,
+  judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests, judgeWorkspaceResidue,
+  merge, parsePiiRules, parseProbeResult, parseTestSummary,
 } from './lib/releasePreflight.mjs'
+import { describeRecovery, recoverCrashedSessions } from './lib/mutationGuard.mjs'
+import { diffFingerprints, fingerprintWorkspace, formatDrift } from './lib/workspaceFingerprint.mjs'
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
 const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
@@ -98,14 +104,58 @@ const ONLY = valueOf('--only', null)
 const SKIP_INSTALL = has('--no-install')
 const JSON_OUT = valueOf('--json', null)
 
-/** 跑一条命令，返回 `{code, out}`（输出合并 stderr，便于把失败原因原样打出来）。 */
-function run(command, { cwd = ROOT, env = {} } = {}) {
+/**
+ * 每条命令的**墙钟上限**（毫秒）。为什么必须有：门禁是发布前最后一道机械关卡，
+ * 一条挂住的命令会让它**永远不返回** —— 那比报错更难发现（人和 CI 都以为"还在跑"）。
+ *
+ * ⚠️ **实测（2026-10-05）的边界**：`spawnSync` 的 `timeout` 只把信号发给**直接子进程**。
+ * 在 `shell: true` 且命令是复合语句时，`sh` 才是直接子进程，**孙进程会活下来继续写盘**
+ * （实测：命令返回之后 marker 文件仍在增长）。所以本脚本两条规矩：
+ *
+ * 1. `node` 类命令一律走 `runNode()`（**不经 shell**）→ 超时信号直达探针，
+ *    护栏的 `SIGTERM` 处理器能把工作区还原干净再退出；
+ * 2. 超时一律记 **失败**（不是"重试看看"），且探针批次收尾的工作区指纹就是对
+ *    "活下来的孙进程"的兜底判据。
+ */
+const BUILD_TIMEOUT_MS = 15 * 60 * 1000
+const TEST_TIMEOUT_MS = 30 * 60 * 1000
+const PROBE_TIMEOUT_MS = 20 * 60 * 1000
+
+/** 把 `spawnSync` 的结果归一成 `{code, out, timedOut}`（输出合并 stderr，便于把失败原因原样打出来）。 */
+function describeResult(result, timeoutMs) {
+  const out = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  const timedOut = result.error?.code === 'ETIMEDOUT'
+  const suffix = timedOut
+    ? `\n⏱️ 超过 ${timeoutMs} ms 未结束，已 SIGTERM（注意：spawnSync 只杀直接子进程）`
+    : ''
+  return { code: result.status === null ? 1 : result.status, out: out + suffix, timedOut }
+}
+
+/** 跑一条命令（**经 shell**，用于 `pnpm` 这类需要 PATH 解析的可执行名）。 */
+function run(command, { cwd = ROOT, env = {}, timeoutMs = BUILD_TIMEOUT_MS } = {}) {
   const result = spawnSync(command, {
     cwd, shell: true, encoding: 'utf8',
     env: { ...process.env, ...env },
     maxBuffer: 64 * 1024 * 1024,
+    timeout: timeoutMs,
   })
-  return { code: result.status === null ? 1 : result.status, out: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+  return describeResult(result, timeoutMs)
+}
+
+/**
+ * 跑一个 node 脚本，**不经 shell**：超时信号直达脚本本身。
+ *
+ * 这条不是洁癖 —— 探针超时若只 SIGTERM 到 `sh`，探针进程会带着变异体活下来继续跑
+ * （实测见上面的注释块）。直接 exec 后 `SIGTERM` 交给探针的护栏，它能还原再退出（143）。
+ */
+function runNode(script, args = [], { cwd = ROOT, env = {}, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
+  const result = spawnSync(process.execPath, [script, ...args], {
+    cwd, encoding: 'utf8',
+    env: { ...process.env, ...env },
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: timeoutMs,
+  })
+  return describeResult(result, timeoutMs)
 }
 
 /** 直连 HTTP（**绕开 npm 本地缓存**）：用 curl 拿 `{code, out}`（可执行名见 `CURL`）。 */
@@ -140,7 +190,7 @@ function gateTypecheck() {
 
 function gateTests() {
   banner('2/5 全量单测')
-  const r = run('pnpm test')
+  const r = run('pnpm test', { timeoutMs: TEST_TIMEOUT_MS })
   const summary = parseTestSummary(r.out)
   const verdict = judgeTests(summary, KNOWN_TEST_FAILURES)
   console.log(`   ℹ️  tests ${summary.tests} / pass ${summary.pass} / fail ${summary.fail}`)
@@ -148,27 +198,76 @@ function gateTests() {
   add('单测', verdict)
 }
 
+/**
+ * 3/5 变异探针。
+ *
+ * ## 为什么开头先做"崩溃恢复"、结尾必做"工作区指纹"
+ *
+ * 探针必须**改写工作区**才能证明断言有牙（改 `src/` 或直接改 `lib/`）。
+ * 于是门禁自己成了唯一一条"污染发布产物"的路径（审计 §4.3）。三道处理：
+ *
+ * 1. **开跑前**：`recoverCrashedSessions()` 收拾上一次被 SIGKILL/断电留下的账本
+ *    （能被捕获的信号已由探针内的护栏处理）；
+ * 2. **整批前后**：对 `src` + `lib` 拍指纹并逐字节比对 —— 与 git 无关，
+ *    所以**脏工作区同样成立**（`git diff --quiet` 在未提交改动上必然误判）；
+ * 3. 残留一律记**失败**，并且把探针调用改成 `runNode()`（不经 shell），
+ *    让超时信号直达探针的护栏而不是停在 `sh` 上。
+ */
 function gateProbes() {
-  banner('3/5 变异探针（每个之间 pnpm build —— 探针只还原 src，不重建 lib）')
-  const list = run('node -e "const fs=require(\'fs\');const d=fs.readdirSync(\'scripts/repro\').filter(f=>/^probe-.*-mutations\\.mjs$/.test(f)).sort();console.log(d.join(\'\\n\'))"')
-  const files = list.out.split(/\r?\n/).map((s) => s.trim()).filter((s) => s !== '')
+  banner('3/5 变异探针（每个之间 pnpm build —— 探针只还原工作区，不重建 lib）')
+
+  // 3a. 上次没走完的账本（SIGKILL / 断电 / CI 被砍）
+  const recovery = recoverCrashedSessions()
+  if (recovery.recovered.length > 0 || recovery.damaged.length > 0 || recovery.skipped.length > 0) {
+    console.log(`   🔧 崩溃恢复：${describeRecovery(recovery)}`)
+  }
+
+  // 3b. 跑前基线。**先构建一次**：让指纹里的 lib/ 是本轮构建的确定内容，
+  //     而不是"上一轮构建 + 某个探针残留"的混合体（否则漂移判据会指向错误的地方）。
+  const files = readdirSync(join(ROOT, 'scripts', 'repro'))
+    .filter((f) => /^probe-.*-mutations\.mjs$/.test(f))
+    .sort()
+  if (files.length > 0) {
+    const warm = run('pnpm build', { timeoutMs: BUILD_TIMEOUT_MS })
+    if (warm.code !== 0) {
+      console.log(`   ❌ 跑前构建失败（探针的基线不可信）：`)
+      console.log(warm.out.trim().split('\n').slice(-8).map((l) => `      ${l}`).join('\n'))
+    } else if (warm.timedOut) {
+      console.log('   ❌ 跑前构建超时 —— 见下面的构建失败记录')
+    }
+  }
+  const before = fingerprintWorkspace()
+  console.log(`   ℹ️ 跑前基线：${before.count} 个文件（src + lib），digest ${before.digest.slice(0, 16)}`)
+
   const parsed = []
   for (const file of files) {
-    const build = run('pnpm build')
+    const build = run('pnpm build', { timeoutMs: BUILD_TIMEOUT_MS })
     if (build.code !== 0) {
-      console.log(`   ❌ ${file}：构建失败，探针无法执行`)
-      parsed.push({ id: file, caughtAll: false, caught: 0, total: 0, stale: false, unreliable: true, survived: null, detail: '构建失败' })
+      console.log(`   ❌ ${file}：构建失败${build.timedOut ? '（超时）' : ''}，探针无法执行`)
+      parsed.push({ id: file, caughtAll: false, caught: 0, total: 0, stale: false, unreliable: true, survived: null, detail: `构建失败${build.timedOut ? '（超时）' : ''}` })
       continue
     }
-    const r = run(`node scripts/repro/${file}`)
+    const r = runNode(`scripts/repro/${file}`, [], { timeoutMs: PROBE_TIMEOUT_MS })
     const verdict = parseProbeResult({ id: file.replace(/\.mjs$/, ''), exitCode: r.code, stdout: r.out })
+    if (r.timedOut) {
+      verdict.caughtAll = false
+      verdict.detail = `⏱️ 超过 ${Math.round(PROBE_TIMEOUT_MS / 60000)} 分钟未结束，被 SIGTERM（护栏已还原工作区；输出可能被截断）`
+    }
     parsed.push(verdict)
     const mark = verdict.caughtAll ? '✅' : '❌'
     console.log(`   ${mark} ${verdict.id}：${verdict.detail}`)
   }
-  const verdict = judgeProbes(parsed, KNOWN_PROBE_DEBT)
-  show(verdict)
-  add('探针', verdict)
+  const probeVerdict = judgeProbes(parsed, KNOWN_PROBE_DEBT)
+  show(probeVerdict)
+  add('探针', probeVerdict)
+
+  // 3c. 逐字节核对：跑完之后工作区必须回到跑之前
+  const after = fingerprintWorkspace()
+  const drift = diffFingerprints(before, after)
+  if (drift.length > 0) console.log(formatDrift(drift))
+  const residueVerdict = judgeWorkspaceResidue({ drift, recovery, before })
+  show(residueVerdict)
+  add('探针残留', residueVerdict)
 }
 
 function gatePii() {
@@ -235,7 +334,7 @@ function gateArtifact() {
     const dir = join(ROOT, '_local-build', `preflight-install-${VERSION}`)
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'preflight-smoke', private: true }), 'utf8')
-    const r = run(`npm i ${PKG_NAME} --no-audit --no-fund --cache "${join(dir, '.npmcache')}"`, { cwd: dir })
+    const r = run(`npm i ${PKG_NAME} --no-audit --no-fund --cache "${join(dir, '.npmcache')}"`, { cwd: dir, timeoutMs: TEST_TIMEOUT_MS })
     const installed = existsSync(join(dir, 'node_modules', ...PKG_NAME.split('/'), 'package.json'))
       ? JSON.parse(readFileSync(join(dir, 'node_modules', ...PKG_NAME.split('/'), 'package.json'), 'utf8')).version
       : null

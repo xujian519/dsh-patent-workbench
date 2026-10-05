@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openWorkbenchDb } from '../lib/db/database.js'
@@ -16,7 +16,7 @@ function startTestServer(options = {}) {
   const db = openWorkbenchDb({ dbPath: ':memory:' })
   // 生产路径由 apply() 播种字典；测试里也要播，否则 POST /drafts 的 kind 校验会 400。
   seedDictionaries(db)
-  const routes = [makeDictionaryRoute(db), makeLocalDirRoute(), makeOpenFileRoute(), ...makeRoutes(db, options.deps ?? {})]
+  const routes = [makeDictionaryRoute(db), makeLocalDirRoute(), makeOpenFileRoute(options.openFileDeps ?? {}), ...makeRoutes(db, options.deps ?? {})]
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     for (const route of routes) {
@@ -348,6 +348,147 @@ test('knowledge API supports file_link and local document reading', async () => 
       assert.equal(openMissing.status, 400)
       const openNoLink = await request('POST', '/api/workbench/knowledge/open-file', {})
       assert.equal(openNoLink.status, 400)
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// A1/A2/A3 修复（2026-10-05 深度审计的 P0 三条）
+// ---------------------------------------------------------------------------
+
+test('A1：open-file 是会执行本机程序的原语 —— 只有文档类才交给默认程序，其余一律降级为定位', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-openmode-'))
+  const docPath = join(dir, '检索笔记.md')
+  const cmdPath = join(dir, 'evil.command')
+  const shPath = join(dir, 'deploy')
+  writeFileSync(docPath, '# 文档', 'utf8')
+  // 真会执行的话会写出这个文件 —— 断言它始终不存在，比断言"返回了什么"更硬。
+  const marker = join(dir, 'EXECUTED')
+  writeFileSync(cmdPath, `#!/bin/sh\ntouch ${marker}\n`, 'utf8')
+  writeFileSync(shPath, `#!/bin/sh\ntouch ${marker}\n`, 'utf8')
+
+  /** 注入假实现：测试**不真的调用** open / xdg-open / explorer（否则测试自己成了执行原语）。 */
+  const calls = []
+  const openFileDeps = {
+    openFile: async (p) => { calls.push(['open', p]) },
+    revealFile: async (p) => { calls.push(['reveal', p]) },
+  }
+  try {
+    await withServer(async ({ request }) => {
+      const doc = await request('POST', '/api/workbench/knowledge/open-file', { fileLink: docPath })
+      assert.equal(doc.status, 200)
+      assert.equal(doc.body.mode, 'open', '文档仍走默认程序打开（功能不回退）')
+
+      const cmd = await request('POST', '/api/workbench/knowledge/open-file', { fileLink: cmdPath })
+      assert.equal(cmd.status, 200)
+      assert.equal(cmd.body.mode, 'reveal', '.command 必须降级')
+      assert.equal(cmd.body.reason, 'not-openable')
+      assert.equal(cmd.body.extension, 'command')
+
+      const noExt = await request('POST', '/api/workbench/knowledge/open-file', { fileLink: shPath })
+      assert.equal(noExt.status, 200)
+      assert.equal(noExt.body.mode, 'reveal', '无扩展名的脚本必须降级')
+      assert.equal(noExt.body.reason, 'no-extension')
+
+      assert.deepEqual(calls, [['open', docPath], ['reveal', cmdPath], ['reveal', shPath]],
+        '实际挑的腿必须与判定一致：文档 leg=open，其余 leg=reveal（且各调用一次）')
+      assert.equal(existsSync(marker), false, '⚠️ 降级路径绝不能让那个 .command / 脚本被执行')
+    }, { openFileDeps })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('A1：定位腿尽力而为 —— 无桌面环境（headless）时返回 200 + revealed:false，而不是伪装成接口坏了', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-revealfail-'))
+  const cmdPath = join(dir, 'evil.command')
+  writeFileSync(cmdPath, '#!/bin/sh\ntrue\n', 'utf8')
+  try {
+    await withServer(async ({ request }) => {
+      const res = await request('POST', '/api/workbench/knowledge/open-file', { fileLink: cmdPath })
+      assert.equal(res.status, 200, '判定已生效（没执行任何东西），不能因为机器上没有 xdg-open 就报 4xx')
+      assert.equal(res.body.mode, 'reveal')
+      assert.equal(res.body.revealed, false, '要如实说"没能定位"，客户端据此改提示语')
+    }, {
+      openFileDeps: {
+        // 只让定位腿失败：这正是 headless 上 xdg-open/gio 都缺失的表现。
+        revealFile: async () => { throw new Error('xdg-open: command not found') },
+      },
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('A2：read-local-file 超过上限时只读前 1 MiB，不把整个文件读进内存', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-bigdoc-'))
+  const bigPath = join(dir, 'big.log')
+  const smallPath = join(dir, 'small.md')
+  writeFileSync(smallPath, '# 小文件', 'utf8')
+  /**
+   * 3.5 MiB 的文本。修复前是 `readFile` 整读 + `content.length`（**字符**）比较：
+   * 大文件会被完整物化进宿主进程，上限形同虚设。
+   */
+  writeFileSync(bigPath, 'A'.repeat(3 * 1024 * 1024 + 512 * 1024), 'utf8')
+  try {
+    await withServer(async ({ request }) => {
+      const big = await request('GET', `/api/workbench/knowledge/read-local-file?path=${encodeURIComponent(bigPath)}`)
+      assert.equal(big.status, 200, '契约不变：超限仍是 200 + truncated（客户端弹窗无需改动）')
+      assert.equal(big.body.truncated, true)
+      assert.equal(big.body.size, 3 * 1024 * 1024 + 512 * 1024, 'size 仍如实回显文件真实大小')
+      assert.equal(big.body.content.length, 1024 * 1024, '只返回前 1 MiB（按字节截断）')
+
+      const small = await request('GET', `/api/workbench/knowledge/read-local-file?path=${encodeURIComponent(smallPath)}`)
+      assert.equal(small.body.truncated, false)
+      assert.equal(small.body.content, '# 小文件', '未超限的文件内容要逐字不变')
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('A2：按字节截断不能把多字节字符切成"�"', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-utf8cut-'))
+  const path = join(dir, 'cn.txt')
+  // 3 字节/字："中" 的倍数会让 1 MiB 边界正好落在字符中间（1 MiB = 349525.33 个"中"）。
+  writeFileSync(path, '中'.repeat(600 * 1024), 'utf8')
+  try {
+    await withServer(async ({ request }) => {
+      const res = await request('GET', `/api/workbench/knowledge/read-local-file?path=${encodeURIComponent(path)}`)
+      assert.equal(res.status, 200)
+      assert.equal(res.body.truncated, true)
+      assert.equal(res.body.content.endsWith('\uFFFD'), false, '截断处的半个字符必须去掉，不能给用户看 "�"')
+      assert.match(res.body.content, /^中+$/, '返回的必须是完整的"中"字序列')
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('A3：workspaces/ensure 不再接受相对路径或 `~`（相对路径会建到服务进程的 cwd）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-workbench-ensure-'))
+  const abs = join(dir, '任务资料夹', '子目录')
+  try {
+    await withServer(async ({ request }) => {
+      const rel = await request('POST', '/api/workbench/workspaces/ensure', { path: 'relative/dir' })
+      assert.equal(rel.status, 400, '相对路径必须拒绝，不能静默建到 cwd')
+      assert.match(rel.body.error, /absolute path/)
+
+      const tilde = await request('POST', '/api/workbench/workspaces/ensure', { path: '~/Documents/x' })
+      assert.equal(tilde.status, 400, '`~` 不会被展开，接受它就等于建一个名叫 ~ 的目录')
+
+      const empty = await request('POST', '/api/workbench/workspaces/ensure', { path: '   ' })
+      assert.equal(empty.status, 400)
+
+      const ok = await request('POST', '/api/workbench/workspaces/ensure', { path: abs })
+      assert.equal(ok.status, 200)
+      assert.equal(ok.body.path, abs)
+      assert.equal(existsSync(abs), true, '合法绝对路径仍要真的建出来（功能不回退）')
+
+      const again = await request('POST', '/api/workbench/workspaces/ensure', { path: abs })
+      assert.equal(again.status, 200, '已存在时是幂等的')
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })

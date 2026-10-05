@@ -39,7 +39,15 @@ import {
   preflight,
   resolveDbPathConfig,
 } from '../scripts/verify/safety.mjs'
-import { buildPortOwnerScript, findPortOwner, isTargetDshProcess, resolveDshCommand } from '../scripts/verify/runtime.mjs'
+import {
+  buildPortOwnerCommandsPosix,
+  buildPortOwnerScript,
+  findPortOwner,
+  isTargetDshProcess,
+  resolveDshCommand,
+  restartTarget,
+  stopProcess,
+} from '../scripts/verify/runtime.mjs'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
 const ROOTFS = process.platform === 'win32' ? 'C:\\' : '/'
@@ -382,17 +390,232 @@ test('AX-V03：端口归属判据只认"目标那个 dsh web 实例"（杀进程
     ['命令行显式指定了别的 profile', owner('node.exe', `node ${BIN} web --port 3080 --profile desktop`), false],
     ['命令行没写 profile（由 DSH_PROFILE 环境变量决定，允许）', owner('node.exe', `node ${BIN} web --port 3080`), true],
   ]
+  /**
+   * ⚠️ 这张表的每一行都是 **Windows** 形态（命令行里是 `AppData\Roaming\npm` 与 `node.exe`），
+   * 所以必须显式传 `platform: 'win32'` —— 不传就按本机平台走（本机是 darwin，
+   * 名字判据只认 `node`），那会让这张表在 macOS 上整片变红。POSIX 的形态见下面那两条用例。
+   */
   for (const [label, candidate, expected] of cases) {
-    const verdict = isTargetDshProcess(candidate, { port: 3080, profile: 'web' })
+    const verdict = isTargetDshProcess(candidate, { port: 3080, profile: 'web', platform: 'win32' })
     assert.equal(verdict.ok === true, expected, `${label}：${JSON.stringify(verdict)}`)
     if (!expected) assert.equal(typeof verdict.reason, 'string', `${label} 必须给出可读原因`)
   }
 })
 
-test('AX-V03：非 Windows 平台拒绝做端口归属校验（不猜着杀进程）', () => {
-  const verdict = findPortOwner(3080, { platform: 'linux', runCommandSync: () => ({ status: 0, stdout: '', stderr: '' }) })
-  assert.equal(verdict.ok, false)
-  assert.match(verdict.reason, /只支持 Windows/)
+/**
+ * AX-V03 + §4.2：非 Windows 的端口归属。
+ *
+ * **审判据为什么被改**（2026-10-06）：老版本在非 Windows 上无条件 `ok:false`（"拒绝在没有归属校验能力时杀进程"）——
+ * 那条纪律在**当时**是对的（当时确实没有实现），但它的代价是验收链在 macOS 上**必然**停在 restart。
+ * 现在实现了 POSIX 的归属校验，判据改成三条更强的：
+ * 1. 能证明 → 给 pid/name/commandLine（本文件只测**命令形状与解析**，真机实测在
+ *    `scripts/repro/repro-dev-verify-posix.mjs`）；
+ * 2. 证明不了（缺 lsof / ps 读不到 / 多个监听者）→ 拒绝且**必须带 `blocked:true`**（编排据此"继续跑但不报绿"）；
+ * 3. 读到了但**不是目标进程** → 普通拒绝，**不带 `blocked`**（链不认识占端口的东西，必须硬停）。
+ */
+test('AX-V03：POSIX 端口归属（lsof+ps）——命令形状、解析分支、blocked 标记只在"能力缺失"时出现', () => {
+  const commands = buildPortOwnerCommandsPosix(3080)
+  assert.equal(commands.listPids, 'lsof -nP -iTCP:3080 -sTCP:LISTEN -t')
+  assert.equal(commands.processName(42), 'ps -ww -p 42 -o comm=')
+  assert.equal(commands.commandLine(42), 'ps -ww -p 42 -o command=')
+  assert.match(commands.processName(42), /-ww/, '命令行/进程名必须用 -ww 读全：截断的判据输入等于瞎判')
+
+  const run = (table) => (command) => {
+    const hit = Object.keys(table).find((key) => command.includes(key))
+    assert.notEqual(hit, undefined, `测试没有为这条命令准备应答：${command}`)
+    return table[hit]
+  }
+  const ok = (stdout) => ({ status: 0, stdout, stderr: '' })
+
+  // 1) 正常：一个监听者 + 名字是整条路径（macOS 实测形态）→ 取 basename
+  const found = findPortOwner(3080, {
+    platform: 'darwin',
+    runCommandSync: run({
+      'lsof -nP': ok('43901\n'),
+      'ps -ww -p 43901 -o comm=': ok('/Applications/DSH Patent.app/Contents/MacOS/DSH Patent\n'),
+      'ps -ww -p 43901 -o command=': ok('/x/node /x/dsh/lib/bin.js web --port 3080\n'),
+    }),
+  })
+  assert.equal(found.ok, true)
+  assert.deepEqual(found.owner, { pid: 43901, name: 'DSH Patent', commandLine: '/x/node /x/dsh/lib/bin.js web --port 3080' })
+
+  // 2) 端口空着：lsof 退出码 1 且无输出 —— **这不是错误**，是"没有监听者"
+  const free = findPortOwner(3080, { platform: 'linux', runCommandSync: () => ({ status: 1, stdout: '', stderr: '' }) })
+  assert.deepEqual(free, { ok: true, owner: undefined })
+
+  // 3) 没有 lsof：退出码 127 → 拒绝且 blocked（不许把"查不了"当成"端口空着"）
+  const noLsof = findPortOwner(3080, { platform: 'linux', runCommandSync: () => ({ status: 127, stdout: '', stderr: 'sh: lsof: not found' }) })
+  assert.equal(noLsof.ok, false)
+  assert.equal(noLsof.blocked, true)
+  assert.match(noLsof.reason, /lsof/)
+  assert.match(noLsof.reason, /--launcher/, '必须告诉人怎么绕过（把重启交给他自己的启动器）')
+
+  // 4) 一个端口挂多个监听者：选谁都是猜 → 拒绝且 blocked
+  const many = findPortOwner(3080, { platform: 'darwin', runCommandSync: () => ok('11\n22\n') })
+  assert.equal(many.ok, false)
+  assert.equal(many.blocked, true)
+  assert.match(many.reason, /2 个监听进程/)
+
+  // 5) ps 读不到（进程刚死）→ blocked，且**不许**把不完整的信息当 owner 交出去
+  const psGone = findPortOwner(3080, {
+    platform: 'darwin',
+    runCommandSync: run({ 'lsof -nP': ok('43901\n'), 'ps -ww -p 43901': { status: 1, stdout: '', stderr: 'ps: No such process' } }),
+  })
+  assert.equal(psGone.ok, false)
+  assert.equal(psGone.blocked, true)
+  assert.match(psGone.reason, /No such process/)
+
+  // 6) 命令行为空 → 没有命令行就证明不了它是谁 → blocked
+  const empty = findPortOwner(3080, {
+    platform: 'darwin',
+    runCommandSync: run({ 'lsof -nP': ok('43901\n'), 'o comm=': ok('node\n'), 'o command=': ok('   \n') }),
+  })
+  assert.equal(empty.ok, false)
+  assert.equal(empty.blocked, true)
+  assert.match(empty.reason, /命令行为空/)
+})
+
+test('AX-V03：进程名判据按平台（POSIX 只认 node；桌面端 DSH Patent 必须被拦住）', () => {
+  const posixDsh = { pid: 1, name: 'node', commandLine: '/x/node /x/dsh/lib/bin.js web --port 3080 --no-open' }
+  assert.equal(isTargetDshProcess(posixDsh, { port: 3080, profile: 'web', platform: 'darwin' }).ok, true)
+
+  /**
+   * 真机实测（2026-10-06）：本机 62620 的归属进程就是桌面端 —— 名字 `DSH Patent`、
+   * 命令行里也含 `dsh` 字样（`app.asar/dsh/...`）。这条判据是"别把用户正在用的桌面端杀掉"的那一关。
+   */
+  const desktop = { pid: 43901, name: 'DSH Patent', commandLine: '/Applications/DSH Patent.app/Contents/MacOS/DSH Patent --expose-internals /Applications/DSH Patent.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js' }
+  const refused = isTargetDshProcess(desktop, { port: 62620, profile: 'web', platform: 'darwin' })
+  assert.equal(refused.ok, false)
+  assert.match(refused.reason, /非 node 进程/)
+
+  // Windows 侧的判据**没有动**：`node.exe` 认，`node`（不带 .exe）不认
+  assert.equal(isTargetDshProcess({ pid: 1, name: 'node.exe', commandLine: 'node C:\\dsh\\bin.js web --port 3080' }, { port: 3080, profile: 'web', platform: 'win32' }).ok, true)
+  assert.equal(isTargetDshProcess({ pid: 1, name: 'node', commandLine: 'node C:\\dsh\\bin.js web --port 3080' }, { port: 3080, profile: 'web', platform: 'win32' }).ok, false)
+})
+
+test('AX-V03 + §4.2：POSIX 停机用 SIGTERM 且等它真的退出；绝不静默升级 SIGKILL', async () => {
+  const signals = []
+  const dead = new Set()
+  const kill = (pid, signal) => {
+    signals.push(`${pid}:${signal}`)
+    if (signal === 0) { if (dead.has(pid)) { const error = new Error('no such process'); error.code = 'ESRCH'; throw error } return }
+    if (signal === 'SIGTERM') dead.add(pid)
+  }
+  const stepped = await stopProcess({ pid: 7, name: 'node', commandLine: 'x' }, { platform: 'darwin', kill, sleep: async () => {}, graceMs: 50, pollMs: 1 })
+  assert.equal(stepped.ok, true)
+  assert.equal(stepped.method, 'sigterm')
+  assert.deepEqual(signals.filter((entry) => entry.endsWith(':SIGTERM')), ['7:SIGTERM'], 'SIGTERM 只发一次')
+  assert.ok(signals.some((entry) => entry === '7:0'), '必须轮询 kill(pid,0) 确认它真的死了，而不是 sleep 猜')
+  assert.equal(signals.some((entry) => entry.includes('SIGKILL')), false, '不许出现 SIGKILL')
+
+  // 不死的进程：如实失败 + 告诉人自己处理；仍然不许 SIGKILL
+  const stubborn = []
+  const stuck = await stopProcess({ pid: 8, name: 'node', commandLine: 'x' }, { platform: 'darwin', kill: (pid, signal) => { stubborn.push(`${pid}:${signal}`) }, sleep: async () => {}, graceMs: 30, pollMs: 1 })
+  assert.equal(stuck.ok, false)
+  assert.match(stuck.reason, /SIGTERM 后 30ms 仍在运行/)
+  assert.match(stuck.reason, /人工/)
+  assert.equal(stubborn.some((entry) => entry.includes('SIGKILL')), false)
+
+  // 发信号前就没了 / 发信号被拒
+  const gone = await stopProcess({ pid: 9, name: 'node', commandLine: 'x' }, { platform: 'darwin', kill: () => { const error = new Error('gone'); error.code = 'ESRCH'; throw error } })
+  assert.equal(gone.ok, true)
+  assert.equal(gone.killed, false)
+  const denied = await stopProcess({ pid: 10, name: 'node', commandLine: 'x' }, { platform: 'darwin', kill: () => { const error = new Error('denied'); error.code = 'EPERM'; throw error } })
+  assert.equal(denied.ok, false)
+  assert.match(denied.reason, /EPERM/)
+
+  // Windows 分支保持原样：Stop-Process -Force
+  const seen = []
+  const win = await stopProcess({ pid: 11, name: 'node.exe', commandLine: 'x' }, { platform: 'win32', runCommandSync: (command) => { seen.push(command); return { status: 0, stdout: '', stderr: '' } } })
+  assert.equal(win.ok, true)
+  assert.match(seen[0], /Stop-Process -Id 11 -Force/)
+})
+
+test('AX-V03 + §4.2：没有监听进程时停机是空操作（不报错、也不发信号）', async () => {
+  const result = await stopProcess(undefined, { platform: 'darwin', kill: () => { throw new Error('不该被调用') } })
+  assert.deepEqual(result, { ok: true, killed: false })
+})
+
+test('AX-V03 + §4.2：重启的启动器按平台跑（POSIX 走 sh，Windows 走 cmd /c）', async () => {
+  const commands = []
+  const deps = {
+    platform: 'darwin',
+    existsSync: () => true,
+    runCommand: async (command) => { commands.push(command); return { status: 0, stdout: '', stderr: '', ms: 1 } },
+    fileSize: () => 0,
+  }
+  const posix = await restartTarget({ port: 3080, profile: 'web', workDir: '/tmp', launcher: '/tmp/restart-web.sh', env: {}, logPath: '/tmp/x.log' }, deps)
+  assert.equal(posix.ok, true)
+  assert.equal(posix.method, 'launcher')
+  assert.deepEqual(commands, ['sh "/tmp/restart-web.sh"'])
+
+  const winCommands = []
+  const win = await restartTarget({ port: 3080, profile: 'web', workDir: 'C:\\tmp', launcher: 'C:\\restart-web.ps1', env: {}, logPath: 'C:\\x.log' }, {
+    platform: 'win32',
+    existsSync: () => true,
+    runCommand: async (command) => { winCommands.push(command); return { status: 0, stdout: '', stderr: '', ms: 1 } },
+    fileSize: () => 0,
+  })
+  assert.equal(win.ok, true)
+  assert.deepEqual(winCommands, ['cmd /c ""C:\\restart-web.ps1""'], 'Windows 侧的原命令一个字符都不许变')
+
+  /**
+   * 启动器前台跑实例（不返回）→ 超时。2026-10-06 真机实测撞到过：
+   * `run()` 在等这个子进程，链一路挂到 180s。判据要求**报超时**（退出码 3），
+   * 不许报成"退出码 1" —— 那会让人去查一个不存在的错误码。
+   */
+  const timedOut = await restartTarget({ port: 3080, profile: 'web', workDir: '/tmp', launcher: '/tmp/slow.sh', env: {}, logPath: '/tmp/x.log' }, {
+    platform: 'darwin',
+    existsSync: () => true,
+    fileSize: () => 0,
+    runCommand: async () => ({ status: 1, stdout: '', stderr: '', ms: 180000, timedOut: true }),
+  })
+  assert.equal(timedOut.ok, false)
+  assert.equal(timedOut.exitCode, 3, '超时是退出码 3 那一档，不是 1')
+  assert.match(timedOut.reason, /180s 没返回/)
+  assert.match(timedOut.reason, /后台/)
+
+  // 启动器不存在 = 配置写错（不是"本机做不到"）→ 硬失败，**不许**带 blocked
+  const missing = await restartTarget({ port: 3080, profile: 'web', launcher: '/tmp/nope.sh', env: {}, logPath: '/tmp/x.log' }, { platform: 'darwin', existsSync: () => false })
+  assert.equal(missing.ok, false)
+  assert.equal(missing.exitCode, 2)
+  assert.notEqual(missing.blocked, true)
+})
+
+test('AX-V03 + §4.2：端口归属证明不了 ⇒ blocked 透传到编排（下游照跑、本轮不报绿）', async () => {
+  const blocked = await restartTarget({ port: 3080, profile: 'web', env: {}, logPath: '/tmp/x.log' }, {
+    platform: 'darwin',
+    findPortOwner: () => ({ ok: false, blocked: true, reason: '这台机器没有 lsof' }),
+  })
+  assert.equal(blocked.ok, false)
+  assert.equal(blocked.blocked, true)
+  assert.equal(blocked.exitCode, 2)
+  assert.match(blocked.reason, /没有 lsof/)
+
+  // 链**认识**占着端口的那个进程、只是拒绝下手 ⇒ 硬停，不带 blocked
+  const refused = await restartTarget({ port: 3080, profile: 'web', env: {}, logPath: '/tmp/x.log' }, {
+    platform: 'darwin',
+    findPortOwner: () => ({ ok: true, owner: { pid: 5, name: 'chrome', commandLine: 'chrome --remote-debugging-port=3080' } }),
+  })
+  assert.equal(refused.ok, false)
+  assert.equal(refused.exitCode, 2)
+  assert.notEqual(refused.blocked, true)
+  assert.match(refused.reason, /拒绝 kill/)
+
+  /**
+   * 还有一条**必须**是 blocked：本机找不到 dsh 的 `bin.js`（`restartTarget` 里 `resolved.kind==='missing'`）。
+   * 这条断言的来历：2026-10-06 变异验证里"把 missing 退回硬失败（去掉 blocked）"**活下来了** ——
+   * 因为当时只有真机复现脚本覆盖它，单测没覆盖。补上之后同一条变异立刻变红。
+   */
+  const noBin = await restartTarget({ port: 3080, profile: 'web', env: {}, logPath: '/tmp/x.log' }, {
+    platform: 'darwin',
+    findPortOwner: () => ({ ok: true, owner: undefined }),
+    resolveDshCommand: () => ({ kind: 'missing', reason: '没找到 dsh 的 bin.js（探测过：A、B、C）' }),
+  })
+  assert.equal(noBin.ok, false)
+  assert.equal(noBin.exitCode, 2)
+  assert.equal(noBin.blocked, true, '找不到入口是"本机做不到"（blocked），不是硬失败')
+  assert.match(noBin.reason, /没找到 dsh 的 bin\.js/)
 })
 
 /**
@@ -401,20 +624,65 @@ test('AX-V03：非 Windows 平台拒绝做端口归属校验（不猜着杀进�
  * 2026-10-01（T6 第一次真跑）改过行为，判据跟着改，**不是**放宽：
  * 1. 原来"什么都没配就退回 PATH 上的 `dsh`"—— 实测那条路会走 `dsh.cmd`（多一层 cmd.exe），
  *    **stdout 落不进日志文件**，token 阶段必然 60s 超时；而且 PATH 上的 dsh 未必是目标实例的那个。
- *    现在改成：显式覆盖 / 找到 npm 全局的 `bin.js`（直接 `node bin.js`）/ **明确失败**。
+ *    现在改成：显式覆盖 / 找到全局安装的 `bin.js`（直接 `node bin.js`）/ **明确失败**。
  * 2. 返回值从"字符串命令"变成带 `kind` 的对象 —— 编排要按 kind 决定怎么 spawn（shell vs 直接 node）。
+ *
+ * 2026-10-06（§4.2）加 POSIX 候选，并把 `existsSync` 做成可注入：老版本这条用例实际读**本机磁盘**，
+ * 于是"本机恰好没有那个文件"才是它通过的原因（在装了 dsh 的机器上会红/绿不定）。现在用假文件表，任何机器上结论一致。
  */
-test('AX-V03：dsh 命令发现（覆盖优先 → npm 全局 bin.js → 明确失败，不猜 PATH）', () => {
-  const withOverride = resolveDshCommand({ DSH_VERIFY_DSH_CMD: 'C:/tools/dsh.cmd' })
+test('AX-V03 + §4.2：dsh 命令发现（覆盖优先 → 全局 bin.js → 明确失败，不猜 PATH；POSIX 与 Windows 各自的路）', () => {
+  const withOverride = resolveDshCommand({ DSH_VERIFY_DSH_CMD: 'C:/tools/dsh.cmd' }, { existsSync: () => false })
   assert.equal(withOverride.kind, 'override')
   assert.equal(withOverride.command, 'C:/tools/dsh.cmd')
 
-  const nothing = resolveDshCommand({})
+  const nothing = resolveDshCommand({}, { platform: 'win32', existsSync: () => false, homedir: () => join(ROOTFS, 'home', 'tester') })
   assert.equal(nothing.kind, 'missing', '找不到 bin.js 时必须明确失败（不许悄悄用 PATH 上的 dsh）')
   assert.match(nothing.reason, /bin\.js|DSH_VERIFY_DSH_CMD/)
 
-  const withAppData = resolveDshCommand({ APPDATA: join(REPO, 'test', 'fixtures') })
-  assert.ok(['node', 'missing'].includes(withAppData.kind), `APPDATA 指向不存在的位置时应为 missing，实际 ${withAppData.kind}`)
+  const appData = join(ROOTFS, 'home', 'tester', 'AppData', 'Roaming')
+  const win = resolveDshCommand({ APPDATA: appData }, {
+    platform: 'win32',
+    existsSync: (path) => path === join(appData, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+  })
+  assert.equal(win.kind, 'node')
+  assert.equal(win.bin, join(appData, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+  assert.equal(win.command, process.execPath, '要直接 node bin.js（绕开 cmd.exe 那一层）')
+
+  // POSIX 1：与当前 Node 同前缀的全局安装（nvm / Homebrew / apt 的布局）
+  const execPath = join(ROOTFS, 'nvm', 'versions', 'node', 'v22.22.3', 'bin', 'node')
+  const nvmBin = join(ROOTFS, 'nvm', 'versions', 'node', 'v22.22.3', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  const nvm = resolveDshCommand({}, { platform: 'darwin', execPath, homedir: () => '/home/tester', existsSync: (path) => path === nvmBin })
+  assert.equal(nvm.kind, 'node')
+  assert.equal(nvm.bin, nvmBin)
+  assert.equal(nvm.command, execPath)
+
+  // POSIX 2：独立本地安装（本机实测的那一种：~/.local/bin/dsh 是个 shim → ~/.local/lib/dsh/backend/lib/bin.js）
+  const localBin = '/home/tester/.local/lib/dsh/backend/lib/bin.js'
+  const local = resolveDshCommand({}, { platform: 'darwin', execPath, homedir: () => '/home/tester', existsSync: (path) => path === localBin })
+  assert.equal(local.bin, localBin)
+  assert.match(local.source, /独立本地安装/)
+
+  // POSIX 3：一个候选都没有 → missing，且把探测过的路径都列出来
+  const none = resolveDshCommand({}, { platform: 'linux', execPath, homedir: () => '/home/tester', existsSync: () => false })
+  assert.equal(none.kind, 'missing')
+  assert.ok(none.reason.split('、').length >= 3, `必须列出探测过的候选路径：${none.reason}`)
+  assert.equal(/PATH/.test(none.reason), false)
+
+  /**
+   * POSIX 4：**PATH 上有 dsh 也不许用**（ADR0006 明令：那条路会多一层 shell，
+   * stdout 落不进日志文件；而且 PATH 上的 dsh 未必是目标实例的那个）。
+   *
+   * 这条断言的来历：变异验证里"给 POSIX 加一条 `/usr/local/bin/dsh` 兜底"**活下来了** ——
+   * 因为上面那条用的是 `existsSync: () => false`，兜底候选也一并看不见。
+   * 现在把 PATH 上的 dsh **做成存在的**：正确实现必须仍然判 missing。
+   */
+  const withPathDsh = resolveDshCommand({}, {
+    platform: 'linux',
+    execPath,
+    homedir: () => '/home/tester',
+    existsSync: (path) => path === '/usr/local/bin/dsh' || path === '/usr/bin/dsh',
+  })
+  assert.equal(withPathDsh.kind, 'missing', 'PATH 上的 dsh 存在也不许用：它不是"目标实例的那个 dsh"')
 })
 
 test('AX-V03：端口归属脚本走 .ps1 文件（不内联转义，ConvertTo-Json 输出必须能被 JSON.parse）', () => {

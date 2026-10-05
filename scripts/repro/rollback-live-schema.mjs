@@ -12,9 +12,10 @@
  * 用法：node scripts/repro/rollback-live-schema.mjs            # 预演
  *       node scripts/repro/rollback-live-schema.mjs --apply    # 真回退（先备份）
  */
-import { copyFileSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { snapshotDatabase } from '../../lib/db/database.js'
 
 const args = process.argv.slice(2)
 const index = args.indexOf('--db')
@@ -45,7 +46,9 @@ if (args.includes('--apply') !== true) {
 }
 
 const backup = `${DB}.bak-rollback-${new Date().toISOString().replace(/[:.]/g, '-')}`
-copyFileSync(DB, backup)
+// 一致快照（VACUUM INTO）：活库 WAL 里可能还有没 checkpoint 的事务，只拷主文件会丢事务。
+// 快照是自包含单文件（journal_mode=delete）：要恢复就覆盖回去，并删掉残留的 `${DB}-wal`/`-shm`。
+snapshotDatabase(db, backup)
 console.log(`\n已备份 → ${backup}`)
 
 db.exec('BEGIN')

@@ -48,6 +48,8 @@ export interface MatterPaneProps {
   onOpen: (matter: MatterView) => void
   /** 「新建案卷」：容器摊开一份空草稿（草稿形状只有容器知道）。 */
   onCreate: () => void
+  /** 「扫描导入」：容器打开导入弹窗（扫描根、候选、勾选与落库都由它管）。 */
+  onImport: () => void
   onEdit: (matter: MatterView) => void
   onAddNotice: () => void
   onDeleteNotice: (noticeId: string) => void
@@ -59,12 +61,13 @@ export interface MatterPaneProps {
 export function MatterPane({
   matters, dicts, selectedMatterId, selectedMatter, timeline, notices, deadlines,
   engineAvailable, recomputeNote, syncNote, busy,
-  onOpen, onCreate, onEdit, onAddNotice, onDeleteNotice, onRecompute, onSetDeadlineStatus, onSyncEvents,
+  onOpen, onCreate, onImport, onEdit, onAddNotice, onDeleteNotice, onRecompute, onSetDeadlineStatus, onSyncEvents,
 }: MatterPaneProps): JSX.Element {
   return (
     <>
       <div className="wb-matter-bar">
         <span className="wb-matter-bar-note">案卷 {matters.length} 个{selectedMatterId === null ? '' : '（已选 1 个）'}</span>
+        <button className="wb-btn" disabled={busy} onClick={onImport} data-matter-import><Icon name="folder" />扫描导入</button>
         <button className="wb-btn primary" disabled={busy} onClick={onCreate} data-matter-create><Icon name="plus" />新建案卷</button>
       </div>
       {/**

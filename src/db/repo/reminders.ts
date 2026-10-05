@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, effectiveDueAtForTask } from '../repo.js'
+import { withTransaction } from './shared.js'
 
 
 export interface DueReminder {
@@ -32,14 +33,9 @@ export function skipStaleReminders(db: DatabaseSync, windowHours: number, now = 
   if (stale.length === 0) return 0
   const at = now.toISOString()
   const stmt = db.prepare('UPDATE task_reminders SET skipped_at = ? WHERE id = ? AND skipped_at IS NULL')
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     for (const reminder of stale) stmt.run(at, reminder.reminderId)
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  }, { immediate: true })
   return stale.length
 }
 

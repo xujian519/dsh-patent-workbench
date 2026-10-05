@@ -147,7 +147,36 @@ export function filterTaskTree<T>(roots: TaskTreeNode<T>[], keep: (task: T) => b
 
 /** 统计树中满足 keep 的任务数量；父链上下文节点不会被计入。 */
 export function countTaskTreeBy<T>(roots: TaskTreeNode<T>[], keep: (task: T) => boolean): number {
-  return roots.reduce((sum, node) => sum + (keep(node.task) ? 1 : 0) + countTaskTreeBy(node.children, keep), 0)
+  return countByBucket(roots, keep).all
+}
+
+/**
+ * 走**一遍**树，按"命中哪个桶"分别计数（v1.17.0，审计 §4.4）。
+ *
+ * 口径与 `countTaskTreeBy` 逐字相同：只数**命中谓词的节点**，父链上下文节点不计入。
+ * 之所以把"多桶"也收进同一个走法：改动前每个类型码各走一遍整树（9 个类型码 + all = 10 遍），
+ * 而它们用的是同一个谓词、同一棵树 —— 同一件事本来就只该有一处实现，
+ * 否则"桶 1 的口径"和"all 的口径"迟早会分叉（本仓的头号 bug 类别）。
+ */
+function countByBucket<T>(
+  roots: TaskTreeNode<T>[],
+  keep: (task: T) => boolean,
+  bucketOf?: (task: T) => string,
+): { all: number; byBucket: Record<string, number> } {
+  const byBucket: Record<string, number> = {}
+  let all = 0
+  const walk = (nodes: TaskTreeNode<T>[]): void => {
+    for (const node of nodes) {
+      if (keep(node.task)) {
+        all += 1
+        const bucket = bucketOf?.(node.task)
+        if (bucket !== undefined) byBucket[bucket] = (byBucket[bucket] ?? 0) + 1
+      }
+      walk(node.children)
+    }
+  }
+  walk(roots)
+  return { all, byBucket }
 }
 
 /**
@@ -158,6 +187,11 @@ export function countTaskTreeBy<T>(roots: TaskTreeNode<T>[], keep: (task: T) => 
  * 徽标要回答的是"**切过去能看到几条**"，所以计算时套用搜索 + 状态 + 优先级，
  * 但**不能**套用当前的类型筛选 —— 否则切到某个类型后，其他 Tab 会一律显示 0。
  * 按**每一行**计数（含树里的子任务），与列表里实际渲染出的行数口径一致。
+ *
+ * ## 一次遍历数完（v1.17.0）
+ *
+ * 原来对每个类型码各调一次 `countTaskTreeBy`（10 次整树遍历），现在一次走完，
+ * 由 `countByBucket` 统一计数 —— 谓词只算一次，桶与 `all` 的口径不可能分叉。
  */
 export function countTasksByType<T extends TaskLike>(
   roots: TaskTreeNode<T>[],
@@ -165,12 +199,11 @@ export function countTasksByType<T extends TaskLike>(
   typeCodes: readonly string[],
 ): { byType: Record<string, number>; all: number } {
   const withoutType: TaskFilterState = { ...filter, typeCodes: [] }
-  // 复用 countTaskTreeBy：条数口径与列表渲染（filterTaskTree + 同样的谓词）保持同一个实现
+  const { all, byBucket } = countByBucket(roots, (t) => matchesTaskFilter(t, withoutType), (t) => t.typeCode)
   const byType: Record<string, number> = {}
-  for (const code of typeCodes) {
-    byType[code] = countTaskTreeBy(roots, (t) => matchesTaskFilter(t, withoutType) && t.typeCode === code)
-  }
-  return { byType, all: countTaskTreeBy(roots, (t) => matchesTaskFilter(t, withoutType)) }
+  // 没命中的类型码也要**留 0**：Tab 徽标读不到 key 会显示空白而不是 0（与改动前一致）
+  for (const code of typeCodes) byType[code] = byBucket[code] ?? 0
+  return { byType, all }
 }
 
 const sameDay = (a: Date, b: Date): boolean => a.toDateString() === b.toDateString()
