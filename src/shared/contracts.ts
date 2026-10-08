@@ -119,6 +119,15 @@ export interface DraftView {
   deferredAt: string | null
   /** 累计暂存次数 */
   deferCount: number
+  /**
+   * 非空表示**被拒过**，内容是最近一次被拒的原因原文（用户填的驳回理由，
+   * 或确认时校验失败的中文原因）。对应 `task_drafts.rejection_reason`。
+   */
+  rejectionReason?: string | null
+  /** 最近一次被拒的时间（ISO）；`null` = 从未被拒。 */
+  rejectedAt?: string | null
+  /** 累计被拒次数（用户反复驳回 / 确认反复校验失败）。 */
+  rejectionCount?: number
   createdAt: string
   updatedAt: string
 }
@@ -358,7 +367,19 @@ export interface ReminderChannelResponse { ok: true; status: ReminderChannelStat
 export interface ReminderChannelSaveResponse { ok: true; status: ReminderChannelStatus }
 export interface ReminderTestResponse { ok: boolean; reason?: string }
 export interface DueRemindersResponse { ok: true; reminders: DueReminderView[] }
-export interface DraftResponse { ok: true; draft: DraftView | null; /** 仅无 session_id 的列表查询返回 */ deferredDrafts?: DraftView[] }
+export interface DraftResponse {
+  ok: true
+  draft: DraftView | null
+  /** 仅无 session_id 的列表查询返回 */
+  deferredDrafts?: DraftView[]
+  /**
+   * 仅无 session_id 的列表查询返回：**曾被拒过**的草稿（按被拒时间倒序，上限 50）。
+   *
+   * 判据是 `rejected_at` 非空，**不看 `status_code`** —— 确认时校验失败的知识草稿
+   * 仍留在 `pending`（等着用户改好重试），但它确实被拒过，就该出现在这里。
+   */
+  rejectedDrafts?: DraftView[]
+}
 export interface DraftsResponse { ok: true; drafts: DraftView[] }
 export interface KnowledgeResponse { ok: true; entries: KnowledgeView[] }
 export interface DeletedResponse { ok: true; deleted: boolean }

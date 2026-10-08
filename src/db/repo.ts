@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { nowIso, getDraft, setDraftStatus, withDraftConfirm, parseDraft, type DraftRow, type RawDraftRow } from './repo/shared.js'
-export { nowIso, getDraft, setDraftStatus, withDraftConfirm, withTransaction } from './repo/shared.js'
+export { nowIso, getDraft, setDraftStatus, withDraftConfirm, withTransaction, getDraftConfirmResult, recordDraftRejection } from './repo/shared.js'
 export type { DraftRow, TxHandle } from './repo/shared.js'
 import { effectiveDueAtForTask, effectiveWorkspacePathForTask, parseTask, appendEvent, collectArchivedDescendants, isDescendantOf, type RawTaskRow } from './repo/task-primitives.js'
 export { effectiveDueAtForTask, effectiveWorkspacePathForTask, parseTask, appendEvent, isDescendantOf } from './repo/task-primitives.js'
@@ -117,6 +117,16 @@ export interface DraftInput {
   kindCode?: 'task' | 'subtask_plan' | string
   sessionId?: string | null
   payload: Record<string, unknown>
+  /**
+   * 这条草稿是谁建的（迁移 v25，见 `schema.ts` 的 `draft-created-by`）。
+   *
+   * **默认 `'ai'`，而且是刻意的**：今天 7 个 `createDraft` 调用点**全部**在 AI 侧
+   * （5 个 MCP 工具 + 验收提交 + `POST /drafts` 那条给 AI 会话自建知识草稿的绕行口），
+   * 因此"漏标记"最可能发生在**将来新加的 AI 路径**上 —— 那种情况下默认值必须是
+   * **fail-closed** 的 `'ai'`（用户来确认照常放行，非用户确认当场被守卫拦下）。
+   * 反过来默认 `'user'` 会让新 AI 路径静默获得"能自己确认"的资格。
+   */
+  createdBy?: 'user' | 'ai'
 }
 
 export interface TaskSessionLinkInput {
@@ -154,7 +164,7 @@ export type { TaskReviewInput } from './repo/status.js'
 export {
   createDraft, updateDraft, getDraftBySession, confirmTaskDraft, confirmSubtaskPlanDraft,
   getLatestPendingDraft, getPendingDraftForTask, abandonDraft, toTaskInputFromDraftItem,
-  getLatestActiveDraft, listDeferredDrafts, getDeferredDraftForTask, deferDraft, resumeDraft,
+  getLatestActiveDraft, listDeferredDrafts, listRejectedDrafts, getDeferredDraftForTask, deferDraft, resumeDraft,
   isDeferrableDraftKind, DEFERRABLE_DRAFT_KINDS, NON_DEFERRABLE_DRAFT_KINDS, validateDraftTaskItem,
 } from './repo/drafts.js'
 export type {
@@ -212,8 +222,9 @@ export type { AiSessionRegistryRow } from './repo/ai-sessions.js'
 export {
   normalizeFileLink, assertValidFileLink, createKnowledge, getKnowledge, listKnowledge,
   updateKnowledge, deleteKnowledge, deleteKnowledgeWithRefs, confirmKnowledgeDraft, getPendingKnowledgeDraft,
+  listKnowledgeRevisions, restoreKnowledgeRevision,
 } from './repo/knowledge.js'
-export type { KnowledgeInput, KnowledgeRow } from './repo/knowledge.js'
+export type { KnowledgeInput, KnowledgeRow, KnowledgeRevisionRow } from './repo/knowledge.js'
 
 // 案卷域已抽到 repo/matters.ts（专利工作台阶段 2）；此处再导出保持对外 API 不变
 export {

@@ -297,12 +297,47 @@ export function DraftBanner({ draft, onDone, runtime, closePanel, kindName, onPr
         duplicateOf?: DuplicateTaskWarning
         replayed?: boolean
         reused?: boolean
+        /** 服务端回读库得出的"这次到底有没有落盘"；非确认类响应不带这个字段。 */
+        committed?: boolean
       }>(path, {
         method: 'POST',
         ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
       })
       // 「本该创建但没创建」的条目必须让用户看见（2026-09-12 静默丢件事故的界面侧防线）。
       if (Array.isArray(res?.problems) && res.problems.length > 0) onProblems?.(res.problems)
+      /**
+       * 「已受理」与「已落盘」的区分（2026-10-07 灵枢调研 §7 第一步①）。
+       *
+       * `committed === false` 表示这次点击**一个字节都没写进库**。
+       *
+       * ## 今天到不了这里（独立审查抓到的死分支，改注释不改行为）
+       *
+       * `committedNow`（`routes/drafts.ts:47`）只在"调用前是 pending 且没有 `confirmResult`，
+       * 调用后却不是 confirmed"时才回 false。把今天 4 个确认入口的每条路径都走一遍：
+       *
+       * | 场景 | 服务端实际响应 | 落到这里了吗 |
+       * |---|---|---|
+       * | task 重复点击（已 confirmed） | 200 `{committed:false, replayed:true}` | 否 —— 被 `replayed` 挡掉 |
+       * | 非 task 重复点击（已 confirmed） | **400** + `committed:false` | 否 —— `api()` 抛错，走下面 catch |
+       * | 正常首次确认 | 200 `{committed:true}` | 否 —— 不等于 false |
+       * | build 中途抛错 | **400** | 否 —— 同样走 catch |
+       *
+       * 而"`committed:false` 但 `replayed` 也为假"要求 **build 请求了 `tx.rollback()`** ——
+       * 全仓 `tx.rollback()` 只出现在 `plans.ts` 的 `addDailyPlanItem` / `updateDailyPlanItem`
+       * 两个**条目编辑**函数里，4 个 confirm build 一个都不调用。
+       *
+       * 所以它是一支**前向守卫**，与 `draftConfirmActorProblem` 同一性质：今天打不着，
+       * 等哪天某个 build 真的走 `tx.rollback()`（"读了发现不该写"就回滚的那类），
+       * 它就是唯一能告诉用户"库里什么都没变"的一句话。**保留，但把话说清楚** ——
+       * 上面那句"界面收到 200 就一律当成功"的旧注释是错的：真正拦住那个观感问题的
+       * 是 400 + 抛错这条链，不是这一支。
+       *
+       * `replayed` / `reused` 要排除：那两种情况外层会给出更具体的说法
+       * （"这条已经确认过了" / "已按已有那条收口"），再叠一句就是重复告警。
+       */
+      if (res?.committed === false && res.replayed !== true && res.reused !== true) {
+        onNotice?.('这次确认没有产生新内容（草稿此前已处理过，或执行时被回滚），库里没有任何变化', 'warning')
+      }
       // 团队记忆写入结果也要可见：否则用户不知道"到底共享出去没有"。
       const memory = res?.memory
       if (memory !== undefined && memory.enabled !== false) {

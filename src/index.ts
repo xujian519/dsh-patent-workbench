@@ -22,6 +22,7 @@ import { isAbsoluteNativePath } from './shared/hostPath.js'
 import { makeSkillRoutes } from './api/routes/skills.js'
 import { probeSkills } from './api/skills.js'
 import type { PatentDeadlineService } from './shared/patentDeadline.js'
+import { COMPLETION_AUTHORITY_RULE } from './shared/guidance.js'
 import { openWorkbenchDb, SchemaTooNewError, type WorkbenchDbConfig } from './db/database.js'
 import { seedDictionaries } from './db/seed.js'
 import { installKnowledgeRecall } from './knowledge-recall.js'
@@ -67,8 +68,8 @@ function probeService<T>(ctx: unknown, name: string): T | undefined {
 const WORKBENCH_GUIDANCE = [
   '本机已安装 dsh-patent-workbench 插件（专利工作台）：侧边栏「工作台」入口；',
   'V1 能力：日历 + 任务列表、自然语言快速录入与 AI 澄清、子任务拆解（AI 提案 + 用户确认）、任务关联多个 Harness 会话。',
-  'V1.5 已提供任务“执行”：任意节点（含父任务）均可执行，执行会话完成后应调用 workbench_request_completion 提交验收申请，由用户验收后完成；父任务验收通过时未完成子任务会级联完成。AI 不得直接把任务标记为完成/取消。',
-  '任务进度（进度是显式值，不由子任务比例派生）：执行过程中**阶段性推进后请主动调用 workbench_update_progress 报一次进度**（0–99 直接生效，不需要用户确认）；这部分工作全部做完时调用 workbench_update_progress progress=100 并给出 summary —— 100 不是可存储的进度，它等同于提交完成验收申请（与 workbench_request_completion 同一条路径），AI 永远不能直接把任务标记为已完成/已取消。咨询/拆解/排序会话不得被这条提示诱导去执行任务。',
+  `V1.5 已提供任务“执行”：任意节点（含父任务）均可执行，执行会话完成后应调用 workbench_request_completion 提交验收申请，由用户验收后完成；父任务验收通过时未完成子任务会级联完成。${COMPLETION_AUTHORITY_RULE}。`,
+  `任务进度（进度是显式值，不由子任务比例派生）：执行过程中**阶段性推进后请主动调用 workbench_update_progress 报一次进度**（0–99 直接生效，不需要用户确认）；这部分工作全部做完时调用 workbench_update_progress progress=100 并给出 summary —— 100 不是可存储的进度，它等同于提交完成验收申请（与 workbench_request_completion 同一条路径），${COMPLETION_AUTHORITY_RULE}。咨询/拆解/排序会话不得被这条提示诱导去执行任务。`,
   '任务共享记忆：执行/拆解/咨询过程中有关键上下文、阶段性结论或决策时，请调用 workbench_save_task_memory 保存到任务共享记忆；同一任务/子树下的后续会话会自动加载这些记忆。',
   'V2 AI 智能排序：请调用 workbench_propose_daily_plan(plan_date, summary, items) 提交指定日期的执行顺序提案（只写草稿，用户确认后生效），不要修改任务字段；同一父子链不要同时入列。',
   'V2 提醒：任务到期提醒由工作台自动弹出页面横幅与桌面通知；不要用其他方式重复提醒。',

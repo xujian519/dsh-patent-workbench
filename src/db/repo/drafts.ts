@@ -11,6 +11,7 @@ import { getTask, listTasks, createTask } from './tasks.js'
 import { getDictionary } from './dictionaries.js'
 import { linkTaskSession } from './task-sessions.js'
 import { checkWorkspacePath } from '../../workspace-check.js'
+import { contentPolicyProblem } from '../../shared/contentPolicy.js'
 import { addReminder } from './reminders.js'
 import type { DraftInput, TaskInput, TaskRow } from '../repo.js'
 
@@ -62,7 +63,42 @@ function findSiblingByTitle(db: DatabaseSync, parentId: string | null, title: st
 }
 
 
+/**
+ * 内容面敏感信息闸门（T7）的**唯一挂点**：写库前扫一遍 payload。
+ *
+ * ## 为什么挂在这一层，而不是各工具里
+ *
+ * AI 侧建/改草稿有 **12 个调用点**（`tools.ts` 5 组、`repo/progress.ts` 1 组，
+ * 每组都是 `updateDraft ? … : createDraft` 的孪生分支，再加 `POST /api/workbench/drafts`
+ * 的 2 条）。挂 12 处 = 将来第 13 个调用点天生不设防。挂在**两个写原语**里，
+ * 则任何路径想落一条草稿都必然经过这里 —— 包括以后新加的工具。
+ *
+ * ## 为什么是抛错，而不是像工具那样 `return '错误：…'`
+ *
+ * 本仓工具层的约定是"返回可读错误而不是抛异常"（`tools.ts` 的 `strictTypeCode` 那一段
+ * 写了理由：抛异常让 AI 看到堆栈而不是"该怎么改"）。**这里刻意不跟**，原因：
+ *
+ * 1. 这两个函数**没有**可用的错误返回值 —— `createDraft` 的返回类型是 `DraftRow`，
+ *    `updateDraft` 的 `undefined` 已经表示"草稿不存在/不是 pending"，拿它表示
+ *    "内容被拒"会让调用方报出**错误的**原因（"草稿状态不对"），比报错更坏。
+ * 2. 这是**存储边界**，最后一道。写原语若把拒绝做成"返回值，请你记得检查"，
+ *    漏检的那一处就变成**静默写入** —— 闸门形同不存在。抛错不可漏检。
+ * 3. 抛出去之后仍然会变成模型能读的话：DSH 的 `dsh-tools` 把工具执行里抛出的异常
+ *    包成 `ToolCallError`，`message` 就是本函数给出的中文原因（见该库 README
+ *    "A FAILED tool call rejects with ToolCallError … message is human-readable"）。
+ *
+ * ## 在写之前算，不在写之后回滚
+ *
+ * 命中即抛，`INSERT` / `UPDATE` 一句都不执行 —— 拒绝是"一条数据都没落过"，
+ * 不是"落了再撤"。这与 `withDraftConfirm` 的 actor 守卫同一条口径。
+ */
+function assertContentClean(payload: unknown): void {
+  const problem = contentPolicyProblem(payload)
+  if (problem !== null) throw new Error(problem)
+}
+
 export function createDraft(db: DatabaseSync, input: DraftInput, at = nowIso()): DraftRow {
+  assertContentClean(input.payload)
   const id = randomUUID()
   const row: DraftRow = {
     id,
@@ -72,13 +108,24 @@ export function createDraft(db: DatabaseSync, input: DraftInput, at = nowIso()):
     statusCode: 'pending',
     deferredAt: null,
     deferCount: 0,
+    // 新建的草稿当然没被拒过；三列在 DDL 里都有默认值，这里跟着写死是给类型看。
+    rejectionReason: null,
+    rejectedAt: null,
+    rejectionCount: 0,
+    /**
+     * 写入者（迁移 v25）。默认 `'ai'` 是 **fail-closed** 的选择，理由见 `DraftInput.createdBy`。
+     *
+     * ⚠️ 这与"迁移给老行的默认值"是两件事，别混：迁移那边**故意不给默认值**（老行留 `NULL`
+     * = 未记录），这里则是新行**必须**带上身份 —— 新行的来源我们百分百知道。
+     */
+    createdBy: input.createdBy ?? 'ai',
     createdAt: at,
     updatedAt: at,
   }
   db.prepare(`
-    INSERT INTO task_drafts (id, kind_code, session_id, payload_json, status_code, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'pending', ?, ?)
-  `).run(row.id, row.kindCode, row.sessionId, JSON.stringify(row.payload), row.createdAt, row.updatedAt)
+    INSERT INTO task_drafts (id, kind_code, session_id, payload_json, status_code, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+  `).run(row.id, row.kindCode, row.sessionId, JSON.stringify(row.payload), row.createdBy, row.createdAt, row.updatedAt)
   return row
 }
 
@@ -86,6 +133,10 @@ export function createDraft(db: DatabaseSync, input: DraftInput, at = nowIso()):
 export function updateDraft(db: DatabaseSync, id: string, payload: Record<string, unknown>, at = nowIso()): DraftRow | undefined {
   const draft = getDraft(db, id)
   if (draft === undefined || draft.statusCode !== 'pending') return undefined
+  // 同一道闸门（见 assertContentClean）：`updateDraft` 是 `createDraft` 的孪生分支，
+  // 每个 AI 建草稿的调用点旁边都并排站着一个改草稿的分支。只守建、不守改，
+  // 等于"先用干净内容过闸，下一次调用再把凭据写进同一条草稿"就能绕过去。
+  assertContentClean(payload)
   db.prepare('UPDATE task_drafts SET payload_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(payload), at, id)
   return getDraft(db, id)
 }
@@ -315,6 +366,10 @@ export function confirmTaskDraft(
     return { task, problems, childCount, ...(duplicateOf === undefined ? {} : { duplicateOf }) }
   }, {
     at,
+    // 发起确认的人。这个函数的 `actor` 在此之前只当作"审计字段"传给 `createTask`
+    // （落进 `task_events.actor`）；现在它**同时**是「写入者不得自裁」守卫的输入 ——
+    // 同一个参数，两个用途，不再是"传了但没人看"。
+    actor,
     /**
      * 回放：这条草稿以前确认过 → 把当次建出来的任务原样还回去，**绝不重建**。
      *
@@ -376,7 +431,7 @@ export function confirmSubtaskPlanDraft(db: DatabaseSync, draftId: string, actor
       }
     }
     return { tasks: created, problems }
-  }, { at, emptyValue: { tasks: [], problems: [] } })
+  }, { at, actor, emptyValue: { tasks: [], problems: [] } })
 }
 
 export function getLatestPendingDraft(db: DatabaseSync): DraftRow | undefined {
@@ -394,6 +449,25 @@ export function getLatestActiveDraft(db: DatabaseSync): DraftRow | undefined {
 /** 已暂存的待确认草稿（按暂存时间倒序），供「待处理」弹窗的「已暂存」段展示。 */
 export function listDeferredDrafts(db: DatabaseSync): DraftRow[] {
   const rows = db.prepare("SELECT * FROM task_drafts WHERE status_code = 'pending' AND deferred_at IS NOT NULL ORDER BY deferred_at DESC").all() as unknown as RawDraftRow[]
+  return rows.map((row) => parseDraft(row)).filter((draft): draft is DraftRow => draft !== undefined)
+}
+
+/**
+ * 被拒过的草稿（负记忆，2026-10-07 灵枢调研 §7 第一步②）。
+ *
+ * 判据是 `rejected_at IS NOT NULL` **且尚未被确认** —— 不是只看 `rejected_at`：
+ * 校验失败的知识草稿仍然是 `pending`（用户改好还能重提），被驳回的则是 `abandoned`；
+ * 但**改好之后确认成功**的那条同样是"被拒过"（`rejected_at` 不会自己消失），
+ * 它已经入库了，再列在"被驳回"里就是自相矛盾 —— 清单说它被挡下来了，
+ * 知识库里却躺着它。
+ *
+ * 所以这里排除 `status_code = 'confirmed'`。被拒这件事本身没丢：草稿行上的
+ * `rejection_reason` / `rejected_at` / `rejection_count` 都还在，按 id 直读照样看得到。
+ *
+ * 只返回最近的 `limit` 条（默认 50）：这是给人看的清单，不是审计日志。
+ */
+export function listRejectedDrafts(db: DatabaseSync, limit = 50): DraftRow[] {
+  const rows = db.prepare("SELECT * FROM task_drafts WHERE rejected_at IS NOT NULL AND status_code <> 'confirmed' ORDER BY rejected_at DESC LIMIT ?").all(Math.max(1, limit)) as unknown as RawDraftRow[]
   return rows.map((row) => parseDraft(row)).filter((draft): draft is DraftRow => draft !== undefined)
 }
 

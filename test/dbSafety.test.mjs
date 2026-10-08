@@ -113,7 +113,7 @@ test('§3.1 破坏性迁移的备份是**一致快照**：WAL 未截断（另有
 
     // 正向：走真实路径（openWorkbenchDb → migrate → 备份）拿到的备份必须**完整**
     const reopened = openWorkbenchDb({ dbPath })
-    assert.equal(reopened.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '23', '迁移照常跑完')
+    assert.equal(reopened.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION), '迁移照常跑完')
     reopened.close()
     writer.close()
 

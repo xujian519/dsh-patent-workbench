@@ -7,6 +7,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { DatabaseSync } from 'node:sqlite'
 import { addTaskMemory, assertValidFileLink, createDraft, getDailyPlan, getDeferredDraftForTask, getDictionary, getDraft, getPendingDailyPlanDraft, getPendingDraftForTask, getPendingKnowledgeDraft, getTask, listActiveDictionaryCodes, listTaskEvents, listTaskSessions, listTasks, localDateString, setTaskProgress, submitCompletionDraft, taskIdProblem, updateDraft, updateTask } from './db/repo.js'
 import { DEFAULT_PLAN_MINUTES, checkPlanMinutes, resolveDefaultPlanMinutes } from './shared/dailyPlanPolicy.js'
+import { COMPLETION_AUTHORITY_REJECTION, COMPLETION_AUTHORITY_RULE } from './shared/guidance.js'
 import {
   PERSONA_BODY_MAX_CHARS,
   PERSONA_RESOURCE_EXTENSIONS,
@@ -646,7 +647,7 @@ export function updateTaskTool(db: DatabaseSync) {
       const priorityCode = optionalCode(db, 'priority', args.priority_code, 'priority_code')
       if (priorityCode !== undefined) patch.priorityCode = priorityCode
       const statusCode = optionalCode(db, 'status', args.status_code, 'status_code')
-      if (statusCode === 'done' || statusCode === 'cancelled') return '错误：AI 不能直接把任务标记为已完成/已取消；完成请由执行会话调用 workbench_request_completion，取消请在界面操作。'
+      if (statusCode === 'done' || statusCode === 'cancelled') return COMPLETION_AUTHORITY_REJECTION
       if (statusCode !== undefined) patch.statusCode = statusCode
       if (str(args.due_at) !== undefined) patch.dueAt = str(args.due_at)
       const aiPolicy = optionalCode(db, 'ai_policy', args.ai_policy_code, 'ai_policy_code')
@@ -758,7 +759,7 @@ export function updateProgressTool(db: DatabaseSync) {
     description:
       '专利工作台任务进度工具：阶段性推进后**主动**调用一次，写 0–99 的显式进度，直接生效、不需要用户确认。'
       + 'progress=100 不是可存储的进度值，它表示「提交完成验收申请」，会走与 workbench_request_completion 完全相同的路径（弹框/可暂存/可驳回/留痕），此时 summary 必填（2–4 句完成总结）；'
-      + 'AI 永远不能直接把任务标记为已完成/已取消 —— 「已完成」只由用户验收通过或用户在界面点完成来表达。'
+      + COMPLETION_AUTHORITY_RULE + '。'
       + '同值重复提交是幂等的（不重复写事件）。已归档/已完成/已取消的任务拒绝更新。进度不由子任务比例派生，不要替用户推算。',
     parameters: {
       task_id: { type: 'string', required: true, description: '要更新进度的任务 id' },

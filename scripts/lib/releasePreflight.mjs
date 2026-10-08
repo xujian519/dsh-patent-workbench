@@ -42,9 +42,25 @@ export function dedupe(items) {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * 解析 `node --test` 的汇总输出。
+ * 解析 `node --test` 的汇总输出。**两种 reporter 都要认。**
  *
- * 形如：
+ * ## 为什么必须认两种（2026-10-08 实测的坑）
+ *
+ * `node --test` 在 **TTY** 下用 spec reporter，在**管道 / 非 TTY** 下自动改用 TAP。
+ * 门禁用 `spawnSync`（管道 stdio）跑 `pnpm test` —— 也就是**永远**走 TAP 那一支；
+ * 而人手工敲 `pnpm test` 看到的是 spec。只认一种，等于门禁在 CI 里读不到任何东西
+ * （实测：整条门禁因此恒失败，报「没解析到任何用例」；且 `KNOWN_TEST_FAILURES`
+ * 白名单也会因为 `failing` 恒空而被判「登记为已知失败的用例这次是绿的」→ 门禁必红）。
+ *
+ * | 字段 | spec reporter | TAP reporter |
+ * |---|---|---|
+ * | 计数 | `ℹ tests 929` | `# tests 929` |
+ * | 失败名 | `✖ failing tests:` 块下的 `✖ <name> (12.3ms)` | 行首无缩进的 `not ok 3 - <name>` |
+ *
+ * 失败名只取**顶层**（TAP 里子测试是缩进的；spec 的 `failing tests:` 块也只列顶层），
+ * 两种口径保持一致 —— 否则同一次失败在两种 reporter 下会数出不同的名字。
+ *
+ * 形如（spec）：
  * ```
  * ℹ tests 929
  * ℹ pass 928
@@ -52,34 +68,91 @@ export function dedupe(items) {
  * ✖ failing tests:
  * ✖ db migrations, dictionaries and task tree (880.07ms)
  * ```
+ * 或（TAP，门禁实际拿到的那种）：
+ * ```
+ * # tests 929
+ * # pass 928
+ * # fail 1
+ * not ok 5 - db migrations, dictionaries and task tree
+ * ```
  * @param {string} stdout
  * @returns {{tests: number, pass: number, fail: number, failing: string[]}}
  */
 export function parseTestSummary(stdout) {
+  // 计数行：spec 用 `ℹ`、TAP 用 `#`，其余完全相同。
   const line = (label) => {
-    const m = new RegExp(`^\\s*ℹ ${label} (\\d+)\\s*$`, 'm').exec(stdout)
+    const m = new RegExp(`^\\s*[ℹ#] ${label} (\\d+)\\s*$`, 'm').exec(stdout)
     return m === null ? 0 : Number(m[1])
   }
+  return { tests: line('tests'), pass: line('pass'), fail: line('fail'), failing: parseFailingNames(stdout) }
+}
+
+/**
+ * 从两种 reporter 的输出里取**顶层失败用例名**。
+ * 抽成独立函数，是为了让"两种格式各认一半"的半吊子实现无处藏身（见单测）。
+ * @param {string} stdout
+ * @returns {string[]}
+ */
+function parseFailingNames(stdout) {
   /** @type {string[]} */
   const failing = []
   const at = stdout.indexOf('failing tests:')
   if (at >= 0) {
+    // spec reporter：`✖ failing tests:` 之后每条 `✖ <name> (12.3ms)`；
+    // 遇到下一个汇总行或空行就停（否则会把后续无关的 `✖` 行也吞进来）。
     for (const raw of stdout.slice(at).split(/\r?\n/).slice(1)) {
-      // 失败块里的用例行：`✖ <name> (12.3ms)`；遇到下一个汇总行或空行就停
       const m = /^\s*✖\s+(.+?)\s*(?:\(\d+(?:\.\d+)?ms\))?\s*$/.exec(raw)
       if (m !== null) failing.push(m[1].trim())
-      else if (failing.length > 0 && (/^\s*ℹ /.test(raw) || /^\s*$/.test(raw))) break
+      else if (failing.length > 0 && (/^\s*[ℹ#] /.test(raw) || /^\s*$/.test(raw))) break
+    }
+  } else {
+    // TAP reporter：行首**无缩进**的 `not ok N - <name>`。缩进的是子测试 —— 跳过，
+    // 与 spec 的「只列顶层」口径一致。（TAP 里 skip 是 `ok … # SKIP`，不会误收。）
+    for (const raw of stdout.split(/\r?\n/)) {
+      const m = /^not ok \d+ - (.+?)\s*$/.exec(raw)
+      if (m !== null) failing.push(m[1].trim())
     }
   }
-  return { tests: line('tests'), pass: line('pass'), fail: line('fail'), failing: dedupe(failing) }
+  return dedupe(failing)
+}
+
+/**
+ * 按当前平台**筛掉不适用的"已知失败"条目**。
+ *
+ * ## 为什么需要平台限定
+ *
+ * `judgeTests` 对名单是**双向**的：名单外的红要阻塞，名单内的**绿**也要报错
+ * （"还清了就删，别让名单腐烂"）。这条设计本身是对的，但它有个前提被默认掉了 ——
+ * **"已知失败"必须是当前平台上真的会失败**。
+ *
+ * 现实反例：`db migrations, dictionaries and task tree` 记的是
+ * *Windows 清理期 rmSync EPERM*（临时目录句柄未释放），在 macOS / Linux 上从来就是绿的。
+ * 这类条目一旦进名单，就会让门禁在**非 Windows** 上恒红 —— 报的还不是"名单腐烂"
+ * 这句正确的话，而是被当成一次真实的阻塞项。结果是门禁在主力开发平台上永久失效。
+ *
+ * 所以：带 `platforms` 的条目**只在该平台上参与判定**，其余平台整条剔除
+ * （既不算已知失败、也不参与"是否转绿"的反向断言）。不带 `platforms` 的条目
+ * 语义不变、在所有平台都参与 —— 既有名单不会因此松动。
+ *
+ * ⚠️ 这是**收窄断言**的操作，别拿它当消音器：条目在它声明的平台上仍被双向盯着，
+ * 一旦那边也转绿，门禁照红不误。
+ *
+ * @param {Array<{test: string, reason: string, platforms?: string[]}>} allowed
+ * @param {string} [platform] 默认取当前进程平台，仅测试才传别的值。
+ */
+export function filterAllowedForPlatform(allowed, platform = process.platform) {
+  return allowed.filter((a) => a.platforms === undefined || a.platforms.includes(platform))
 }
 
 /**
  * 判单测。`allowed` 是**显式登记**的已知失败（用例名必须**完全相等**，不做模糊匹配 ——
  * 模糊匹配会随时间悄悄放宽范围）。
  *
+ * ⚠️ 传进来之前先过 `filterAllowedForPlatform`：平台不适用的条目若留在里面，
+ * 反向断言会把它当"这次是绿的"直接判失败。
+ *
  * @param {{tests: number, pass: number, fail: number, failing: string[]}} summary
- * @param {Array<{test: string, reason: string}>} allowed
+ * @param {Array<{test: string, reason: string, platforms?: string[]}>} allowed
  */
 export function judgeTests(summary, allowed) {
   const v = emptyVerdict()

@@ -84,7 +84,9 @@ test('迁移 19：旧任务（含 done）一律 progress=0，原字段不变，�
 
     migrate(db)
 
-    assert.equal(SCHEMA_VERSION, 23)
+    // 不锁死具体数字：`listViewWiring.test.mjs` 已断言「SCHEMA_VERSION == 最大迁移号」，
+    // 这里重复抄一遍数字只会在每次加迁移时多一处要改的地方。锁的是"迁移真的跑到了最新"。
+    assert.equal(SCHEMA_VERSION, Math.max(...MIGRATIONS.map((m) => m.version)))
     for (const id of ['t-todo', 't-doing', 't-done']) {
       const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
       assert.equal(row.progress_percent, 0, `${id} 的旧进度必须是 0（不反推）`)
@@ -396,7 +398,7 @@ test('迁移 21：daily_capacity_include_overdue 改名成 plan_include_overdue�
     assert.equal(meta.get('plan_include_overdue'), '1', '用户的选择必须被搬到新键上（不是回落到缺省 false）')
     assert.equal(meta.has('daily_capacity_include_overdue'), false, '旧键必须消失（否则两个键各有各的口径）')
     assert.equal(meta.has('daily_capacity_minutes'), false, '容量读数已不存在，这个键没有任何读取方')
-    assert.equal(meta.get('schema_version'), '23', 'migrate 一律跑到最新版（迁移 21 之后还有 22 / 23）')
+    assert.equal(meta.get('schema_version'), String(SCHEMA_VERSION), 'migrate 一律跑到最新版（钉的是"跑到 SCHEMA_VERSION"，不是写死某个数字）')
 
     // 幂等：再跑一次不报错、内容不变
     const snapshot = JSON.stringify(db.prepare('SELECT key, value FROM meta ORDER BY key').all())
@@ -415,7 +417,7 @@ test('迁移 21：两个键同时存在时也不因 UNIQUE 冲突而炸（OR REP
     migrate(db)
     const meta = new Map(db.prepare('SELECT key, value FROM meta').all().map((row) => [row.key, row.value]))
     assert.equal(meta.get('plan_include_overdue'), '1', '旧键带值搬过来（用户在原开关上做过的选择优先）')
-    assert.equal(meta.get('schema_version'), '23', 'migrate 一律跑到最新版（迁移 21 之后还有 22 / 23）')
+    assert.equal(meta.get('schema_version'), String(SCHEMA_VERSION), 'migrate 一律跑到最新版（钉的是"跑到 SCHEMA_VERSION"，不是写死某个数字）')
   } finally {
     db.close()
   }
@@ -479,11 +481,11 @@ test('迁移 22：四张废表 + tasks 的 recurrence 四列与两个索引全�
       assert.equal(db.prepare('SELECT active FROM dictionaries WHERE kind = ? AND code = ?').get(kind, code).active, 1,
         `${kind}:${code} 仍在用（日报计划），必须保持 active=1`)
     }
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '23')
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION))
 
     // 幂等：再跑一次不报错（DROP 都带 IF EXISTS / 列有存在性判断）
     migrate(db)
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '23')
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION))
   } finally {
     db.close()
   }
@@ -512,12 +514,18 @@ test('破坏性迁移前自动整库备份：openWorkbenchDb 先写一份停在�
     first.close()
 
     const second = openWorkbenchDb({ dbPath })
-    assert.equal(second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '23', '迁移照常跑完')
+    assert.equal(second.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION), '迁移照常跑完')
     second.close()
 
     const backups = readdirSync(join(dir, 'backups'))
     assert.equal(backups.length, 1, `该且只该备份一次（实测 ${JSON.stringify(backups)}）`)
-    assert.match(backups[0], /^workbench-\d{8}-\d{6}-pre-schema21-to-23\.db$/, '文件名要能自证"哪次迁移、从哪版到哪版"（到**最上面**那个待跑的破坏性版本）')
+    /**
+     * 「到哪版」是**最上面那个待跑的破坏性版本**，不是 `SCHEMA_VERSION` ——
+     * 这个区别有牙：新加的迁移若是纯新增（如 24 只加列加表），这个数字**不该动**
+     * （纯新增不需要回滚点，硬把版本号抬上去只会让用户白白多一份整库备份）。
+     */
+    const topDestructive = Math.max(...MIGRATIONS.filter((migration) => migration.destructive === true).map((migration) => migration.version))
+    assert.match(backups[0], new RegExp(`^workbench-\\d{8}-\\d{6}-pre-schema21-to-${topDestructive}\\.db$`), '文件名要能自证"哪次迁移、从哪版到哪版"（到**最上面**那个待跑的破坏性版本）')
 
     const restored = new DatabaseSync(join(dir, 'backups', backups[0]))
     try {
@@ -555,12 +563,12 @@ test('迁移 22 配套：seedDictionaries 不再种 recurrence 出厂行（新�
   }
 })
 
-test('openWorkbenchDb 全新库即 schema 23，且旧客户端省略 progressPercent 仍可读写', () => {
+test('openWorkbenchDb 全新库即最新 schema，且旧客户端省略 progressPercent 仍可读写', () => {
   const db = openWorkbenchDb({ dbPath: ':memory:' })
   try {
     seedDictionaries(db)
     const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()
-    assert.equal(Number(version.value), 23)
+    assert.equal(Number(version.value), SCHEMA_VERSION)
     const task = createTask(db, { title: '任务', typeCode: 'code_impl', priorityCode: 'p1' })
     // 老调用点（不带 progressPercent 的 patch）照常工作，进度保持原值
     setTaskProgress(db, task.id, 40)

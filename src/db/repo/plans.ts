@@ -442,7 +442,7 @@ export function updateDailyPlanItem(
  * （提案创建时算好的），库里已有同 taskId 而草稿省略时才用库里值。
  * 确认时再次做共同校验（存在性/关闭/父子链），失败整份拒绝并保留草稿。
  */
-export function confirmDailyPlanDraft(db: DatabaseSync, draftId: string, at = nowIso()): DailyPlanRow | undefined {
+export function confirmDailyPlanDraft(db: DatabaseSync, draftId: string, actor = 'user', at = nowIso()): DailyPlanRow | undefined {
   const draft = getDraft(db, draftId)
   if (draft === undefined || draft.kindCode !== 'daily_plan') return undefined
   const payload = draft.payload as { planDate?: string; summary?: string; items?: Array<Record<string, unknown>> }
@@ -468,7 +468,7 @@ export function confirmDailyPlanDraft(db: DatabaseSync, draftId: string, at = no
     const tasks = loadPlanTasks(db)
     const items = mergeAndCheck(db, planDate, incoming, existing, defaultEstimateMinutes(db), tasks)
     return saveDailyPlan(db, { planDate, summary: payload.summary ?? '', items, sourceCode: 'ai', sessionId: draft.sessionId }, at)
-  }, { at })
+  }, { at, actor })
 }
 
 export function getPendingDailyPlanDraft(db: DatabaseSync, sessionId: string | null, planDate?: string): DraftRow | undefined {

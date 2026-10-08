@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { seedDictionaries } from '../lib/db/seed.js'
+import { SCHEMA_VERSION } from '../lib/db/schema.js'
 import { makeRoutes } from '../lib/api/routes.js'
 import {
   appendMatterEvent, createKnowledge, createMatter, createMatterNotice, deleteMatter, deleteMatterNotice,
@@ -30,7 +31,7 @@ function baseMatter(overrides = {}) {
 test('migration 20: 案卷四表 + 领域字典 + knowledge.matter_id', () => {
   const db = freshDb()
   try {
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '23')
+    assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, String(SCHEMA_VERSION))
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name)
     for (const table of ['matters', 'matter_notices', 'matter_deadlines', 'matter_events']) {

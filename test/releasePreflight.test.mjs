@@ -15,8 +15,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  dedupe, judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests, judgeWorkspaceResidue,
-  merge, parsePiiRules, parseProbeResult, parseTestSummary,
+  dedupe, filterAllowedForPlatform, judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests,
+  judgeWorkspaceResidue, merge, parsePiiRules, parseProbeResult, parseTestSummary,
 } from '../scripts/lib/releasePreflight.mjs'
 
 // ── 真实样本（2026-10-01 发 v1.16.1 当天抓的）────────────────────────────────
@@ -29,6 +29,23 @@ const REAL_TEST_TAIL = `
 ℹ cancelled 0
 ✖ failing tests:
 ✖ db migrations, dictionaries and task tree (886.9033ms)
+`
+
+/**
+ * TAP reporter 的真实形态 —— **门禁实际拿到的那一种**。
+ *
+ * 门禁用 `spawnSync`（管道 stdio）跑 `pnpm test`，Node 在非 TTY 下自动改用 TAP。
+ * 这份片段按 2026-10-08 实测的输出形态写：计数行用 `#`、失败行是行首无缩进的
+ * `not ok N - <name>`，失败行后面跟着 YAML 诊断块（`---`…`---`）。
+ */
+const REAL_TEST_TAP_TAIL = `# tests 929
+# pass 928
+# fail 1
+not ok 5 - db migrations, dictionaries and task tree
+  ---
+  duration_ms: 886.9033
+  type: 'test'
+  ...
 `
 
 const REAL_PROBE_OK = `
@@ -123,6 +140,79 @@ test('fail 数与解析出的失败名不一致时判失败（解析漏名不能
   const v = judgeTests(parseTestSummary(broken), [])
   assert.equal(v.ok, false)
   assert.match(v.failures.join('\n'), /解析结果不可信/)
+})
+
+// ── 平台限定的已知失败（Windows-only 的 flake 不能让 macOS 恒红）─────────────
+
+const WIN_ONLY = [{ test: 'flaky-on-windows', reason: 'Windows 清理期 EPERM', platforms: ['win32'] }]
+
+test('带 platforms 的条目：不在该平台时**整条剔除**（否则 macOS 上恒红）', () => {
+  assert.deepEqual(filterAllowedForPlatform(WIN_ONLY, 'darwin'), [])
+  assert.deepEqual(filterAllowedForPlatform(WIN_ONLY, 'linux'), [])
+  assert.deepEqual(filterAllowedForPlatform(WIN_ONLY, 'win32'), WIN_ONLY)
+})
+
+test('不带 platforms 的条目：任何平台都留着（既有语义不变）', () => {
+  const legacy = [{ test: 'x', reason: 'y' }]
+  for (const p of ['darwin', 'win32', 'linux']) assert.deepEqual(filterAllowedForPlatform(legacy, p), legacy)
+})
+
+test('多平台条目：命中其一即保留', () => {
+  const multi = [{ test: 'x', reason: 'y', platforms: ['win32', 'darwin'] }]
+  assert.deepEqual(filterAllowedForPlatform(multi, 'darwin'), multi)
+  assert.deepEqual(filterAllowedForPlatform(multi, 'win32'), multi)
+  assert.deepEqual(filterAllowedForPlatform(multi, 'linux'), [])
+})
+
+test('剔除后门禁必须转绿：Windows-only 的陈账不该在 macOS 上阻塞发布', () => {
+  // 造一份"该用例已修好"的 TAP 输出：失败行转 ok，汇总的 fail 归零。
+  const healed = REAL_TEST_TAP_TAIL
+    .replace('not ok 5 - db migrations, dictionaries and task tree', 'ok 5 - db migrations, dictionaries and task tree')
+    .replace('# fail 1', '# fail 0')
+  // 反证：名单原样喂进去 → 报「这次是绿的」；这正是 macOS 上的现状。
+  assert.match(judgeTests(parseTestSummary(healed), WIN_ONLY).failures.join('\n'), /这次是绿的/)
+  // 平台剔除后 → 转绿。
+  assert.equal(judgeTests(parseTestSummary(healed), filterAllowedForPlatform(WIN_ONLY, 'darwin')).ok, true)
+})
+
+// ── 两种 reporter 必须判得一样（门禁走 TAP、人眼看 spec）─────────────────────
+
+test('TAP reporter（门禁实际拿到的那种）：计数与失败名都要拿到', () => {
+  const s = parseTestSummary(REAL_TEST_TAP_TAIL)
+  assert.equal(s.tests, 929)
+  assert.equal(s.pass, 928)
+  assert.equal(s.fail, 1)
+  assert.deepEqual(s.failing, ['db migrations, dictionaries and task tree'])
+})
+
+test('TAP 全绿：fail=0 且失败名为空（门禁不能被"一个有失败名都没解析到"骗过）', () => {
+  const green = '# tests 1290\n# pass 1288\n# fail 0\n# skipped 2\n'
+  const s = parseTestSummary(green)
+  assert.equal(s.tests, 1290)
+  assert.equal(s.fail, 0)
+  assert.deepEqual(s.failing, [])
+  // 关键：这份输出**不能**再触发"没解析到任何用例"（那正是修复前的假红）。
+  assert.equal(judgeTests(s, []).ok, true)
+})
+
+test('同一次失败，两种 reporter 下必须判得一样（否则门禁在 CI 与人手下结论不同）', () => {
+  const spec = parseTestSummary(REAL_TEST_TAIL)
+  const tap = parseTestSummary(REAL_TEST_TAP_TAIL)
+  assert.deepEqual(
+    { tests: spec.tests, pass: spec.pass, fail: spec.fail, failing: spec.failing },
+    { tests: tap.tests, pass: tap.pass, fail: tap.fail, failing: tap.failing },
+  )
+})
+
+test('TAP 下子测试（有缩进）不算顶层失败名 —— 与 spec 的「只列顶层」口径一致', () => {
+  const nested = [
+    'not ok 7 - 外层用例',
+    '    not ok 1 - 子用例甲',
+    '    not ok 2 - 子用例乙',
+    '# tests 3',
+    '# fail 3',
+  ].join('\n')
+  assert.deepEqual(parseTestSummary(nested).failing, ['外层用例'])
 })
 
 // ── 变异探针 ────────────────────────────────────────────────────────────────

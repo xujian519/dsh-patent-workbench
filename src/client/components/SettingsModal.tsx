@@ -391,8 +391,9 @@ export function SettingsModal(props: SettingsModalProps): ReactNode {
                     <div className="wb-banner reminder" style={{ margin: '10px 0' }}>
                       <h4>未检测到 dsh-im</h4>
                       <div style={{ fontSize: 12.5 }}>
-                        微信推送不可用，提醒会回落到页面横幅与桌面通知。安装命令：
-                        <code style={{ display: 'inline-block', marginTop: 4 }}>pnpm add -g @xmanrui/dsh-im</code>
+                        微信推送不可用，提醒会回落到页面横幅与桌面通知。安装方式：在「设置 → 插件」里填入包名{' '}
+                        <code style={{ display: 'inline-block', marginTop: 4 }}>@xmanrui/dsh-im</code>{' '}
+                        装好后还要在该插件卡片上打开「启用」——只安装不启用，插件不会被加载。
                       </div>
                     </div>
                   )}

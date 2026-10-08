@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 23
+export const SCHEMA_VERSION = 25
 
 /** 迁移 23 用的 uuid（与 `repo/task-primitives.ts#appendEvent` 同一套生成方式）。 */
 function randomUUIDForMigration(): string {
@@ -945,6 +945,111 @@ export const MIGRATIONS: Migration[] = [
           at,
         )
       }
+    },
+  },
+  {
+    version: 24,
+    name: 'draft-rejections-and-knowledge-revisions',
+    /**
+     * 两件都是**纯新增**（加三列 / 加一张表），不改写、不删除任何既有数据 ——
+     * 所以**不标 `destructive`**：用户不需要为它留整库回滚点。
+     *
+     * 两件事挤在同一条迁移里是刻意的：它们都动 schema，而迁移只前向 ——
+     * 分成 v24/v25 只是多一次迁移开销，没有任何收益。
+     */
+    up(db) {
+      /**
+       * ① **负记忆**：被拒草稿留痕（2026-10-07 灵枢调研 §7 第一步②）。
+       *
+       * 此前"拒绝"是**静默的**：用户放弃一条草稿时填的理由，只在这条草稿恰好带着
+       * 一个**存在的** `taskId` 时才会经由 `recordDraftFeedback` 写进任务事件与共享记忆；
+       * 知识类草稿（没有 taskId）被拒时，理由**当场丢弃**，事后无从查起 ——
+       * 而 AI 也永远不会知道"这条我提过、被驳回了、因为什么"。
+       *
+       * 灵枢（dsh-memory）的做法是把 REJECT 落进 `rejected/` 层**留痕可查**。
+       * 这里落在草稿行自己身上：不新增状态、不改 `status_code` 语义
+       * （`pending` 仍可重提、`abandoned` 仍是终态），只**加列**记录"被拒过几次、最近因为什么"。
+       */
+      /**
+       * ⚠️ 版本 22 起迁移**必须可重跑**：库里的 `meta.schema_version` 可能被人为按回旧版
+       * （`dbSafety` / `progressDb` 就是这么模拟"用户的库停在 21、插件已升到最新版"的），
+       * 于是这条迁移会在**物理 schema 已经是最新**的库上再跑一遍。
+       * 裸 `ADD COLUMN` 到那时会直接撞 `duplicate column name` —— 先查列存在性再决定加不加。
+       * （迁移 22 的原话："`IF EXISTS` 是为了幂等（测试里会用旧库快照反复跑）"。）
+       */
+      const draftColumns = new Set(
+        (db.prepare('PRAGMA table_info(task_drafts)').all() as Array<{ name: string }>).map((column) => column.name),
+      )
+      if (!draftColumns.has('rejection_reason')) db.exec('ALTER TABLE task_drafts ADD COLUMN rejection_reason TEXT')
+      if (!draftColumns.has('rejected_at')) db.exec('ALTER TABLE task_drafts ADD COLUMN rejected_at TEXT')
+      if (!draftColumns.has('rejection_count')) db.exec('ALTER TABLE task_drafts ADD COLUMN rejection_count INTEGER NOT NULL DEFAULT 0')
+      /**
+       * ② **知识条目前像表**（同调研 §7 第一步③）。
+       *
+       * `updateKnowledge` 此前是**纯 UPDATE 覆写**：一条经验被改写后，改之前的内容
+       * **永久丢失**（库里的 `superseded_by_id` / `valid_until` 只表达"新旧关系"与"时效"，
+       * 不保留旧正文）。灵枢对改写的答案是"改前留一份，可回滚"。
+       *
+       * ## 两条刻意的建表判断
+       *
+       * 1. **`entry_id` 不设外键**（纯 `TEXT`）。看起来反直觉，但这正是前像的意义：
+       *    条目被**删掉**之后，前像还得留在库里给人查（`ON DELETE CASCADE` 会让前像
+       *    跟着条目一起消失，等于白留；`SET NULL` 则丢掉了"这是谁的前像"）。
+       *    于是这条表会随删除自然增长 —— 用 `idx_knowledge_rev_entry` 兜住查询。
+       * 2. **`source_task_id` 也去掉了外键**。`knowledge_entries` 上它是
+       *    `REFERENCES tasks(id) ON DELETE SET NULL`；但前像是**历史快照**，
+       *    任务后来被删了，也不该把"这条经验当时来自哪个任务"从历史里抹掉。
+       *
+       * `revision_no` 每条目内自 1 递增（删除与再建不会冲突：id 是 uuid）。
+       */
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS knowledge_entry_revisions (
+          id                TEXT PRIMARY KEY,
+          entry_id          TEXT NOT NULL,
+          revision_no       INTEGER NOT NULL,
+          kind_code         TEXT NOT NULL,
+          title             TEXT NOT NULL,
+          content_md        TEXT NOT NULL DEFAULT '',
+          tags_json         TEXT NOT NULL DEFAULT '[]',
+          source_task_id    TEXT,
+          source_session_id TEXT,
+          source_review_id  TEXT,
+          matter_id         TEXT,
+          file_link         TEXT,
+          superseded_by_id  TEXT,
+          valid_until       TEXT,
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL,
+          archived_at       TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_knowledge_rev_entry ON knowledge_entry_revisions(entry_id, revision_no DESC);
+      `)
+    },
+  },
+  {
+    version: 25,
+    name: 'draft-created-by',
+    /**
+     * 写入者留痕（2026-10-07 灵枢调研 §7，「写入者不得自裁」）—— schedule 上最后一件事。
+     *
+     * 纯新增一列、不改写不删除任何既有数据 → **不标 `destructive`**，用户不需要为它留回滚点。
+     *
+     * ## 为什么这列是**可空的、且不给 DEFAULT**
+     *
+     * SQLite 的 `ADD COLUMN` 给不出"逐行不同"的默认值，能给的默认值就是在**对历史下断言**。
+     * 而这条迁移上线前的草稿究竟是谁建的，**库里没有证据**（`created_by` 不存在，
+     * `session_id` 只能证明"来自某个会话"，证明不了是人还是 AI）。
+     * 与其塞一个 `'ai'` 假装追溯过，不如留 `NULL` = **未记录**：
+     * 守卫读到 `NULL` 就放行（老草稿不能被一条它出生时还不存在的规矩卡死），
+     * 新行由 `createDraft` 逐个显式写入 —— 见 `repo/drafts.ts#createDraft`。
+     */
+    up(db) {
+      // ⚠️ 版本 22 起迁移必须可重跑：物理 schema 已是最新的库上会再跑一遍，
+      // 裸 `ADD COLUMN` 到那时会撞 `duplicate column name`。先查列存在性（同迁移 24 的做法）。
+      const columns = new Set(
+        (db.prepare('PRAGMA table_info(task_drafts)').all() as Array<{ name: string }>).map((column) => column.name),
+      )
+      if (!columns.has('created_by')) db.exec('ALTER TABLE task_drafts ADD COLUMN created_by TEXT')
     },
   },
 ]

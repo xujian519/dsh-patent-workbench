@@ -35,8 +35,8 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
-  judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests, judgeWorkspaceResidue,
-  merge, parsePiiRules, parseProbeResult, parseTestSummary,
+  filterAllowedForPlatform, judgePii, judgePostArtifact, judgePreVersion, judgeProbes, judgeTests,
+  judgeWorkspaceResidue, merge, parsePiiRules, parseProbeResult, parseTestSummary,
 } from './lib/releasePreflight.mjs'
 import { describeRecovery, recoverCrashedSessions } from './lib/mutationGuard.mjs'
 import { diffFingerprints, fingerprintWorkspace, formatDrift } from './lib/workspaceFingerprint.mjs'
@@ -58,11 +58,15 @@ const NULL_SINK = process.platform === 'win32' ? 'NUL' : '/dev/null'
 /**
  * 显式登记的**已知失败**。用例名必须完全相等。
  * 每加一条都要问自己：这是"与本次改动无关的历史问题"吗？有 issue 追踪吗？
+ *
+ * ⚠️ **平台专属的失败必须写 `platforms`** —— 否则它会在别的平台上把门禁顶成恒红
+ * （见 `filterAllowedForPlatform` 的说明）。
  */
 const KNOWN_TEST_FAILURES = [
   {
     test: 'db migrations, dictionaries and task tree',
     reason: 'Windows 清理期 rmSync EPERM（既有环境问题、与代码无关；已长期存在，不删断言）',
+    platforms: ['win32'],
   },
 ]
 
@@ -120,6 +124,8 @@ const JSON_OUT = valueOf('--json', null)
 const BUILD_TIMEOUT_MS = 15 * 60 * 1000
 const TEST_TIMEOUT_MS = 30 * 60 * 1000
 const PROBE_TIMEOUT_MS = 20 * 60 * 1000
+/** 装后冒烟：实测 `pnpm pack`（含 `prepare`→`pnpm build`）+ 解包 + 真启动约 5 秒，5 分钟是余量。 */
+const SMOKE_TIMEOUT_MS = 5 * 60 * 1000
 
 /** 把 `spawnSync` 的结果归一成 `{code, out, timedOut}`（输出合并 stderr，便于把失败原因原样打出来）。 */
 function describeResult(result, timeoutMs) {
@@ -182,24 +188,85 @@ function show(verdict) {
 // ───────────────────────────────────────────────────────────────────────────
 
 function gateTypecheck() {
-  banner('1/5 类型检查')
+  banner('1/7 类型检查')
   const r = run('pnpm typecheck')
   console.log(r.code === 0 ? '   ✅ typecheck 0' : r.out.trim().split('\n').slice(-8).map((l) => `   ${l}`).join('\n'))
   add('typecheck', { ok: r.code === 0, failures: r.code === 0 ? [] : ['pnpm typecheck 非 0'], debts: [], notes: [] })
 }
 
 function gateTests() {
-  banner('2/5 全量单测')
+  banner('2/7 全量单测')
   const r = run('pnpm test', { timeoutMs: TEST_TIMEOUT_MS })
   const summary = parseTestSummary(r.out)
-  const verdict = judgeTests(summary, KNOWN_TEST_FAILURES)
+  // 先按平台筛：Windows 专属的已知失败不该在本平台参与双向判定（见 filterAllowedForPlatform）。
+  const verdict = judgeTests(summary, filterAllowedForPlatform(KNOWN_TEST_FAILURES))
   console.log(`   ℹ️  tests ${summary.tests} / pass ${summary.pass} / fail ${summary.fail}`)
   show(verdict)
   add('单测', verdict)
 }
 
 /**
- * 3/5 变异探针。
+ * 3/7 装后**真启动**冒烟（T6 · 2026-10-07 灵枢调研落地）。
+ *
+ * ## 为什么挂在这里而不是 `dev-verify.mjs`
+ *
+ * plan 原文把这条腿写在 `dev-verify.mjs` 里，落地时改成挂**本门禁** —— 沿用 T4
+ * （防漂移腿）的先例，理由是两者的射程根本不同：
+ *
+ * - `dev-verify.mjs` 是**重链**：要 `--url` / `--profile-dir` / `--db-path` / 真宿主 + 浏览器，
+ *   验的是"在真环境里端到端能不能用"；
+ * - 本门禁是**一条命令跑完的机械判据**（发版前那道闸）。
+ *
+ * 这条腿要问的问题 ——「把包真的 `import` 进来、入口真的跑一遍，工具面还在不在」——
+ * 是**机械的**、不需要真宿主，属于后者。
+ *
+ * ## 它补的洞（三道既有装盘检查都是"文件层面"的）
+ *
+ * `check-tgz` 判包里有没有那些文件、`check-installed-fingerprint` 判装盘与开发树
+ * 逐字节相同、`check-installed-version` 判版本号 —— 它们合起来仍答不出
+ * "产物 import 得动吗、入口一执行会不会抛错、工具面还是不是那 15 个"。
+ * 脚本内部的口径与限制见 `scripts/verify-installed.mjs` 文件头（**不启动真宿主**、
+ * peer 用的是开发树同一份 —— 别把绿色读成"等价于真机"）。
+ *
+ * ## 退出码：2 不当失败当**阻断**
+ *
+ * `verify-installed.mjs` 用 2 表示"打包都失败了 / 环境不对"——那不是"产物有问题"，
+ * 是"这条腿根本没跑成"。两者都不能放行，但说法必须分开，否则下一个人会去
+ * 修一个不存在的产物 bug。这里统一判 `ok: code === 0`，把码写进结论。
+ */
+function gateInstalledSmoke() {
+  banner('3/7 装后真启动冒烟（pnpm pack → 空沙箱解包 → 从产物 import → 真调 apply）')
+  const r = runNode('scripts/verify-installed.mjs', [], { timeoutMs: SMOKE_TIMEOUT_MS })
+  for (const line of r.out.trim().split('\n')) console.log(`   ${line}`)
+  const ok = r.code === 0
+  add('装后真启动', {
+    ok,
+    failures: ok ? [] : [r.code === 2
+      ? '装后冒烟**没跑起来**（退出码 2：打包失败或环境不对）—— 这不等于产物有问题，先看上面的日志'
+      : '装后冒烟未通过：产物 import 不了 / 入口抛错 / 工具面或路由漂移，见上'],
+    debts: [],
+    notes: [],
+  })
+}
+
+/**
+ * 4/7 注入文本防漂移。
+ *
+ * 同一条纪律（「AI 不能直接把任务标记为已完成/已取消」）写在 4 个挂点上，
+ * 且**已经漂移过**（`index.ts` 的「完成/取消」vs `tools.ts` 的「已完成/已取消」）。
+ * T4 把规范表述收进 `src/shared/guidance.ts`，这条腿断言它**没有**被别处手打回去。
+ * 纯静态文本扫描，秒级，放在探针前面（便宜的先跑）。
+ */
+function gateGuidance() {
+  banner('4/7 注入文本防漂移（真源 = src/shared/guidance.ts）')
+  const r = run('node scripts/check-guidance-drift.mjs')
+  for (const line of r.out.trim().split('\n')) console.log(`   ${line}`)
+  const ok = r.code === 0
+  add('注入文本防漂移', { ok, failures: ok ? [] : ['规范短语在真源之外被重写，见上'], debts: [], notes: [] })
+}
+
+/**
+ * 5/7 变异探针。
  *
  * ## 为什么开头先做"崩溃恢复"、结尾必做"工作区指纹"
  *
@@ -214,7 +281,7 @@ function gateTests() {
  *    让超时信号直达探针的护栏而不是停在 `sh` 上。
  */
 function gateProbes() {
-  banner('3/5 变异探针（每个之间 pnpm build —— 探针只还原工作区，不重建 lib）')
+  banner('5/7 变异探针（每个之间 pnpm build —— 探针只还原工作区，不重建 lib）')
 
   // 3a. 上次没走完的账本（SIGKILL / 断电 / CI 被砍）
   const recovery = recoverCrashedSessions()
@@ -271,16 +338,33 @@ function gateProbes() {
 }
 
 function gatePii() {
-  banner('4/5 PII（两个面：GitHub 跟踪 + 随包 lib/**）')
+  banner('6/7 PII（两个面：GitHub 跟踪 + 随包 lib/**）· 附两闸同口径')
   const r = run('node scripts/check-pii.mjs')
   const rules = parsePiiRules(r.out)
   const verdict = judgePii(rules, PII_BASELINE)
   show(verdict)
   add('PII', verdict)
+
+  /**
+   * 敏感信息**两闸同口径**（T7 · 灵枢调研落地）。
+   *
+   * 为什么跟 PII 同一条腿：两者是同一件事的两个时刻 —— `check-pii` 管
+   * **仓库里**有没有不该有的东西（发布时刻），`src/shared/contentPolicy.ts` 管
+   * **内容里**有没有（运行时时刻）。灵枢的事故是这两者**分叉过**：一条明文令牌
+   * 因为"发布闸门有这个模式、写入闸门没有"而过了闸。格式与 `gateGuidance` 同构。
+   */
+  const drift = run('node scripts/check-policy-drift.mjs')
+  for (const line of drift.out.trim().split('\n')) console.log(`   ${line}`)
+  const driftOk = drift.code === 0
+  add('PII 两闸同口径', {
+    ok: driftOk,
+    failures: driftOk ? [] : ['凭据子集在两侧漂移（运行时闸门与发布闸门不再同口径），见上'],
+    debts: [], notes: [],
+  })
 }
 
 function gateVersionDocs() {
-  banner('5/5 版本号与文档就位')
+  banner('7/7 版本号与文档就位')
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const verdict = judgePreVersion({
     plannedVersion: VERSION,
@@ -360,7 +444,7 @@ function gateGitHubRelease() {
 
 const PLAN = PHASE === 'post'
   ? [['artifact', gateArtifact], ['github', gateGitHubRelease]]
-  : [['typecheck', gateTypecheck], ['tests', gateTests], ['probes', gateProbes], ['pii', gatePii], ['version', gateVersionDocs]]
+  : [['typecheck', gateTypecheck], ['tests', gateTests], ['installed', gateInstalledSmoke], ['guidance', gateGuidance], ['probes', gateProbes], ['pii', gatePii], ['version', gateVersionDocs]]
 
 console.log(`发布门禁 · phase=${PHASE} · pkg=${PKG_NAME}@${String(VERSION)}`)
 for (const [key, fn] of PLAN) {
