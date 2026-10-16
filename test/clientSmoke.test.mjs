@@ -154,6 +154,7 @@ const MODULES = {
   'components/dialogs/ReminderModal.js': () => import('../lib/client/components/dialogs/ReminderModal.js'),
   'components/views/KnowledgeDetailPane.js': () => import('../lib/client/components/views/KnowledgeDetailPane.js'),
   'components/views/KnowledgeView.js': () => import('../lib/client/components/views/KnowledgeView.js'),
+  'components/views/MatterDetailPane.js': () => import('../lib/client/components/views/MatterDetailPane.js'),
   'components/views/MatterPane.js': () => import('../lib/client/components/views/MatterPane.js'),
   'components/views/TaskDetailPane.js': () => import('../lib/client/components/views/TaskDetailPane.js'),
   'components/views/TasksView.js': () => import('../lib/client/components/views/TasksView.js'),
@@ -428,22 +429,36 @@ const CASES = [
     onSinkReview: noop, defaultEstimateMinutes: 30, defaultWorkspace: '/tmp/work',
   }), /被选中的任务/],
 
+  /**
+   * 案卷视图的两半（2026-10-16 拆成左右两个组件）：左栏只画案卷条 + 列表，
+   * 详情在右栏的 `MatterDetailPane`。所以下面这四条两两成对 ——
+   * 「MatterPane 不再画详情」与「MatterDetailPane 画详情」互为反向判据。
+   */
   ['MatterPane（未选中）', 'components/views/MatterPane.js', (m) => h(m.MatterPane, {
-    matters: [matter()], dicts: [dict('utility', 'matter_type')], selectedMatterId: null, selectedMatter: null,
-    timeline: null, notices: [], deadlines: [], engineAvailable: true, recomputeNote: '', syncNote: '', busy: false,
-    onOpen: noop, onCreate: noop, onImport: noop, onEdit: noop, onAddNotice: noop, onDeleteNotice: noop,
-    onRecompute: noop, onSetDeadlineStatus: noop, onSyncEvents: noop,
+    matters: [matter()], dicts: [dict('utility', 'matter_type')], selectedMatterId: null, busy: false,
+    onOpen: noop, onCreate: noop, onImport: noop, onRefresh: noop,
   }), /2026-UM-001/],
 
   ['MatterPane（选中案卷）', 'components/views/MatterPane.js', (m) => h(m.MatterPane, {
-    matters: [matter()], dicts: [dict('utility', 'matter_type')], selectedMatterId: 'm1', selectedMatter: matter(),
-    timeline: { entries: [{ id: 'e1', kind: 'event', date: '2026-10-01', title: '承办', detail: '' }], undated: [] },
-    notices: [{ id: 'n1', noticeId: null, matterId: 'm1', noticeKind: 'oa', dispatchDate: '2026-10-01', deliveryMode: null, deliveryDate: null, note: null, createdAt: iso(), updatedAt: iso() }],
-    deadlines: [{ id: 'dl1', matterId: 'm1', kindCode: 'reply', label: '答复期限', dueAt: iso(30), statusCode: 'open', engineCode: 'ep', basis: '专利法', createdAt: iso(), updatedAt: iso() }],
+    matters: [matter()], dicts: [dict('utility', 'matter_type')], selectedMatterId: 'm1', busy: false,
+    onOpen: noop, onCreate: noop, onImport: noop, onRefresh: noop,
+  }), /（已选 1 个）[\s\S]*wb-matter-row on/],
+
+  ['MatterDetailPane（未选中）', 'components/views/MatterDetailPane.js', (m) => h(m.MatterDetailPane, {
+    selectedMatter: null, matterCount: 1, dicts: [dict('utility', 'matter_type')],
+    timeline: { entries: [], undated: [] }, notices: [], deadlines: [],
     engineAvailable: true, recomputeNote: '', syncNote: '', busy: false,
-    onOpen: noop, onCreate: noop, onImport: noop, onEdit: noop, onAddNotice: noop, onDeleteNotice: noop,
-    onRecompute: noop, onSetDeadlineStatus: noop, onSyncEvents: noop,
-  }), /wb-matter-detail[\s\S]*答复期限/],
+    onEdit: noop, onAddNotice: noop, onDeleteNotice: noop, onRecompute: noop, onSetDeadlineStatus: noop, onSyncEvents: noop,
+  }), /← 从左侧选择一个案卷查看详情/],
+
+  ['MatterDetailPane（选中案卷）', 'components/views/MatterDetailPane.js', (m) => h(m.MatterDetailPane, {
+    selectedMatter: matter(), matterCount: 1, dicts: [dict('utility', 'matter_type')],
+    timeline: { entries: [{ id: 'e1', kind: 'event', date: '2026-10-01', title: '承办', detail: '' }], undated: [] },
+    notices: [{ id: 'n1', noticeKind: 'oa', dispatchDate: '2026-10-01', deliveryMode: null, deliveryDate: null, designatedMonths: null, fileLink: null, note: null }],
+    deadlines: [{ id: 'dl1', label: '答复期限', dueDate: iso(30), dueDateRaw: iso(30), basis: '专利法', status: 'pending' }],
+    engineAvailable: true, recomputeNote: '', syncNote: '', busy: false,
+    onEdit: noop, onAddNotice: noop, onDeleteNotice: noop, onRecompute: noop, onSetDeadlineStatus: noop, onSyncEvents: noop,
+  }), /data-matter-detail="2026-UM-001"[\s\S]*答复期限/],
 ]
 
 for (const [name, modulePath, build, expect] of CASES) {

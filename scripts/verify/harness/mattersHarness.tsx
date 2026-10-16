@@ -1,5 +1,5 @@
 /**
- * H4-5 的真浏览器验证脚手架（**不入库构建**，由 `scripts/repro/verify-h4-matters.mjs` 现打包）。
+ * 案卷视图的真浏览器验证脚手架（**不入库构建**，由 `scripts/repro/verify-h4-matters.mjs` 现打包）。
  *
  * ## 这个脚手架比"把组件喂几个 props"更实的地方
  *
@@ -10,10 +10,18 @@
  *
  * 容器侧状态（`selectedMatterId` / 三份明细 / 引擎可用性 / 列表空）在这里用 `useState`
  * 复刻，因为真容器是 `index.tsx`（跑不起来）。它复刻的是**数据流向**，不是画法。
+ *
+ * ## 2026-10-16：布局改成与产品一致的两栏
+ *
+ * 案卷视图拆成左右两半后，这里也必须摆成 `.wb-body > .wb-nav（MatterPane）+ .wb-detail
+ * （MatterDetailPane）`——否则"详情到底在左栏还是右栏"这条根本验不到（H4-5 时代它俩是
+ * 一个组件里的上下两块）。`view` 这个 state 复刻容器的按视图分支：切到 `list` 就把两栏
+ * 都卸载，用来验证"切走再切回，选中与详情都不丢"（H4 plan §3 那条规则的产品口径）。
  */
 import { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MatterPane } from '../../../src/client/components/views/MatterPane.js'
+import { MatterDetailPane } from '../../../src/client/components/views/MatterDetailPane.js'
 import { buildMatterTimeline, type MatterTimelineEvent } from '../../../src/client/matterTimeline.js'
 import type { MatterDeadlineView, MatterNoticeView, MatterView } from '../../../src/client/components/MattersView.js'
 import { WORKBENCH_CSS } from '../../../src/client/styles.js'
@@ -90,6 +98,8 @@ function Harness(): JSX.Element {
   const [matters, setMatters] = useState<MatterView[]>(MATTERS)
   const [selectedMatterId, setSelectedMatterId] = useState<string | null>(null)
   const [engineAvailable, setEngineAvailable] = useState(true)
+  /** 复刻容器的"按 view 分支"：切到 `list` 就把案卷这两栏整体卸载。 */
+  const [view, setView] = useState<'matters' | 'list'>('matters')
 
   const selectedMatter = selectedMatterId === null ? null : (matters.find((matter) => matter.id === selectedMatterId) ?? null)
   /** 与容器同一处调用：三份源 + 字典 labelOf → 时间线（排序/判定都在纯模块里）。 */
@@ -104,6 +114,8 @@ function Harness(): JSX.Element {
     ;(globalThis as unknown as { __h4: unknown }).__h4 = {
       calls: () => calls.slice(),
       selectedId: () => selectedMatterId,
+      view: () => view,
+      setView: (next: 'matters' | 'list') => setView(next),
       setMattersEmpty: (empty: boolean) => { setMatters(empty ? [] : MATTERS); setSelectedMatterId(null) },
       setEngineAvailable,
     }
@@ -111,30 +123,42 @@ function Harness(): JSX.Element {
 
   return (
     <div className="wb-body" style={{ display: 'flex', height: '100vh' }}>
-      <div className="wb-nav" style={{ width: '62%', overflow: 'auto' }}>
-        <MatterPane
-          matters={matters}
-          dicts={DICTS}
-          selectedMatterId={selectedMatterId}
-          selectedMatter={selectedMatter}
-          timeline={timeline}
-          notices={NOTICES}
-          deadlines={DEADLINES}
-          engineAvailable={engineAvailable}
-          recomputeNote={selectedMatterId === null ? '' : '重算完成：2 条真日期期限'}
-          syncNote={selectedMatterId === null ? '' : '已从 /tmp/m2/_matter-log.md 同步：新增 1 条。'}
-          busy={false}
-          onOpen={(matter) => { calls.push({ name: 'open', args: [matter.id] }); setSelectedMatterId(matter.id) }}
-          onCreate={noArgs('create')}
-          onEdit={(matter) => { calls.push({ name: 'edit', args: [matter.id] }) }}
-          onAddNotice={noArgs('addNotice')}
-          onDeleteNotice={(noticeId) => { calls.push({ name: 'deleteNotice', args: [noticeId] }) }}
-          onRecompute={(matterId) => { calls.push({ name: 'recompute', args: [matterId] }) }}
-          onSetDeadlineStatus={(deadlineId, status) => { calls.push({ name: 'setDeadlineStatus', args: [deadlineId, status] }) }}
-          onSyncEvents={(matterId) => { calls.push({ name: 'syncEvents', args: [matterId] }) }}
-        />
-      </div>
-      <div className="wb-detail" style={{ width: '38%' }} />
+      {view === 'matters' && (
+        <div className="wb-nav" style={{ flex: '0 0 56%', overflow: 'auto' }}>
+          <MatterPane
+            matters={matters}
+            dicts={DICTS}
+            selectedMatterId={selectedMatterId}
+            busy={false}
+            onOpen={(matter) => { calls.push({ name: 'open', args: [matter.id] }); setSelectedMatterId(matter.id) }}
+            onCreate={noArgs('create')}
+            onImport={noArgs('import')}
+            onRefresh={noArgs('refresh')}
+          />
+        </div>
+      )}
+      {view === 'matters' && (
+        <div className="wb-detail" style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
+          <MatterDetailPane
+            selectedMatter={selectedMatter}
+            matterCount={matters.length}
+            dicts={DICTS}
+            timeline={timeline}
+            notices={NOTICES}
+            deadlines={DEADLINES}
+            engineAvailable={engineAvailable}
+            recomputeNote={selectedMatterId === null ? '' : '重算完成：2 条真日期期限'}
+            syncNote={selectedMatterId === null ? '' : '已从 /tmp/m2/_matter-log.md 同步：新增 1 条。'}
+            busy={false}
+            onEdit={(matter) => { calls.push({ name: 'edit', args: [matter.id] }) }}
+            onAddNotice={noArgs('addNotice')}
+            onDeleteNotice={(noticeId) => { calls.push({ name: 'deleteNotice', args: [noticeId] }) }}
+            onRecompute={(matterId) => { calls.push({ name: 'recompute', args: [matterId] }) }}
+            onSetDeadlineStatus={(deadlineId, status) => { calls.push({ name: 'setDeadlineStatus', args: [deadlineId, status] }) }}
+            onSyncEvents={(matterId) => { calls.push({ name: 'syncEvents', args: [matterId] }) }}
+          />
+        </div>
+      )}
     </div>
   )
 }

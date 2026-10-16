@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
- * H4-5 的**真浏览器**验证：`MatterPane`（案卷条 + 列表 + 详情）挂进页面。
+ * 案卷视图的**真浏览器**验证：`.wb-nav` 里的 `MatterPane`（案卷条 + 列表）+
+ * `.wb-detail` 里的 `MatterDetailPane`（字段 / 官文 / 期限 / 时间线）一起挂进页面。
+ *
+ * 2026-10-16 布局改成两栏（详情从列表下方移到右栏）后，本脚本的核心新增判据是
+ * **"详情在右栏、左栏一个都没有"** —— 只验"页面上有详情"是验不到这次改动的。
  *
  * 容器那一侧用**生产函数**复刻：时间线由 `buildMatterTimeline()` 现算（与容器里那个
  * `useMemo` 同一处调用、同一份字典 labelOf），所以"事件/官文/期限 → 时间线"这条链在
@@ -83,6 +87,13 @@ const lastCall = (name) => `
 const rowCaseNumbers = `return [...document.querySelectorAll('[data-matter-row]')].map((el) => el.dataset.matterRow)`
 const timelineKinds = `return [...document.querySelectorAll('[data-timeline-kind]')].map((el) => el.dataset.timelineKind)`
 const timelineTexts = `return [...document.querySelectorAll('.wb-matter-tl [data-timeline-kind]')].map((el) => el.textContent.trim())`
+/**
+ * 左栏里"属于详情"的元素总数。本次改动的核心判据就是它必须为 **0**：
+ * 详情（字段区 / 官文 / 期限 / 时间线 / 详情挂点）一件都不许落在 `.wb-nav`。
+ */
+const navDetailParts = `return document.querySelectorAll('.wb-nav [data-matter-field], .wb-nav [data-matter-notice], .wb-nav [data-matter-deadline], .wb-nav [data-matter-detail], .wb-nav .wb-matter-tl').length`
+/** 左栏"该有的两件套"：案卷条 + 列表（各 1 个）。 */
+const navShellCount = `return document.querySelectorAll('.wb-nav .wb-matter-bar, .wb-nav [data-matter-list]').length`
 
 try {
   await api.goto(pathToFileURL(PAGE).href)
@@ -100,8 +111,14 @@ try {
     && await api.evaluate(`return document.querySelector('[data-matter-row="2026-INV-001"]').textContent.includes('申请日 2026-09-20')`))
   check('无专利类型的行不渲染那一格（m2 只有案型「实用新型」）',
     await api.evaluate(`return document.querySelector('[data-matter-row="2026-UM-002"]').textContent.includes('实用新型')`))
-  check('还没选中时详情区只给一句提示',
-    await api.evaluate(bodyHas('选一个案卷看详情与时间线。')) && await api.evaluate(count('[data-matter-detail]')) === 0)
+  check('还没选中时右栏只给一句提示（左栏不出任何详情元素）',
+    await api.evaluate(count('.wb-detail [data-matter-detail-empty]')) === 1
+    && await api.evaluate(bodyHas('← 从左侧选择一个案卷查看详情'))
+    && await api.evaluate(count('[data-matter-detail]')) === 0
+    && await api.evaluate(navDetailParts) === 0)
+  check('左栏只有案卷条 + 列表（没有详情挂点）',
+    await api.evaluate(navShellCount) === 2 && await api.evaluate(navDetailParts) === 0,
+    `壳体 ${await api.evaluate(navShellCount)} 件 / 详情残留 ${await api.evaluate(navDetailParts)} 件`)
 
   // ---------------------------------------------------------------- 选中一行 → 明细三份一起到位
   await clickSelector('[data-matter-row="2026-UM-002"]')
@@ -112,8 +129,40 @@ try {
   check('列表行高亮跟着走（.on）',
     await api.evaluate(`return document.querySelector('[data-matter-row="2026-UM-002"]').className.includes('on')`))
   check('案卷条改口「案卷 3 个（已选 1 个）」', await api.evaluate(bodyHas('案卷 3 个（已选 1 个）')))
-  check('详情出现（按案号挂钩）且那句提示消失',
-    await api.evaluate(`return document.querySelector('[data-matter-detail="2026-UM-002"]') !== null`) && !(await api.evaluate(bodyHas('选一个案卷看详情与时间线。'))))
+  check('详情出现在**右栏**（按案号挂钩）、左栏一个都没有、占位消失',
+    await api.evaluate(`return document.querySelector('.wb-detail [data-matter-detail="2026-UM-002"]') !== null`)
+    && await api.evaluate(count('.wb-nav [data-matter-detail]')) === 0
+    && await api.evaluate(navDetailParts) === 0
+    && !(await api.evaluate(bodyHas('从左侧选择一个案卷查看详情'))))
+  check('详情四块整体都在右栏（字段 / 官文 / 期限 / 时间线）',
+    await api.evaluate(count('.wb-detail [data-matter-field="案型"]')) === 1
+    && await api.evaluate(count('.wb-detail [data-matter-notice]')) === 2
+    && await api.evaluate(count('.wb-detail [data-matter-deadline]')) === 2
+    && await api.evaluate(count('.wb-detail .wb-matter-tl [data-timeline-kind]')) === 5)
+
+  // ---------------------------------------------------------------- 换一行 / 切视图：选中与详情都跟着走
+  await clickSelector('[data-matter-row="2026-INV-001"]')
+  check('改点另一行 → 右栏详情换成新案号，列表高亮仍只有一处',
+    await api.evaluate(`return document.querySelector('.wb-detail [data-matter-detail="2026-INV-001"]') !== null`)
+    && await api.evaluate(count('.wb-matter-row.on')) === 1
+    && await api.evaluate(count('.wb-nav [data-matter-detail]')) === 0)
+  await clickSelector('[data-matter-row="2026-UM-002"]')
+  check('点回来 → 详情回到 m2（后面那些按 m2 的明细断言都靠它）',
+    await api.evaluate(`return document.querySelector('.wb-detail [data-matter-detail="2026-UM-002"]') !== null`)
+    && (await api.evaluate('return __h4.selectedId()')) === 'm2')
+  /**
+   * 切走视图再切回：两栏都会卸载重挂（真容器里左栏换成任务视图）。
+   * 选中 id 住在容器 → 回来必须还是 m2、详情必须还在（H4 plan §3 那条规则的实操口径）。
+   */
+  await api.evaluate("__h4.setView('list'); return true;")
+  await api.waitFor(`return document.querySelector('.wb-detail') === null`, { description: '右栏卸载（切到 list）' })
+  check('切到任务视图 → 案卷两栏整体不在 DOM 里', await api.evaluate(count('[data-matter-detail]')) === 0)
+  await api.evaluate("__h4.setView('matters'); return true;")
+  await api.waitFor(`return document.querySelector('.wb-detail [data-matter-detail]') !== null`, { description: '切回案卷视图' })
+  check('切回案卷视图 → 选中不丢、详情还是 m2、行仍高亮',
+    (await api.evaluate('return __h4.selectedId()')) === 'm2'
+    && await api.evaluate(`return document.querySelector('.wb-detail [data-matter-detail="2026-UM-002"]') !== null`)
+    && await api.evaluate(count('.wb-matter-row.on')) === 1)
 
   // ---------------------------------------------------------------- 字段区（缺失显示 "—"）
   check('字段区：案型翻译成中文、缺失的客户与申请日显示 "—"（不是 undefined）',
@@ -185,7 +234,7 @@ try {
     await api.evaluate(count('[data-matter-undated]')) === 1
     && await api.evaluate(bodyHas('以下 1 条没有可用日期')))
 
-  // ---------------------------------------------------------------- 编辑 / 新建 / 同步
+  // ---------------------------------------------------------------- 编辑 / 新建 / 刷新 / 同步
   await clickByText('.wb-card', '编辑')
   check('点「编辑」→ 容器收到 edit(当前案卷 id)（编辑框初值由容器填空）',
     JSON.stringify(await api.evaluate(lastCall('edit'))) === JSON.stringify(['m2']),
@@ -194,6 +243,14 @@ try {
   check('点「新建案卷」→ 容器收到 create()（不带参数 = 新建）',
     JSON.stringify(await api.evaluate(lastCall('create'))) === JSON.stringify([]),
     JSON.stringify(await api.evaluate(lastCall('create'))))
+  /**
+   * 「刷新」的接线本来是没被测过的（按钮先落地、重拉逻辑后补），这里补上：
+   * 它必须真的把意图发给容器（容器再去重拉列表）。
+   */
+  await clickSelector('[data-matter-refresh]')
+  check('点「刷新」→ 容器收到 refresh()（列表重拉由容器负责）',
+    JSON.stringify(await api.evaluate(lastCall('refresh'))) === JSON.stringify([]),
+    JSON.stringify(await api.evaluate(lastCall('refresh'))))
   await clickSelector('[data-matter-sync-events]')
   check('点「同步事件日志」→ 容器收到 syncEvents(当前案卷 id)',
     JSON.stringify(await api.evaluate(lastCall('syncEvents'))) === JSON.stringify(['m2']),
@@ -215,16 +272,38 @@ try {
   // ---------------------------------------------------------------- 空态
   await api.evaluate('__h4.setMattersEmpty(true); return true;')
   await api.waitFor(`return document.querySelector('[data-matter-empty]') !== null`, { description: '空态出现' })
-  check('一条都没有 → 「还没有案卷」+ 案卷条写 0 个 + 不渲染详情占位',
+  check('一条都没有 → 「还没有案卷」+ 案卷条写 0 个 + 右栏不给占位',
     await api.evaluate(bodyHas('还没有案卷'))
     && await api.evaluate(bodyHas('案卷 0 个'))
-    && !(await api.evaluate(bodyHas('选一个案卷看详情与时间线。'))))
+    && !(await api.evaluate(bodyHas('从左侧选择一个案卷查看详情')))
+    && await api.evaluate(count('[data-matter-detail-empty]')) === 0,
+    '空库时右栏不该喊"从左侧选一个"（左栏列表的空态已经说了还没有案卷）')
   check('空态下「新建案卷」仍可点（这是唯一的出口）',
     await api.evaluate(`return document.querySelector('[data-matter-create]').disabled === false`))
   await api.evaluate('__h4.setMattersEmpty(false); return true;')
   await api.waitFor(`return document.querySelector('[data-matter-row]') !== null`, { description: '回到列表' })
-  check('恢复列表后选中被清空（容器在换数据时一并清掉）',
-    (await api.evaluate('return __h4.selectedId()')) === null && await api.evaluate(bodyHas('选一个案卷看详情与时间线。')))
+  check('恢复列表后选中被清空（容器在换数据时一并清掉），右栏回到占位',
+    (await api.evaluate('return __h4.selectedId()')) === null
+    && await api.evaluate(count('.wb-detail [data-matter-detail-empty]')) === 1
+    && await api.evaluate(count('[data-matter-detail]')) === 0)
+
+  // ---------------------------------------------------------------- 窄面板：右栏不许横向溢出
+  /**
+   * 面板是**侧栏**（`left: var(--wb-sidebar-w)` 到视口右边），屏幕小或侧栏没收起时，
+   * 右栏（`flex:1`）会被压到 300px 上下。详情搬进右栏后这是新出现的风险面：
+   * 压窄时字段区那两列必须自己收成一列、官文行必须换行，**不许横向溢出**
+   *（`scrollWidth > clientWidth` = 用户看到"内容被切掉"）。
+   * 760px ≈ 一台 1366 笔记本展开侧栏后的面板宽度。
+   */
+  await clickSelector('[data-matter-row="2026-UM-002"]')
+  await api.cdp.send('Emulation.setDeviceMetricsOverride', { width: 760, height: 800, deviceScaleFactor: 1, mobile: false })
+  await api.waitFor('return document.documentElement.clientWidth === 760', { description: '视口收窄到 760px' })
+  check('窄视口（760px）下右栏不横向溢出，四张卡都还在',
+    await api.evaluate(`const el = document.querySelector('.wb-detail'); return el !== null && el.scrollWidth <= el.clientWidth + 1`)
+    && await api.evaluate(count('.wb-detail [data-matter-detail="2026-UM-002"] > .wb-card')) === 4,
+    `溢出量 ${await api.evaluate(`const el = document.querySelector('.wb-detail'); return el === null ? 'n/a' : el.scrollWidth - el.clientWidth`)}px`)
+  await api.cdp.send('Emulation.clearDeviceMetricsOverride')
+  await api.waitFor('return document.documentElement.clientWidth > 760', { description: '视口恢复' })
 
   // ---------------------------------------------------------------- 页面无异常
   check('无页面异常 / 无 console error', api.pageErrors.length === 0, JSON.stringify(api.pageErrors).slice(0, 300))
@@ -239,5 +318,5 @@ try {
   await api.close()
 }
 
-console.log(failed === 0 ? '\nH4-5 真浏览器验证：全绿' : `\nH4-5 真浏览器验证：${failed} 条失败`)
+console.log(failed === 0 ? '\n案卷视图真浏览器验证：全绿' : `\n案卷视图真浏览器验证：${failed} 条失败`)
 process.exit(failed === 0 ? 0 : 1)

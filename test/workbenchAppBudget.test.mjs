@@ -47,7 +47,13 @@ const BODY = workbenchAppBody(INDEX).join('\n')
 
 test('H4-9：index.tsx 总行数不超上界（拆分成果不许自己涨回来）', () => {
   const lines = lineCount(INDEX)
-  assert.ok(lines <= 4900, `index.tsx 已经 ${lines} 行（上界 4900）—— 有东西回流进容器了`)
+  /**
+   * 2026-10-16 上界 4900 → **4920**：案卷视图拆成左右两半后，容器里多了一支
+   * `.wb-detail` 分支（`view === 'matters'` → `MatterDetailPane`），实测 4913 行。
+   * 账本在 `docs/tasks/h4-split-workbench-app/subtasks.md`（"案卷详情移入右栏"那一节），
+   * 按本文件顶部那条规矩：**要放宽上界，先写成文档**。
+   */
+  assert.ok(lines <= 4920, `index.tsx 已经 ${lines} 行（上界 4920）—— 有东西回流进容器了`)
   // 反向保护：如果有人把文件**整个搬空**（拆分过头、容器变成空壳），也要来改这个数。
   assert.ok(lines >= 4000, `index.tsx 只剩 ${lines} 行 —— 容器被拆空了？先确认不是误删`)
 })
@@ -63,7 +69,12 @@ test('H4-9：WorkbenchApp 自己画的 JSX ≤ 650 行，本体 ≤ 3450 行', (
   assert.equal(markers.length, 1, `WorkbenchApp 本体的顶层 return 应恰好一处，实际 ${markers.length} 处`)
   const jsxLines = body.length - body.findIndex((line) => /^ {2}return \($/.test(line))
   assert.ok(jsxLines <= 650, `WorkbenchApp 自己画的 JSX 已 ${jsxLines} 行（上界 650）—— 视图画法又回容器了`)
-  assert.ok(body.length <= 3450, `WorkbenchApp 本体已 ${body.length} 行（上界 3450）`)
+  /**
+   * 2026-10-16 上界 3450 → **3480**：容器多承载一支右栏面板（`MatterDetailPane` 的挂载与
+   * props 装配），实测 3474 行。这是 plan §2 结构图本来就写着的"右栏详情 = 知识 / 案卷 / 任务"，
+   * 不是视图画法回流；账本见 `docs/tasks/h4-split-workbench-app/subtasks.md`。
+   */
+  assert.ok(body.length <= 3480, `WorkbenchApp 本体已 ${body.length} 行（上界 3480）`)
 })
 
 test('H4-9：WorkbenchApp 内 useState / useMemo / useEffect / useRef 不超上界', () => {
@@ -75,8 +86,12 @@ test('H4-9：WorkbenchApp 内 useState / useMemo / useEffect / useRef 不超上�
    * 2026-10-05 下调 **useMemo 16 → 15**（审计 §4.4 / §3.2）：列表树与类型 Tab 的条数
    * 合并成一次建树、一个 memo，容器里少了一处派生计算。**下调是棘轮**：既然做小了，
    * 就不许再涨回去（审计那条"不要让上界先涨"的反面）。
+   *
+   * 2026-10-16 上调 **useEffect 20 → 21**：进入案卷视图时重拉一次案卷列表那条 effect
+   *（案卷可能在别处被建出来，面板不重挂载就永远停在打开那一刻的快照）。
+   * 案卷详情移入右栏本身**没有**新增任何 hook —— 这次上调只为那条 effect。
    */
-  const budget = { useState: 105, useMemo: 15, useEffect: 20, useRef: 8 }
+  const budget = { useState: 105, useMemo: 15, useEffect: 21, useRef: 8 }
   for (const [hook, limit] of Object.entries(budget)) {
     const hit = occurrences(BODY, new RegExp(`${hook}[<(]`, 'g'))
     assert.ok(hit <= limit, `WorkbenchApp 内 ${hook} 已 ${hit} 处（上界 ${limit}）`)
@@ -92,15 +107,18 @@ test('H4-9：容器自己画的 DOM 只剩外壳（`className=` 上界）', () =
   assert.ok(hit <= 40, `WorkbenchApp 里还有 ${hit} 处 className=（上界 40）—— 视图画法又回来了`)
 })
 
-test('H4-9：拆出去的 16 个视图 / 弹窗仍各由容器挂载**一处**', () => {
+test('H4-9：拆出去的 17 个视图 / 弹窗仍各由容器挂载**一处**', () => {
   /**
    * 「单函数不再承载 5 个视图的 JSX」的可核实版本：每个视图/弹窗在容器里**恰好**出现一次。
    * 0 处 = 接线断了（视图再也渲染不出来）；2 处 = 同一个视图有两处挂载（重复渲染 / 两条数据来源，
    * 本仓的头号 bug 类别）。确实需要第二个入口时（历史上 `WorkspacePicker` 就有三个），
    * 来这里加数字并写清理由。
+   *
+   * 第 17 个是 2026-10-16 加的 `MatterDetailPane`：案卷视图拆成左右两半后，
+   * 右栏那一半是独立组件（与 `KnowledgeView` / `KnowledgeDetailPane` 这一对同构）。
    */
   const components = [
-    'CalendarView', 'TodayView', 'KnowledgeView', 'KnowledgeDetailPane', 'MatterPane', 'TasksView', 'TaskDetailPane',
+    'CalendarView', 'TodayView', 'KnowledgeView', 'KnowledgeDetailPane', 'MatterPane', 'MatterDetailPane', 'TasksView', 'TaskDetailPane',
     'QuickEntryModal', 'MatterDraftModal', 'NoticeDraftModal', 'ReminderModal', 'DuplicatePromptModal',
     'PromptModal', 'NewTaskModal', 'EditTaskModal', 'PendingModal',
   ]

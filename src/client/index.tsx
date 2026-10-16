@@ -76,6 +76,7 @@ import { KnowledgeView } from './components/views/KnowledgeView.js'
 import { KnowledgeDetailPane } from './components/views/KnowledgeDetailPane.js'
 import { PlanPanel } from './components/PlanPanel.js'
 import { MatterPane } from './components/views/MatterPane.js'
+import { MatterDetailPane } from './components/views/MatterDetailPane.js'
 import { TasksView } from './components/views/TasksView.js'
 import { QuickEntryModal } from './components/dialogs/QuickEntryModal.js'
 import { MatterDraftModal } from './components/dialogs/MatterDraftModal.js'
@@ -899,6 +900,17 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     if (view === 'knowledge') void loadKnowledge().catch(() => undefined)
   }, [view, loadKnowledge, knowledgeRefreshKey])
   useEffect(() => { void loadMatters().catch(() => undefined) }, [loadMatters])
+  /**
+   * 进入案卷视图时**重新拉**一次列表 —— 只靠上面那条挂载时的拉取不够。
+   *
+   * 为什么必须有（实测踩过）：案卷可能在**别处**被建出来（AI 在会话里建案卷、另一个 profile
+   * 写入同一个库、扫描导入落库），而本面板一旦打开就不再重挂载 —— 界面于是永远停在
+   * "打开那一刻"的快照。实测：库里已有 22 个案卷，界面却一直显示 9 个，切标签也不变。
+   * 知识库早就是这条口径（见上面 `loadKnowledge` 那条），案卷这条当时漏了。
+   */
+  useEffect(() => {
+    if (view === 'matters') void loadMatters().catch(() => undefined)
+  }, [view, loadMatters])
   useEffect(() => {
     if (view !== 'matters' || selectedMatterId === null) return
     void loadMatterDetail(selectedMatterId).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -3408,8 +3420,10 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
             />
           )}
           {/**
-            * 案卷视图（H4-5）：案卷条 + 列表 + 详情搬去 `components/views/MatterPane.tsx`
-            *（文件名与相邻的 `components/MattersView.tsx` 部件库区分开，见该文件头）。
+            * 案卷视图（H4-5）：左栏（案卷条 + 列表）搬去 `components/views/MatterPane.tsx`
+            *（文件名与相邻的 `components/MattersView.tsx` 部件库区分开，见该文件头），
+            * 右栏（详情）搬去 `MatterDetailPane.tsx` —— 左栏与右栏是两个兄弟容器，
+            * 一个组件盖不住两块 DOM（与知识视图同一条分工）。
             * 选中 id、三份明细与两条回执仍留在容器 —— 它们活得比视图久（plan §3），
             * 写在容器里的 `loadMatterDetail` effect 也照旧按 `view === 'matters'` 触发。
             */}
@@ -3418,23 +3432,11 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               matters={matters}
               dicts={dicts}
               selectedMatterId={selectedMatterId}
-              selectedMatter={selectedMatter}
-              timeline={matterTimeline}
-              notices={matterNotices}
-              deadlines={matterDeadlines}
-              engineAvailable={bootstrap?.deadlineEngineAvailable === true}
-              recomputeNote={matterRecomputeNote}
-              syncNote={matterSyncNote}
               busy={busy}
               onOpen={(matter) => setSelectedMatterId(matter.id)}
               onCreate={() => openMatterForm(null)}
               onImport={matterImport.openImport}
-              onEdit={(matter) => openMatterForm(matter)}
-              onAddNotice={openNoticeForm}
-              onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
-              onRecompute={(matterId) => void recomputeMatterDeadlines(matterId)}
-              onSetDeadlineStatus={(deadlineId, status) => void setMatterDeadlineStatus(deadlineId, status)}
-              onSyncEvents={(matterId) => void syncMatterEvents(matterId)}
+              onRefresh={() => void loadMatters()}
             />
           )}
           {/**
@@ -3486,7 +3488,32 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         </div>
 
         <div className="wb-detail">
-          {view === 'knowledge'
+          {/**
+            * 右栏按 view 三选一（与 plan §2 的结构图一致：右栏详情 = 知识 / 案卷 / 任务）。
+            * 案卷这一支是 2026-10-16 补的：在此之前案卷详情堆在左栏列表下面，右栏落到了
+            * 「其余 → 任务详情」这一支，于是看案卷时右边会挂着上一个被选中的任务。
+            */}
+          {view === 'matters'
+            ? (
+              <MatterDetailPane
+                selectedMatter={selectedMatter}
+                matterCount={matters.length}
+                dicts={dicts}
+                timeline={matterTimeline}
+                notices={matterNotices}
+                deadlines={matterDeadlines}
+                engineAvailable={bootstrap?.deadlineEngineAvailable === true}
+                recomputeNote={matterRecomputeNote}
+                syncNote={matterSyncNote}
+                busy={busy}
+                onEdit={(matter) => openMatterForm(matter)}
+                onAddNotice={openNoticeForm}
+                onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
+                onRecompute={(matterId) => void recomputeMatterDeadlines(matterId)}
+                onSetDeadlineStatus={(deadlineId, status) => void setMatterDeadlineStatus(deadlineId, status)}
+                onSyncEvents={(matterId) => void syncMatterEvents(matterId)}
+              />
+            )            : view === 'knowledge'
             ? (
               <KnowledgeDetailPane
                 draft={knowledgeDraft}

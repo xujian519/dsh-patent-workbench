@@ -22,6 +22,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MatterDetail, MatterList, UpcomingDeadlines, deadlineStatusLabel } from '../lib/client/components/MattersView.js'
+import { MatterDetailPane } from '../lib/client/components/views/MatterDetailPane.js'
 import { buildMatterTimeline } from '../lib/client/matterTimeline.js'
 
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
@@ -31,8 +32,14 @@ const viewSource = read('src/client/components/MattersView.tsx')
  * H4-5 把案卷视图主体（案卷条 + 列表 + 详情）搬去了 `components/views/MatterPane.tsx`。
  * 扫描范围因此**扩到新落点**（plan §5.4：迁移而不是删除）——`viewSource` 仍是那两个部件的
  * 家，视图装配那几条改看 `paneSource`，并各补一条反向断言（`index.tsx` 不许再直接渲染它们）。
+ *
+ * 2026-10-16：案卷视图拆成左右两半（`.wb-nav` 左栏 = `MatterPane`，`.wb-detail` 右栏 =
+ * `MatterDetailPane`）。详情那条判据的**落点**随之从 `paneSource` 迁到 `detailPaneSource`，
+ * 意图一个字没改（详情必须由视图组件渲染，不许回到容器），并补了三条反向判据 ——
+ * 左栏不许再画详情、容器必须挂右栏组件、那次挂载必须在 `.wb-detail` 之后。
  */
 const paneSource = read('src/client/components/views/MatterPane.tsx')
+const detailPaneSource = read('src/client/components/views/MatterDetailPane.tsx')
 const routeSource = read('src/api/routes/matters.ts')
 const repoSource = read('src/db/repo/matters.ts')
 const timelineSource = read('src/client/matterTimeline.ts')
@@ -77,7 +84,25 @@ test('5B：案件视图已接进视图联合与顶栏（否则代码在、点不
   assert.match(clientSource, /<MatterPane\b/, 'matters 视图主体必须挂新的 MatterPane（H4-5）')
   assert.doesNotMatch(clientSource, /<Matter(List|Detail)\b/, 'index.tsx 不许再直接渲染列表/详情（已搬进 MatterPane）')
   assert.match(paneSource, /<MatterList\b/, 'MatterPane 里必须真的挂列表')
-  assert.match(paneSource, /<MatterDetail\b/, 'MatterPane 里必须真的挂详情')
+  /**
+   * 详情那半边（2026-10-16 迁落点，判据意图不变）。
+   * ⚠️ `/<MatterDetail\b/` 匹配不到 `<MatterDetailPane`（`\b` 在 `Detail` 与 `Pane` 之间不成立），
+   * 所以这两条断言各盯各的组件，一个字都不用放宽。
+   */
+  assert.match(detailPaneSource, /<MatterDetail\b/, 'MatterDetailPane 里必须真的挂详情')
+  assert.doesNotMatch(paneSource, /<MatterDetail\b/, 'MatterPane（左栏）不许再画详情 —— 详情在右栏的 MatterDetailPane')
+  assert.match(clientSource, /<MatterDetailPane\b/, '容器必须挂 MatterDetailPane（右栏）')
+  /**
+   * 只看"挂了一次"不够：挂回左栏照样是一次，而用户要的是"**详情在右侧**"。
+   * 所以再加一条位置判据 —— 那次挂载必须在 `.wb-detail` 这个 div 之后（用 `indexOf` 比较，不写行号）。
+   */
+  assert.ok(
+    clientSource.indexOf('<div className="wb-detail">') < clientSource.indexOf('<MatterDetailPane'),
+    'MatterDetailPane 必须挂在右栏容器 .wb-detail 里（在 .wb-detail 之后出现）',
+  )
+  // 占位文案跟着详情走：左栏那句「选一个案卷看详情与时间线。」已随详情搬到右栏。
+  assert.doesNotMatch(paneSource, /选一个案卷看详情/, '左栏不再出详情占位（详情那一半搬走了）')
+  assert.match(detailPaneSource, /从左侧选择一个案卷查看详情/, '右栏要有"还没选"的占位')
 })
 
 test('5B：详情真的拉官文/期限/事件三份（少一份时间线就会静默缺一块）', () => {
@@ -201,6 +226,51 @@ test('SSR：时间线里没有日期的条目要单独列出来并说明（不�
   assert.match(html, /data-matter-undated/)
   assert.match(html, /没有可用日期/)
   assert.match(html, /导入时缺日期/)
+})
+
+// ---------------------------------------------------------------------------
+// 2026-10-16：右栏（`MatterDetailPane`）—— 详情搬去 `.wb-detail` 之后的真渲染
+// ---------------------------------------------------------------------------
+
+/** 右栏组件的完整 props（选中项与明细可覆盖）。 */
+const detailPaneProps = (over = {}) => ({
+  selectedMatter: matter(), matterCount: 1, dicts: DICTS, timeline: timeline(),
+  notices: [], deadlines: [], engineAvailable: true, recomputeNote: '', syncNote: '', busy: false,
+  onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, onSyncEvents: () => {},
+  ...over,
+})
+
+test('SSR：右栏选中案卷 —— 四块（字段/官文/期限/时间线）都真的渲染出来', () => {
+  /**
+   * 这条防的是"拆成两个组件之后，右栏只挂了个空壳"：详情本体在 `MatterDetail` 部件里，
+   * 这里逐块点一遍（字段 / 官文 / 期限 / 时间线 / 同步按钮），确认转发没漏。
+   */
+  const html = renderToStaticMarkup(createElement(MatterDetailPane, detailPaneProps({
+    notices: [{ id: 'n1', noticeKind: 'office_action_first', dispatchDate: '2026-10-05', deliveryMode: 'electronic', deliveryDate: null, designatedMonths: 4, fileLink: null, note: null }],
+    deadlines: [deadlineRow()],
+  })))
+  assert.match(html, /data-matter-detail="2026-UM-002"/)
+  assert.match(html, /data-matter-field="客户">—/)
+  assert.match(html, /第一次审查意见通知书/)
+  assert.match(html, /届满 2026-10-20/)
+  assert.match(html, /data-timeline-kind="event"/)
+  assert.match(html, /data-matter-sync-events/)
+  assert.doesNotMatch(html, /从左侧选择一个案卷查看详情/, '选中了就不该再出占位')
+  assert.doesNotMatch(html, /undefined/)
+})
+
+test('SSR：右栏未选中 —— 有案卷时给占位；一条案卷都没有时什么都不画', () => {
+  const withMatters = renderToStaticMarkup(createElement(MatterDetailPane, detailPaneProps({ selectedMatter: null, matterCount: 3 })))
+  assert.match(withMatters, /data-matter-detail-empty/)
+  assert.match(withMatters, /← 从左侧选择一个案卷查看详情/)
+  assert.doesNotMatch(withMatters, /data-matter-detail="/, '没选中就没有详情挂点')
+
+  /**
+   * 空库这一支是**故意**不给占位的：左栏列表自己的空态写着「还没有案卷。点「新建案卷」建档…」，
+   * 右栏再喊一句"从左侧选一个"是句做不到的话（与期限看板"空看板必须能自证原因"同一条口径）。
+   */
+  const noMatters = renderToStaticMarkup(createElement(MatterDetailPane, detailPaneProps({ selectedMatter: null, matterCount: 0 })))
+  assert.equal(noMatters, '', '空库时右栏渲染空串（不是占位）')
 })
 
 // ---------------------------------------------------------------------------
@@ -348,6 +418,11 @@ test('5D：实体的既有称谓是「案卷」—— 界面文案不再出现�
    * 历史迁移注释里的旧表述（"案件 = 根任务"）是**当时的记录**，按纪律不改写，所以只扫这几处文案源。
    */
   const uiSources = ['src/client/index.tsx', 'src/client/components/MattersView.tsx', 'src/client/components/views/MatterPane.tsx', 'src/client/matterTimeline.ts',
+    /**
+     * 2026-10-16：案卷详情拆去右栏，`MatterDetailPane.tsx` 渲染的同样是用户可见文案
+     *（占位那句 + 转发给 `MatterDetail` 的部分），扫描范围跟着扩（迁移而不是缩小覆盖面）。
+     */
+    'src/client/components/views/MatterDetailPane.tsx',
     /**
      * H4-8：建档 / 官文登记表单搬去了 `components/dialogs/` —— 它们渲染的同样是用户可见文案，
      * 扫描范围跟着扩（plan §5.4：迁移而不是缩小覆盖面）。
