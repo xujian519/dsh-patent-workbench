@@ -21,7 +21,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MatterDetail, MatterList, UpcomingDeadlines, deadlineStatusLabel } from '../lib/client/components/MattersView.js'
+import { MatterDetail, MatterList, UpcomingDeadlines, deadlineStatusLabel, retainSelectedMatterId } from '../lib/client/components/MattersView.js'
 import { MatterDetailPane } from '../lib/client/components/views/MatterDetailPane.js'
 import { buildMatterTimeline } from '../lib/client/matterTimeline.js'
 
@@ -95,6 +95,8 @@ test('5B：案件视图已接进视图联合与顶栏（否则代码在、点不
   /**
    * 只看"挂了一次"不够：挂回左栏照样是一次，而用户要的是"**详情在右侧**"。
    * 所以再加一条位置判据 —— 那次挂载必须在 `.wb-detail` 这个 div 之后（用 `indexOf` 比较，不写行号）。
+   * ⚠️ 这只是**顺序启发式**，证明不了包含关系（挂到文件更靠后的弹窗里照样绿）；
+   * 结构真相在真浏览器断言里：`verify-h4-matters.mjs` 量 `.wb-nav [data-matter-detail]` 必须为 0。
    */
   assert.ok(
     clientSource.indexOf('<div className="wb-detail">') < clientSource.indexOf('<MatterDetailPane'),
@@ -271,6 +273,20 @@ test('SSR：右栏未选中 —— 有案卷时给占位；一条案卷都没有
    */
   const noMatters = renderToStaticMarkup(createElement(MatterDetailPane, detailPaneProps({ selectedMatter: null, matterCount: 0 })))
   assert.equal(noMatters, '', '空库时右栏渲染空串（不是占位）')
+})
+
+test('5B：重拉案卷列表后失效的选中要清掉（否则左栏说"已选 1 个"、右栏说"请选择一个"）', () => {
+  /**
+   * 2026-10-16 独立复核发现：harness 一直在替容器清选中，而容器的 `loadMatters` 从不清理 ——
+   * 绿的其实是脚手架。规则现在落在 `retainSelectedMatterId` 这个纯函数里（两个分支都能测），
+   * 容器与 harness 都调它。为什么必须清：左栏读 id（写「案卷 3 个（已选 1 个）」）、
+   * 右栏读对象（查不到就是占位），留着失效 id 会让两块同时说反话。
+   */
+  const list = [matter(), matter({ id: 'm2' })]
+  assert.equal(retainSelectedMatterId('m2', list), 'm2', '列表里还有就必须留着 —— 每次重拉都清空会把用户的选中弄丢')
+  assert.equal(retainSelectedMatterId('m9', list), null, '列表里已经没有了要清成 null')
+  assert.equal(retainSelectedMatterId(null, list), null, '本来没选中就别凭空选一个')
+  assert.match(clientSource, /retainSelectedMatterId\(prev,/, '容器必须真的调用它（纯函数没人调 = 死代码）')
 })
 
 // ---------------------------------------------------------------------------

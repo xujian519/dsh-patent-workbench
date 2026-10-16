@@ -89,6 +89,7 @@ import { PromptModal } from './components/dialogs/PromptModal.js'
 import { NewTaskModal } from './components/dialogs/NewTaskModal.js'
 import { EditTaskModal, type EditTaskDraft } from './components/dialogs/EditTaskModal.js'
 import { PendingModal } from './components/dialogs/PendingModal.js'
+import { retainSelectedMatterId } from './components/MattersView.js'
 import type { MatterDeadlineView, MatterNoticeView, MatterView, UpcomingDeadlineView } from './components/MattersView.js'
 import { buildMatterTimeline, type MatterTimelineEvent } from './matterTimeline.js'
 import {
@@ -636,6 +637,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const loadMatters = useCallback(async () => {
     const res = await api<{ matters: MatterView[] }>('/api/workbench/matters')
     setMatters(res.matters)
+    setSelectedMatterId((prev) => retainSelectedMatterId(prev, res.matters))
   }, [])
 
   /**

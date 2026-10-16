@@ -282,28 +282,33 @@ try {
     await api.evaluate(`return document.querySelector('[data-matter-create]').disabled === false`))
   await api.evaluate('__h4.setMattersEmpty(false); return true;')
   await api.waitFor(`return document.querySelector('[data-matter-row]') !== null`, { description: '回到列表' })
-  check('恢复列表后选中被清空（容器在换数据时一并清掉），右栏回到占位',
+  check('恢复列表后选中被清空（重拉时按 retainSelectedMatterId 规则清掉失效选中），右栏回到占位',
     (await api.evaluate('return __h4.selectedId()')) === null
     && await api.evaluate(count('.wb-detail [data-matter-detail-empty]')) === 1
     && await api.evaluate(count('[data-matter-detail]')) === 0)
 
   // ---------------------------------------------------------------- 窄面板：右栏不许横向溢出
   /**
-   * 面板是**侧栏**（`left: var(--wb-sidebar-w)` 到视口右边），屏幕小或侧栏没收起时，
-   * 右栏（`flex:1`）会被压到 300px 上下。详情搬进右栏后这是新出现的风险面：
-   * 压窄时字段区那两列必须自己收成一列、官文行必须换行，**不许横向溢出**
-   *（`scrollWidth > clientWidth` = 用户看到"内容被切掉"）。
-   * 760px ≈ 一台 1366 笔记本展开侧栏后的面板宽度。
+   * 面板是**侧栏**（`left: var(--wb-sidebar-w, 280px)` 到视口右边），所以**面板宽 = 视口 − 侧栏宽**。
+   * 详情搬进右栏后这是新出现的风险面：改前详情住在有 420px 地板的 `.wb-nav` 里（内容恒 ≥384px），
+   * 改后是 `flex:1` 的右栏 = 面板宽 − 420 − padding。压窄时字段区必须自己收成一列、官文行必须换行，
+   * **不许横向溢出**（`scrollWidth > clientWidth` = 用户看到"内容被切掉"）。
+   *
+   * 宽度**逐档量过**（2026-10-16 探针：量 `.wb-detail` 与卡片的 `scrollWidth - clientWidth`）：
+   * ≥700px 全为 0；**680px 起字段网格溢出 10px、卡片 7px；660px 起 `.wb-detail` 自身也溢出**。
+   * 所以这里钉 **700**（实测最后一个干净宽度），不是随手挑的 760 —— 悬崖在 680~690，
+   * 面板窄到那一带会横向滚动（已知退化，账本见 docs/tasks/h4-split-workbench-app/subtasks.md）。
+   * 700px ≈ 一台 980px 窗口去掉 280px 侧栏后的面板宽。
    */
   await clickSelector('[data-matter-row="2026-UM-002"]')
-  await api.cdp.send('Emulation.setDeviceMetricsOverride', { width: 760, height: 800, deviceScaleFactor: 1, mobile: false })
-  await api.waitFor('return document.documentElement.clientWidth === 760', { description: '视口收窄到 760px' })
-  check('窄视口（760px）下右栏不横向溢出，四张卡都还在',
+  await api.cdp.send('Emulation.setDeviceMetricsOverride', { width: 700, height: 800, deviceScaleFactor: 1, mobile: false })
+  await api.waitFor('return document.documentElement.clientWidth === 700', { description: '视口收窄到 700px' })
+  check('窄视口（700px）下右栏不横向溢出，四张卡都还在',
     await api.evaluate(`const el = document.querySelector('.wb-detail'); return el !== null && el.scrollWidth <= el.clientWidth + 1`)
     && await api.evaluate(count('.wb-detail [data-matter-detail="2026-UM-002"] > .wb-card')) === 4,
     `溢出量 ${await api.evaluate(`const el = document.querySelector('.wb-detail'); return el === null ? 'n/a' : el.scrollWidth - el.clientWidth`)}px`)
   await api.cdp.send('Emulation.clearDeviceMetricsOverride')
-  await api.waitFor('return document.documentElement.clientWidth > 760', { description: '视口恢复' })
+  await api.waitFor('return document.documentElement.clientWidth > 700', { description: '视口恢复' })
 
   // ---------------------------------------------------------------- 页面无异常
   check('无页面异常 / 无 console error', api.pageErrors.length === 0, JSON.stringify(api.pageErrors).slice(0, 300))

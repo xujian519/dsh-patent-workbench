@@ -117,6 +117,19 @@ export function deadlineStatusLabel(status: string | null): string {
   return DEADLINE_STATUS_LABELS[status] ?? status
 }
 
+/**
+ * 重拉案卷列表后该选中哪一个：列表里还有这个 id 就留着，已经没了就清成 `null`。
+ *
+ * 为什么必须有：案卷可能在**别处**被删（AI 会话、另一个 profile 写同一个库、手工删档），
+ * 而 `selectedMatterId` 住容器、重拉列表不会碰它。留着失效 id 会让两块自相矛盾 ——
+ * 左栏写「（已选 1 个）」、右栏写「← 从左侧选择一个案卷查看详情」
+ *（那三个明细 GET 对不存在的案卷返回空列表、不报错，所以矛盾是这里唯一的症状）。
+ * 反过来，"列表里还有"**必须**留着：每次重拉都清空，会把用户的选中无端弄丢。
+ */
+export function retainSelectedMatterId(prev: string | null, matters: readonly MatterView[]): string | null {
+  return prev !== null && matters.some((matter) => matter.id === prev) ? prev : null
+}
+
 /** 阶段徽标（字典名 + 码，用户能对着《专利审查指南》里的案卷生命周期念出来）。 */
 function StageBadge({ dicts, code }: { dicts: readonly Dict[]; code: string }): JSX.Element {
   const entry = dicts.find((dict) => dict.kind === 'matter_stage' && dict.code === code)

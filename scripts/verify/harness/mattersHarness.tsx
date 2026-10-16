@@ -23,6 +23,7 @@ import { createRoot } from 'react-dom/client'
 import { MatterPane } from '../../../src/client/components/views/MatterPane.js'
 import { MatterDetailPane } from '../../../src/client/components/views/MatterDetailPane.js'
 import { buildMatterTimeline, type MatterTimelineEvent } from '../../../src/client/matterTimeline.js'
+import { retainSelectedMatterId } from '../../../src/client/components/MattersView.js'
 import type { MatterDeadlineView, MatterNoticeView, MatterView } from '../../../src/client/components/MattersView.js'
 import { WORKBENCH_CSS } from '../../../src/client/styles.js'
 import type { Dict } from '../../../src/client/viewTypes.js'
@@ -116,7 +117,12 @@ function Harness(): JSX.Element {
       selectedId: () => selectedMatterId,
       view: () => view,
       setView: (next: 'matters' | 'list') => setView(next),
-      setMattersEmpty: (empty: boolean) => { setMatters(empty ? [] : MATTERS); setSelectedMatterId(null) },
+      // 与容器同一条规则：重拉列表后，选中 id 已不在列表里就清掉（`retainSelectedMatterId`）。
+      setMattersEmpty: (empty: boolean) => {
+        const next = empty ? [] : MATTERS
+        setMatters(next)
+        setSelectedMatterId((prev) => retainSelectedMatterId(prev, next))
+      },
       setEngineAvailable,
     }
   })
