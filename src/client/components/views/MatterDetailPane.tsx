@@ -62,18 +62,19 @@ export function MatterDetailPane({
       ? null
       : <div className="wb-empty" data-matter-detail-empty>← 从左侧选择一个案卷查看详情</div>
   }
+  /** props 与 `MatterDetail` 的声明同序：漏转发一个，逐行对照就能看出来。 */
   return (
     <MatterDetail
       matter={selectedMatter}
       dicts={dicts}
       timeline={timeline}
       notices={notices}
-      onEdit={() => onEdit(selectedMatter)}
-      onAddNotice={onAddNotice}
-      onDeleteNotice={onDeleteNotice}
       deadlines={deadlines}
       engineAvailable={engineAvailable}
       recomputeNote={recomputeNote}
+      onEdit={() => onEdit(selectedMatter)}
+      onAddNotice={onAddNotice}
+      onDeleteNotice={onDeleteNotice}
       onRecompute={() => onRecompute(selectedMatter.id)}
       onSetDeadlineStatus={onSetDeadlineStatus}
       onSyncEvents={() => onSyncEvents(selectedMatter.id)}

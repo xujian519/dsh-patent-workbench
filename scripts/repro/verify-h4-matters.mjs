@@ -198,7 +198,7 @@ try {
     && await api.evaluate(bodyHas('专利法实施细则'))
     && await api.evaluate(bodyHas('待处理'))
     && await api.evaluate(bodyHas('已完成'))
-    && await api.evaluate(count('[data-deadline-caveat]') + ' === 1')
+    && await api.evaluate(count('[data-deadline-caveat]')) === 1
     && await api.evaluate(bodyHas('日历未覆盖')))
   check('重算说明按容器给的原话渲染（含引擎 pending 口径）',
     await api.evaluate(bodyHas('重算完成：2 条真日期期限')))
@@ -313,7 +313,7 @@ try {
   // ---------------------------------------------------------------- 页面无异常
   check('无页面异常 / 无 console error', api.pageErrors.length === 0, JSON.stringify(api.pageErrors).slice(0, 300))
 
-  await clickSelector('[data-matter-row="2026-UM-002"]')
+  // 截图里的选中项就是上面窄视口那一段点中的 m2（此后没再动过选中）。
   await api.screenshot(SHOT)
   console.log(`\n截图：${SHOT.replace(`${ROOT}/`, '')}`)
 } catch (error) {

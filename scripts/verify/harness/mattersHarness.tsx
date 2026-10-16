@@ -90,9 +90,10 @@ const EVENTS: MatterTimelineEvent[] = [
 ]
 
 const calls: Array<{ name: string; args: unknown[] }> = []
-/** 无参入口：容器侧就是"摊开一份空草稿"，这里只记一次调用。
- *  ⚠️ 不能写成 `onCreate={record('create')}` —— 它挂在 `onClick` 上，React 会把**点击事件**
- *  传进来，`api.evaluate` 序列化那个合成事件时会直接报 "Object reference chain is too long"。 */
+/** 无参入口（容器侧就是"摊开一份空草稿"）：**不收参数**，只记一次调用。
+ *  ⚠️ 别把它写成"把收到的参数原样记下来"的通用版本：下面有一条挂在 `onClick` 上，
+ *  React 会把**点击事件**传进来，`api.evaluate` 序列化那个合成事件时会直接报
+ *  "Object reference chain is too long"。 */
 const noArgs = (name: string) => (): void => { calls.push({ name, args: [] }) }
 
 function Harness(): JSX.Element {

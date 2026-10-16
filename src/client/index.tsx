@@ -3508,7 +3508,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 recomputeNote={matterRecomputeNote}
                 syncNote={matterSyncNote}
                 busy={busy}
-                onEdit={(matter) => openMatterForm(matter)}
+                onEdit={openMatterForm}
                 onAddNotice={openNoticeForm}
                 onDeleteNotice={(noticeId) => void deleteNotice(noticeId)}
                 onRecompute={(matterId) => void recomputeMatterDeadlines(matterId)}
