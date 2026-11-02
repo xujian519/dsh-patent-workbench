@@ -2193,6 +2193,17 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     void startAISession(mode, task, task.title)
   }
 
+  const openSelectedAcceptance = (): void => {
+    void openTaskAcceptance(selected?.task.id ?? '', {
+      drafts: allPendingDrafts,
+      pendingItems: pendingCompletions?.available === true ? pendingCompletions.items : [],
+      resumePending: resumePendingDraft,
+      resumeDeferred: resumeDeferredDraft,
+      fetchDraft: (id) => api<{ draft: DraftView }>(`/api/workbench/drafts/${id}`).then((res) => res.draft),
+      notify: setNotice, fail: setError,
+    })
+  }
+
   /** 子任务页签里的新建表单：视图读表单，请求与善后（清父任务、提示、刷新）在这里。 */
   const createSubtask = (draft: SubtaskDraft): void => {
     if (subtaskParent === null) return
@@ -3569,7 +3580,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 onSaveProgress={saveSelectedProgress}
                 onCompleteFromProgress={completeSelectedFromProgress}
                 onStartAI={startDetailAI}
-                onOpenAcceptance={() => { void openTaskAcceptance(selected?.task.id ?? '', { drafts: allPendingDrafts, pendingItems: pendingCompletions?.available === true ? pendingCompletions.items : [], resumePending: resumePendingDraft, resumeDeferred: resumeDeferredDraft, fetchDraft: (id) => api<{ draft: DraftView }>(`/api/workbench/drafts/${id}`).then((res) => res.draft), notify: setNotice, fail: (message) => setError(message) }) }}
+                onOpenAcceptance={openSelectedAcceptance}
                 onOpenSession={openSessionInPanel}
                 onOpenTask={openTask}
                 onAddReminder={(offsetMinutes) => void addTaskReminder(offsetMinutes)}
@@ -3584,14 +3595,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
             )}
         </div>
       </div>
-      {/**
-        * 快速录入弹窗（H4-7）：一句话 + 附件 + 工作区 / 技能 / 角色 / 模型搬去
-        * `components/dialogs/QuickEntryModal.tsx`。**一个 state 都没搬** ——
-        * 工作区预填由上面的 `openQuickEntry` 判定（有行为级测试逐字抽它跑），
-        * 附件刻意**跨开关保留**（容器不在打开时清空它），
-        * 模型选择还与共享提示词弹窗共用同一份 state。
-        * 弹窗只管画与发意图；装配（记工作区、起澄清会话）留在 `submitQuickEntry`。
-        */}
+      {/* 快速录入：预填、附件跨开关保留、与提示词弹窗共用的模型 state 都留在容器；弹窗只发意图。 */}
       {showQuick && (
         <QuickEntryModal
           text={quickText}
