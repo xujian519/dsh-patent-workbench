@@ -15,7 +15,7 @@
  * 它的字段（申请号/公开号/申请日/优先权要求/技术领域…）根本不适合塞进任务详情，
  * 而任务语义（今日/优先级/重复）对案卷也不成立 —— 混着放的结果是两边都别扭。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Dict } from '../viewTypes.js'
 import type { MatterTimeline, MatterTimelineEntry } from '../matterTimeline.js'
 import { groupUpcomingDeadlines } from '../deadlineBoard.js'
@@ -144,18 +144,123 @@ function StageBadge({ dicts, code }: { dicts: readonly Dict[]; code: string }): 
 }
 
 /**
+ * 案卷列表的轻量搜筛（方案 A）。
+ *
+ * 只匹配案号与名称，大小写不敏感；阶段用字典里的 `matter_stage` 码，空串 = 全部。
+ * **不重排**：未筛时原样返回同一数组（后端 `updated_at DESC` 的顺序一个字不动）。
+ * 筛是前端内存过滤，状态住在 `MatterPane`，不进 `WorkbenchApp`。
+ */
+export function isMatterFilterActive(query: string, stageCode: string): boolean {
+  return query.trim() !== '' || stageCode !== ''
+}
+
+export function filterMatters(matters: readonly MatterView[], query: string, stageCode: string): readonly MatterView[] {
+  const needle = query.trim().toLowerCase()
+  if (needle === '' && stageCode === '') return matters
+  return matters.filter((matter) => {
+    if (stageCode !== '' && matter.stageCode !== stageCode) return false
+    if (needle === '') return true
+    return matter.caseNumber.toLowerCase().includes(needle) || matter.title.toLowerCase().includes(needle)
+  })
+}
+
+/** 阶段下拉：全部之外的选项，顺序与字典给出的一致（不另排）。 */
+export function matterStageOptions(dicts: readonly Dict[]): Array<{ code: string; name: string }> {
+  const options: Array<{ code: string; name: string }> = []
+  for (const dict of dicts) {
+    if (dict.kind !== 'matter_stage') continue
+    options.push({ code: dict.code, name: dict.name === '' ? dict.code : dict.name })
+  }
+  return options
+}
+
+/** 工具条计数。未筛保持「案卷 N 个」；有筛时在后面加上「已筛 M」。 */
+export function matterListCountLabel(total: number, shown: number, filtering: boolean, selected: boolean): string {
+  const base = filtering ? `案卷 ${total} 个 · 已筛 ${shown}` : `案卷 ${total} 个`
+  return selected ? `${base}（已选 1 个）` : base
+}
+
+/** 详情四区。字段 / 官文 / 期限 / 时间线，开合只影响显隐，不碰数据。 */
+export type MatterSectionId = 'fields' | 'notices' | 'deadlines' | 'timeline'
+
+export interface MatterSectionCounts {
+  notices: number
+  deadlines: number
+  timeline: number
+}
+
+export interface MatterSectionOpen {
+  fields: boolean
+  notices: boolean
+  deadlines: boolean
+  timeline: boolean
+}
+
+export interface MatterSectionState {
+  matterId: string
+  counts: MatterSectionCounts
+  open: MatterSectionOpen
+}
+
+/**
+ * 四区统一默认展开。
+ *
+ * 空区里有现在就要看见的说明（官文是期限的输入源、引擎降级、时间线方向），
+ * 折起来等于把这些话藏掉。用户要减噪再自己折。
+ */
+export function initialMatterSectionOpen(): MatterSectionOpen {
+  return { fields: true, notices: true, deadlines: true, timeline: true }
+}
+
+export function createMatterSectionState(matterId: string, counts: MatterSectionCounts): MatterSectionState {
+  return { matterId, counts, open: initialMatterSectionOpen() }
+}
+
+/**
+ * 切到另一卷：开合重置为默认展开。
+ * 同一卷里某一区从 0 条变成有内容（刚登记官文 / 刚算出期限 / 刚同步进事件）：
+ * 若当时是折合的，展开，避免人点完按钮却看不见新行。
+ * 已经有内容时再增减，不打断用户自己折上的状态。
+ */
+export function reconcileMatterSectionState(prev: MatterSectionState, matterId: string, counts: MatterSectionCounts): MatterSectionState {
+  if (prev.matterId !== matterId) return createMatterSectionState(matterId, counts)
+  if (prev.counts.notices === counts.notices && prev.counts.deadlines === counts.deadlines && prev.counts.timeline === counts.timeline) {
+    return prev
+  }
+  return {
+    matterId,
+    counts,
+    open: {
+      fields: prev.open.fields,
+      notices: prev.counts.notices === 0 && counts.notices > 0 ? true : prev.open.notices,
+      deadlines: prev.counts.deadlines === 0 && counts.deadlines > 0 ? true : prev.open.deadlines,
+      timeline: prev.counts.timeline === 0 && counts.timeline > 0 ? true : prev.open.timeline,
+    },
+  }
+}
+
+export function toggleMatterSection(state: MatterSectionState, id: MatterSectionId): MatterSectionState {
+  return { ...state, open: { ...state.open, [id]: !state.open[id] } }
+}
+
+/**
  * 案卷列表。
  *
  * 排序由父级给（后端按 `updated_at DESC`）；这里**不重排** —— 列表顺序换了用户会以为丢案子，
  * 而要改排序就该改一处（后端 SQL），不该在渲染里再插一层规则。
+ * `noMatch`：父级筛过且一条都没剩。库本身是空的仍走「还没有案卷」，两句不混。
  */
-export function MatterList({ matters, dicts, selectedId, onOpen }: {
+export function MatterList({ matters, dicts, selectedId, onOpen, noMatch = false }: {
   matters: readonly MatterView[]
   dicts: readonly Dict[]
   selectedId: string | null
   onOpen: (matter: MatterView) => void
+  noMatch?: boolean
 }): JSX.Element {
   if (matters.length === 0) {
+    if (noMatch) {
+      return <div className="wb-empty" data-matter-filter-empty>没有匹配的案卷。试试清空筛选。</div>
+    }
     return <div className="wb-empty" data-matter-empty>还没有案卷。点「新建案卷」建档；建档后才能登记官文、算期限、归入知识。</div>
   }
   return (
@@ -332,13 +437,55 @@ function TimelineRow({ entry }: { entry: MatterTimelineEntry }): JSX.Element {
   )
 }
 
+/** 抬头摘要：案型 · 申请号 · 客户。缺的写成「—」，不把 undefined 露出去。 */
+function displayOrDash(value: string | null | undefined): string {
+  return value === null || value === undefined || value === '' ? '—' : value
+}
+
+function matterHeaderSummary(matter: MatterView, dicts: readonly Dict[]): string {
+  return `${dictLabel(dicts, 'matter_type', matter.matterType)} · ${displayOrDash(matter.applicationNo)} · ${displayOrDash(matter.clientId)}`
+}
+
 /**
- * 案卷详情：字段区 + 时间线。
- *
- * ⚠️ **没有**任何"期限只剩 N 天"式的推断 —— 那是 `patent-deadline` 的职责（决策 3 / D2），
- * 界面只显示引擎算出来的 `due_date`。5C 会把重算按钮与期限看板加在这里。
+ * 可折的一区。标题行（含原有按钮）始终在；折合时身体加 `hidden`，子树不卸载。
+ * 再展开拿到的是同一份 props，不是另一份副本。
  */
-export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engineAvailable, recomputeNote, onEdit, onAddNotice, onDeleteNotice, onRecompute, onSetDeadlineStatus, onSyncEvents, syncNote, busy }: {
+function MatterSection({ id, title, count, open, onToggle, actions, children }: {
+  id: MatterSectionId
+  title: string
+  count?: number
+  open: boolean
+  onToggle: () => void
+  actions?: ReactNode
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <section className="wb-card wb-matter-section" data-matter-section={id} data-matter-open={open ? '1' : '0'}>
+      <div className="wb-matter-head">
+        <button type="button" className="wb-matter-fold" aria-expanded={open} data-matter-fold={id} onClick={onToggle}>
+          <Icon name="chevron" />
+          <span className="wb-matter-title">
+            {title}
+            {count === undefined ? null : <> <span className="wb-matter-count">{count}</span></>}
+          </span>
+        </button>
+        {actions}
+      </div>
+      <div id={`wb-matter-section-${id}`} className="wb-matter-section-body" hidden={!open}>
+        {children}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * 案卷详情：固定抬头 + 四区（字段 / 官文 / 期限 / 时间线）。
+ *
+ * ⚠️ **没有**任何"期限只剩 N 天"或完成度百分比 —— 那是 `patent-deadline` 的职责（决策 3 / D2），
+ * 界面只显示引擎算出来的 `due_date`。完成 / 免除仍是人点的两个按钮。
+ * 开合是纯 UI：默认四区都展开（空态说明要看得见）；`sectionOpen` 只覆盖显隐，不改数据。
+ */
+export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engineAvailable, recomputeNote, onEdit, onAddNotice, onDeleteNotice, onRecompute, onSetDeadlineStatus, onSyncEvents, syncNote, busy, sectionOpen }: {
   matter: MatterView
   dicts: readonly Dict[]
   timeline: MatterTimeline
@@ -358,15 +505,33 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
   /** 上次同步的回执（含"没解析出来的行"），空串 = 还没同步过。 */
   syncNote: string
   busy: boolean
+  /** 覆盖某一区的开合。不传则用本组件状态（默认展开，切到另一卷重置）。 */
+  sectionOpen?: Partial<MatterSectionOpen>
 }): JSX.Element {
+  const counts: MatterSectionCounts = {
+    notices: notices.length,
+    deadlines: deadlines.length,
+    timeline: timeline.entries.length + timeline.undated.length,
+  }
+  const [sectionState, setSectionState] = useState(() => createMatterSectionState(matter.id, counts))
+  const reconciled = reconcileMatterSectionState(sectionState, matter.id, counts)
+  // 案卷 id 或条数变了就在这次渲染里对齐。用 effect 会多一帧把上一卷的折合套到新卷上。
+  if (reconciled !== sectionState) setSectionState(reconciled)
+  const open: MatterSectionOpen = sectionOpen === undefined ? reconciled.open : { ...reconciled.open, ...sectionOpen }
+  const toggleSection = (id: MatterSectionId): void => {
+    setSectionState((prev) => toggleMatterSection(reconcileMatterSectionState(prev, matter.id, counts), id))
+  }
   return (
     <div className="wb-matter-detail" data-matter-detail={matter.caseNumber}>
-      <div className="wb-card">
+      <div className="wb-matter-sticky" data-matter-sticky>
         <div className="wb-matter-head">
           <h3 className="wb-matter-title">{matter.caseNumber} · {matter.title}</h3>
           <StageBadge dicts={dicts} code={matter.stageCode} />
-          <button className="wb-btn" disabled={busy} onClick={onEdit}><Icon name="edit" />编辑</button>
+          <button className="wb-btn" disabled={busy} onClick={onEdit} data-matter-edit><Icon name="edit" />编辑</button>
         </div>
+        <p className="wb-matter-summary" data-matter-summary>{matterHeaderSummary(matter, dicts)}</p>
+      </div>
+      <MatterSection id="fields" title="字段" open={open.fields} onToggle={() => toggleSection('fields')}>
         <div className="wb-matter-fields">
           <Field label="案型" value={dictLabel(dicts, 'matter_type', matter.matterType)} />
           <Field label="专利类型" value={matter.patentKind === null ? null : dictLabel(dicts, 'patent_kind', matter.patentKind)} />
@@ -386,13 +551,16 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
           <Field label="代理师" value={matter.attorney} />
           <Field label="案卷目录" value={matter.workspacePath} />
         </div>
-      </div>
+      </MatterSection>
 
-      <div className="wb-card">
-        <div className="wb-matter-head">
-          <h3 className="wb-matter-title">官文登记 <span className="wb-matter-count">{notices.length}</span></h3>
-          <button className="wb-btn" disabled={busy} onClick={onAddNotice} data-matter-add-notice><Icon name="plus" />登记官文</button>
-        </div>
+      <MatterSection
+        id="notices"
+        title="官文登记"
+        count={notices.length}
+        open={open.notices}
+        onToggle={() => toggleSection('notices')}
+        actions={<button className="wb-btn" disabled={busy} onClick={onAddNotice} data-matter-add-notice><Icon name="plus" />登记官文</button>}
+      >
         {notices.length === 0
           ? <div className="wb-empty">还没有登记官文。官文是期限的**输入源** —— 没登记就不会有期限。</div>
           : (
@@ -410,19 +578,24 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
               ))}
             </div>
           )}
-      </div>
+      </MatterSection>
 
-      <div className="wb-card">
-        <div className="wb-matter-head">
-          <h3 className="wb-matter-title">期限 <span className="wb-matter-count">{deadlines.length}</span></h3>
-          {/**
-            * 重算按钮：**只调引擎**，不在界面算任何期限（决策 3：计算权威在 patent-deadline）。
-            * 引擎缺失时按钮禁用并说明原因 —— 不让用户点一个必然 409 的按钮还不知为何。
-            */}
+      <MatterSection
+        id="deadlines"
+        title="期限"
+        count={deadlines.length}
+        open={open.deadlines}
+        onToggle={() => toggleSection('deadlines')}
+        actions={
+          /**
+           * 重算按钮：**只调引擎**，不在界面算任何期限（决策 3：计算权威在 patent-deadline）。
+           * 引擎缺失时按钮禁用并说明原因 —— 不让用户点一个必然 409 的按钮还不知为何。
+           */
           <button className="wb-btn" disabled={busy || !engineAvailable} onClick={onRecompute} data-matter-recompute>
             <Icon name="refresh" />重算期限
           </button>
-        </div>
+        }
+      >
         {!engineAvailable && (
           <div className="wb-field-note" data-matter-engine-missing>
             未探测到期限引擎，所以这里只有手工/历史数据。登记官文**不会**自动产生期限 ——
@@ -459,20 +632,25 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
               ))}
             </div>
           )}
-      </div>
+      </MatterSection>
 
-      <div className="wb-card">
-        <div className="wb-matter-head">
-          <h3 className="wb-matter-title">时间线 <span className="wb-matter-count">{timeline.entries.length}</span></h3>
-          {/**
-            * 「同步事件日志」（阶段 6）：把案卷目录里的 `_matter-log.md` 投影成事件。
-            * 按钮文案说清方向（**读日志**），因为反方向（库 → 磁盘）是被明令禁止的：
-            * 用户得能一眼看出这不会改他的案卷目录。
-            */}
+      <MatterSection
+        id="timeline"
+        title="时间线"
+        count={timeline.entries.length}
+        open={open.timeline}
+        onToggle={() => toggleSection('timeline')}
+        actions={
+          /**
+           * 「同步事件日志」（阶段 6）：把案卷目录里的 `_matter-log.md` 投影成事件。
+           * 按钮文案说清方向（**读日志**），因为反方向（库 → 磁盘）是被明令禁止的：
+           * 用户得能一眼看出这不会改他的案卷目录。
+           */
           <button className="wb-btn" disabled={busy} onClick={onSyncEvents} data-matter-sync-events>
             <Icon name="refresh" />同步事件日志
           </button>
-        </div>
+        }
+      >
         <div className="wb-field-note" data-matter-sync-hint>
           事件的唯一事实源是案卷目录里的 <code>_matter-log.md</code>（DSH Patent 只追加写入）。
           这个按钮只**读**它并把新行补进时间线 —— 不改写文件、不改已有事件。
@@ -497,7 +675,7 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
               )}
             </>
           )}
-      </div>
+      </MatterSection>
     </div>
   )
 }

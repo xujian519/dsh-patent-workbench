@@ -21,8 +21,9 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MatterDetail, MatterList, UpcomingDeadlines, deadlineStatusLabel, retainSelectedMatterId } from '../lib/client/components/MattersView.js'
+import { MatterDetail, MatterList, UpcomingDeadlines, createMatterSectionState, deadlineStatusLabel, filterMatters, isMatterFilterActive, matterListCountLabel, matterStageOptions, reconcileMatterSectionState, retainSelectedMatterId, toggleMatterSection } from '../lib/client/components/MattersView.js'
 import { MatterDetailPane } from '../lib/client/components/views/MatterDetailPane.js'
+import { MatterPane } from '../lib/client/components/views/MatterPane.js'
 import { buildMatterTimeline } from '../lib/client/matterTimeline.js'
 
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
@@ -213,6 +214,11 @@ test('SSR：详情渲染字段区 + 官文 + 时间线；字段缺失显示 —�
   // 客户没填 → 显示 "—"，不留空
   assert.match(html, /data-matter-field="客户">—/)
   assert.doesNotMatch(html, /undefined/)
+  assert.match(html, /data-matter-sticky/)
+  assert.match(html, /data-matter-summary/)
+  assert.match(html, /申请撰写 · — · —/)
+  assert.equal((html.match(/data-matter-open="1"/g) ?? []).length, 4, '四区默认展开')
+  assert.doesNotMatch(html, /hidden=""/, '默认展开时身体不要带 hidden')
 })
 
 test('SSR：时间线里没有日期的条目要单独列出来并说明（不静默丢掉）', () => {
@@ -489,6 +495,11 @@ test('5D：实体的既有称谓是「案卷」—— 界面文案不再出现�
      * 扫描范围跟着扩（plan §5.4：迁移而不是缩小覆盖面）。
      */
     'src/client/components/dialogs/MatterDraftModal.tsx', 'src/client/components/dialogs/NoticeDraftModal.tsx',
+    /**
+     * 方案 A：导入完成脚注曾经写成「案件」。弹窗同样是用户可见文案，扫描范围必须带上，
+     * 否则这句会再次漏出术语扫描。
+     */
+    'src/client/components/dialogs/MatterImportModal.tsx',
     // H4-8（第 4 批）：「待你处理」弹窗同批搬出，它也是用户可见文案的落点。
     'src/client/components/dialogs/PendingModal.tsx']
   for (const file of uiSources) {
@@ -570,4 +581,150 @@ test('6：投影走服务端端点，界面与工具都不许自己解析日志�
   assert.doesNotMatch(read('src/client/components/MattersView.tsx'), /parseMatterLog|split\('\|'\)/, '界面不许自己解析日志')
   assert.match(read('src/matter-tools.ts'), /parseMatterLog\(content\)/, '工具复用同一份解析')
   assert.doesNotMatch(read('src/matter-tools.ts'), /split\('\|'\)/, '工具不许另写一份解析')
+})
+
+// ---------------------------------------------------------------------------
+// 方案 A：列表搜筛（内存过滤，不重排）+ 详情抬头固定 / 四区可折
+// ---------------------------------------------------------------------------
+
+test('方案 A：未筛时列表顺序与入参一致；关键字只匹配案号/名称；阶段是与关系', () => {
+  const rows = [
+    matter({ id: 'm1', caseNumber: 'B-2', title: '后更新但排在前', stageCode: 'open', updatedAt: '2026-01-01T00:00:00.000Z' }),
+    matter({ id: 'm2', caseNumber: 'A-1', title: '兽用设备', stageCode: 'drafting', updatedAt: '2026-09-01T00:00:00.000Z', applicationNo: 'CN999' }),
+    matter({ id: 'm3', caseNumber: 'C-9', title: '无关名称', stageCode: 'open', updatedAt: '2026-08-01T00:00:00.000Z' }),
+  ]
+  assert.equal(filterMatters(rows, '', ''), rows, '未筛必须原样返回（不复制、不重排）')
+  assert.equal(filterMatters(rows, '   ', ''), rows, '空白关键字不算筛')
+  assert.equal(isMatterFilterActive('  ', ''), false)
+  assert.equal(isMatterFilterActive('a', ''), true)
+  assert.equal(isMatterFilterActive('', 'open'), true)
+  assert.deepEqual(filterMatters(rows, '兽用', '').map((item) => item.id), ['m2'])
+  assert.deepEqual(filterMatters(rows, 'b-2', '').map((item) => item.id), ['m1'], '案号大小写不敏感')
+  assert.deepEqual(filterMatters(rows, 'CN999', '').map((item) => item.id), [], '不匹配申请号')
+  assert.deepEqual(filterMatters(rows, '', 'open').map((item) => item.id), ['m1', 'm3'], '阶段筛保持原顺序')
+  assert.deepEqual(filterMatters(rows, '无关', 'drafting').map((item) => item.id), [], '关键字与阶段同时不满足则排除')
+  assert.deepEqual(filterMatters(rows, '无关', 'open').map((item) => item.id), ['m3'])
+})
+
+test('方案 A：计数文案 —— 未筛仍是「案卷 N 个」，有筛才加「已筛 M」', () => {
+  assert.equal(matterListCountLabel(3, 3, false, false), '案卷 3 个')
+  assert.equal(matterListCountLabel(3, 3, false, true), '案卷 3 个（已选 1 个）')
+  assert.equal(matterListCountLabel(3, 1, true, false), '案卷 3 个 · 已筛 1')
+  assert.equal(matterListCountLabel(3, 0, true, true), '案卷 3 个 · 已筛 0（已选 1 个）')
+  assert.deepEqual(
+    matterStageOptions([
+      { kind: 'matter_type', code: 'drafting', name: '申请撰写', config: {} },
+      { kind: 'matter_stage', code: 'grant', name: '授权', config: {} },
+      { kind: 'matter_stage', code: 'open', name: '', config: {} },
+    ]),
+    [{ code: 'grant', name: '授权' }, { code: 'open', name: 'open' }],
+    '阶段选项只取 matter_stage，顺序跟字典，空名字回落到码',
+  )
+})
+
+test('SSR：无命中是另一句空态，空库仍是「还没有案卷」', () => {
+  const missed = renderToStaticMarkup(createElement(MatterList, {
+    matters: [], dicts: DICTS, selectedId: null, onOpen: () => {}, noMatch: true,
+  }))
+  assert.match(missed, /data-matter-filter-empty/)
+  assert.match(missed, /没有匹配的案卷。试试清空筛选。/)
+  assert.doesNotMatch(missed, /还没有案卷/)
+
+  const library = renderToStaticMarkup(createElement(MatterList, {
+    matters: [], dicts: DICTS, selectedId: null, onOpen: () => {},
+  }))
+  assert.match(library, /data-matter-empty/)
+  assert.match(library, /还没有案卷/)
+  assert.doesNotMatch(library, /没有匹配的案卷/)
+})
+
+test('SSR：案卷左栏默认可见搜索框与阶段「全部」，未筛时行顺序不动', () => {
+  const html = renderToStaticMarkup(createElement(MatterPane, {
+    matters: [
+      matter({ id: 'm1', caseNumber: '2026-UM-002', title: '一种兽用中药智能熬制设备' }),
+      matter({ id: 'm2', caseNumber: '2026-INV-001', title: '另一件', stageCode: 'drafting' }),
+    ],
+    dicts: [
+      ...DICTS,
+      { kind: 'matter_stage', code: 'drafting', name: '撰写中', config: {} },
+    ],
+    selectedMatterId: null, busy: false, onOpen: () => {}, onCreate: () => {}, onImport: () => {}, onRefresh: () => {},
+  }))
+  assert.match(html, /data-matter-search/)
+  assert.match(html, /placeholder="搜索案号或名称"/)
+  assert.match(html, /aria-label="阶段"/)
+  assert.match(html, /<option value=""[^>]*>全部<\/option>/)
+  assert.ok(html.indexOf('value="open"') < html.indexOf('value="drafting"'), '阶段选项按字典顺序')
+  assert.match(html, /案卷 2 个/)
+  assert.doesNotMatch(html, /已筛/)
+  assert.doesNotMatch(html, /清空筛选/, '没在筛时不放清空按钮')
+  assert.ok(html.indexOf('2026-UM-002') < html.indexOf('2026-INV-001'), '未筛时行顺序与入参一致')
+  assert.match(html, /data-matter-refresh/)
+  assert.match(html, /data-matter-import/)
+  assert.match(html, /data-matter-create/)
+})
+
+test('方案 A：搜筛与折叠留在 pane / 详情，不回流 index，也不进今日', () => {
+  assert.match(paneSource, /filterMatters\(/)
+  assert.match(paneSource, /<MatterList\b/)
+  assert.match(viewSource, /data-matter-fold/)
+  assert.match(viewSource, /hidden=\{!open\}/, '折合只隐藏，不把子树从渲染里拿掉')
+  assert.doesNotMatch(clientSource, /data-matter-search|data-matter-fold|sectionOpen/, '容器不持有搜筛或折叠')
+  assert.doesNotMatch(read('src/client/components/views/TodayView.tsx'), /data-matter-search|data-matter-fold/)
+  assert.match(read('src/client/components/dialogs/MatterImportModal.tsx'), /已出现在「案卷」列表里/)
+})
+
+test('方案 A：四区开合 —— 默认全展开；切卷重置；从 0 变有内容时展开；折合不改另一区', () => {
+  const empty = { notices: 0, deadlines: 0, timeline: 0 }
+  const base = createMatterSectionState('m1', empty)
+  assert.deepEqual(base.open, { fields: true, notices: true, deadlines: true, timeline: true })
+  assert.equal(reconcileMatterSectionState(base, 'm1', empty), base, '计数没变就保持同一状态')
+  const collapsed = toggleMatterSection(base, 'notices')
+  assert.equal(base.open.notices, true, '切换不可就地改原状态')
+  assert.equal(collapsed.open.notices, false)
+  assert.equal(collapsed.open.deadlines, true)
+  const gained = reconcileMatterSectionState(collapsed, 'm1', { notices: 1, deadlines: 0, timeline: 0 })
+  assert.equal(gained.open.notices, true, '这一区从空变成有内容时展开，免得登记完看不见')
+  const withRows = createMatterSectionState('m1', { notices: 1, deadlines: 2, timeline: 3 })
+  const closedDeadline = toggleMatterSection(withRows, 'deadlines')
+  const grew = reconcileMatterSectionState(closedDeadline, 'm1', { notices: 1, deadlines: 3, timeline: 3 })
+  assert.equal(grew.open.deadlines, false, '本来就有内容时再增减，不打断用户折上的那一区')
+  const switched = reconcileMatterSectionState(closedDeadline, 'm2', { notices: 1, deadlines: 2, timeline: 3 })
+  assert.equal(switched.matterId, 'm2')
+  assert.equal(switched.open.deadlines, true, '换一卷重置为展开')
+  assert.equal(switched.open.fields, true)
+})
+
+test('SSR：折合后官文与期限仍在标记里，再按展开标志能对上同一批内容', () => {
+  const notices = [{ id: 'n1', noticeKind: 'office_action_first', dispatchDate: '2026-10-05', deliveryMode: 'electronic', deliveryDate: null, designatedMonths: 4, fileLink: null, note: null }]
+  const deadlines = [deadlineRow()]
+  const shared = {
+    matter: matter(), dicts: DICTS, timeline: timeline(), notices, deadlines,
+    engineAvailable: true, recomputeNote: '重算完成：1 条', onSyncEvents: () => {}, syncNote: '',
+    onEdit: () => {}, onAddNotice: () => {}, onDeleteNotice: () => {}, onRecompute: () => {}, onSetDeadlineStatus: () => {}, busy: false,
+  }
+  const openHtml = renderToStaticMarkup(createElement(MatterDetail, shared))
+  const closedHtml = renderToStaticMarkup(createElement(MatterDetail, {
+    ...shared,
+    sectionOpen: { notices: false, deadlines: false, timeline: false },
+  }))
+  for (const html of [openHtml, closedHtml]) {
+    assert.match(html, /第一次审查意见通知书/)
+    assert.match(html, /届满 2026-10-20/)
+    assert.match(html, /签了委托书/)
+    assert.match(html, /标记完成/)
+    assert.match(html, /免除/)
+    assert.match(html, /data-matter-add-notice/)
+    assert.match(html, /data-matter-recompute/)
+    assert.match(html, /data-matter-sync-events/)
+    assert.match(html, /data-matter-sticky/)
+    assert.match(html, /data-matter-edit/)
+  }
+  assert.match(closedHtml, /id="wb-matter-section-notices"[^>]*hidden=""/)
+  assert.match(closedHtml, /id="wb-matter-section-deadlines"[^>]*hidden=""/)
+  assert.match(closedHtml, /id="wb-matter-section-timeline"[^>]*hidden=""/)
+  assert.doesNotMatch(closedHtml, /id="wb-matter-section-fields"[^>]*hidden=""/, '字段区这次没折')
+  assert.match(openHtml, /data-matter-section="notices"[^>]*data-matter-open="1"/)
+  assert.match(closedHtml, /data-matter-section="notices"[^>]*data-matter-open="0"/)
+  assert.doesNotMatch(closedHtml, /完成度|任务列表|任务闭环/)
 })

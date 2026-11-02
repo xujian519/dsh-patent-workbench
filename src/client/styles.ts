@@ -95,6 +95,8 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-nav { flex:0 0 min(56%, 880px); min-width:420px; overflow:auto; padding:0 18px 16px; box-sizing:border-box; border-right:1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.14)); }
 .wb-nav > :first-child:not(.wb-stats-sticky) { margin-top:16px; }
 .wb-detail { flex:1; min-width:0; overflow:auto; padding:16px 18px; box-sizing:border-box; }
+/* 案卷详情的抬头要贴住右栏顶边再 sticky。只在直接子级是案卷详情时收掉上内边距，知识/任务右栏不动。 */
+.wb-detail:has(> .wb-matter-detail) { padding-top: 0; }
 .wb-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
 /* 方案 A 紧迫条：三块可点 + 次级「进行中 / 总数」，压过上面的四等分网格。 */
 .wb-stats.wb-urgency { grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr) auto; gap:8px; align-items:stretch; margin-bottom:10px; }
@@ -777,6 +779,10 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
   background: var(--dsw-alias-bg-base, var(--wb-sunk));
   border-bottom: 1px solid var(--wb-line); padding: 12px 18px 13px; margin: 0 -18px 12px;
 }
+[data-dsh-personal-workbench-view] .wb-matter-sticky {
+  background: var(--dsw-alias-bg-base, var(--wb-sunk));
+  border-bottom-color: var(--wb-line);
+}
 [data-dsh-personal-workbench-view] .wb-stat {
   border: 1px solid var(--wb-line); border-radius: var(--wb-r-2); background: var(--wb-surface);
   box-shadow: var(--wb-sh-1); padding: 12px 14px;
@@ -800,6 +806,15 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
    颜色不新造 —— 阶段徽标用字典里的 color（用户可在设置里改），其余取既有 token。 */
 .wb-matter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .wb-matter-bar-note { flex: 1; font-size: 12px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
+.wb-matter-filters { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.wb-matter-search, .wb-matter-stage-filter {
+  box-sizing: border-box; background: var(--dsw-alias-bg-base, #17171a);
+  border: 1px solid var(--dsw-alias-border-l1, rgba(255,255,255,.18)); color: inherit;
+  border-radius: 8px; padding: 6px 9px; font: inherit; font-size: 12.5px;
+}
+.wb-matter-search { flex: 1; min-width: 0; }
+.wb-matter-stage-filter { flex: none; max-width: 42%; }
+.wb-matter-filters > .wb-btn { flex: none; white-space: nowrap; }
 .wb-matter-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .wb-matter-row {
   display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer;
@@ -814,6 +829,23 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-matter-row-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--wb-ink-3); justify-content: flex-end; }
 .wb-matter-stage { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--wb-line); color: var(--wb-ink-3); white-space: nowrap; }
 .wb-matter-detail { display: flex; flex-direction: column; gap: 12px; }
+/* 抬头贴在右栏滚动口顶部（上内边距由 .wb-detail:has 收掉）。不横向负边距，避免窄栏把 scrollWidth 撑出去。 */
+.wb-matter-sticky {
+  position: sticky; top: 0; z-index: 6;
+  margin: 0; padding: 12px 0 10px;
+  background: var(--dsw-alias-bg-base, var(--wb-sunk, #111));
+  border-bottom: 1px solid var(--wb-line, rgba(127,127,127,.24));
+}
+.wb-matter-sticky .wb-matter-head { margin-bottom: 4px; }
+.wb-matter-summary { margin: 0; font-size: 12px; color: var(--wb-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-matter-fold {
+  display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  border: 0; background: transparent; color: inherit; font: inherit; padding: 0;
+  cursor: pointer; text-align: left;
+}
+.wb-matter-fold svg { flex: none; width: 14px; height: 14px; color: var(--wb-ink-3); transition: transform .12s ease; }
+.wb-matter-section[data-matter-open="1"] .wb-matter-fold svg { transform: rotate(90deg); }
+.wb-matter-section[data-matter-open="0"] .wb-matter-head { margin-bottom: 0; }
 .wb-matter-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .wb-matter-title { margin: 0; flex: 1; font-size: 13.5px; font-weight: 650; }
 .wb-matter-count { font-size: 11px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
@@ -922,6 +954,8 @@ button.wb-dl-row:hover { background: color-mix(in srgb, var(--wb-ink-1, #fff) 6%
 [data-dsh-personal-workbench-view] .wb-form select,
 [data-dsh-personal-workbench-view] .wb-form textarea,
 [data-dsh-personal-workbench-view] .wb-skill-search,
+[data-dsh-personal-workbench-view] .wb-matter-search,
+[data-dsh-personal-workbench-view] .wb-matter-stage-filter,
 [data-dsh-personal-workbench-view] .wb-plan-edit-note,
 [data-dsh-personal-workbench-view] .wb-plan-add {
   border: 1px solid var(--wb-line); border-radius: var(--wb-r-1);
@@ -929,6 +963,8 @@ button.wb-dl-row:hover { background: color-mix(in srgb, var(--wb-ink-1, #fff) 6%
 [data-dsh-personal-workbench-view] .wb-form input:focus,
 [data-dsh-personal-workbench-view] .wb-form select:focus,
 [data-dsh-personal-workbench-view] .wb-form textarea:focus,
+[data-dsh-personal-workbench-view] .wb-matter-search:focus,
+[data-dsh-personal-workbench-view] .wb-matter-stage-filter:focus,
 [data-dsh-personal-workbench-view] .wb-skill-search:focus {
   outline: none; border-color: var(--wb-accent-line); box-shadow: 0 0 0 2px var(--wb-accent-soft);
 }
