@@ -100,11 +100,53 @@ try {
   await api.waitFor('return globalThis.__h4 !== undefined', { description: 'harness 就绪（挂载案卷视图）' })
 
   // ---------------------------------------------------------------- 案卷条与列表
+  check('进入案卷默认可见搜索框（占位「搜索案号或名称」）与阶段「全部」',
+    await api.evaluate(count('[data-matter-search]')) === 1
+    && await api.evaluate(`return document.querySelector('[data-matter-search]').placeholder === '搜索案号或名称'`)
+    && await api.evaluate(`return document.querySelector('[data-matter-stage]').value === ''`)
+    && await api.evaluate(bodyHas('全部')))
   check('案卷条写清总数（未选中时不提"已选"）',
     await api.evaluate(bodyHas('案卷 3 个')) && !(await api.evaluate(bodyHas('（已选 1 个）'))))
   check('列表三行、按容器给的顺序（后端 updated_at DESC）',
     JSON.stringify(await api.evaluate(rowCaseNumbers)) === JSON.stringify(['2026-INV-001', '2026-UM-002', '2026-INV-003']),
     JSON.stringify(await api.evaluate(rowCaseNumbers)))
+  await api.evaluate(`
+    const input = document.querySelector('[data-matter-search]');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(input, '兽用');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  `)
+  check('关键字「兽用」只留下名称命中的那一行，计数写成已筛 1',
+    JSON.stringify(await api.evaluate(rowCaseNumbers)) === JSON.stringify(['2026-UM-002'])
+    && await api.evaluate(bodyHas('案卷 3 个 · 已筛 1')))
+  await api.evaluate(`
+    const input = document.querySelector('[data-matter-search]');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(input, '不存在的案号');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  `)
+  check('没有命中时给清空筛选的空态，而不是「还没有案卷」',
+    await api.evaluate(count('[data-matter-row]')) === 0
+    && await api.evaluate(bodyHas('没有匹配的案卷。试试清空筛选。'))
+    && !(await api.evaluate(bodyHas('还没有案卷'))))
+  await clickSelector('[data-matter-filter-clear]')
+  check('清空筛选后三行回到原顺序',
+    JSON.stringify(await api.evaluate(rowCaseNumbers)) === JSON.stringify(['2026-INV-001', '2026-UM-002', '2026-INV-003'])
+    && await api.evaluate(bodyHas('案卷 3 个'))
+    && !(await api.evaluate(bodyHas('已筛'))))
+  await api.evaluate(`
+    const select = document.querySelector('[data-matter-stage]');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    set.call(select, 'open');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  `)
+  check('阶段筛「立案」留下 open 的两行且不重排',
+    JSON.stringify(await api.evaluate(rowCaseNumbers)) === JSON.stringify(['2026-UM-002', '2026-INV-003'])
+    && await api.evaluate(bodyHas('已筛 2')))
+  await clickSelector('[data-matter-filter-clear]')
   check('行元信息：阶段徽标 + 案型中文 + 专利类型 + 申请日',
     await api.evaluate(`return document.querySelector('[data-matter-row="2026-INV-001"]').textContent.includes('撰写中')`)
     && await api.evaluate(`return document.querySelector('[data-matter-row="2026-INV-001"]').textContent.includes('发明专利')`)
@@ -235,7 +277,7 @@ try {
     && await api.evaluate(bodyHas('以下 1 条没有可用日期')))
 
   // ---------------------------------------------------------------- 编辑 / 新建 / 刷新 / 同步
-  await clickByText('.wb-card', '编辑')
+  await clickSelector('[data-matter-edit]')
   check('点「编辑」→ 容器收到 edit(当前案卷 id)（编辑框初值由容器填空）',
     JSON.stringify(await api.evaluate(lastCall('edit'))) === JSON.stringify(['m2']),
     JSON.stringify(await api.evaluate(lastCall('edit'))))
@@ -257,6 +299,27 @@ try {
     JSON.stringify(await api.evaluate(lastCall('syncEvents'))))
   check('同步按钮旁写清方向（"只读、不改写文件"）',
     await api.evaluate(bodyHas('_matter-log.md')) && await api.evaluate(bodyHas('不改写文件、不改已有事件')))
+  check('抬头固定挂点在右栏，摘要带案型',
+    await api.evaluate(count('.wb-detail [data-matter-sticky]')) === 1
+    && await api.evaluate(`return document.querySelector('[data-matter-summary]').textContent.includes('实用新型')`))
+  await clickSelector('[data-matter-fold="notices"]')
+  check('折合官文后条目仍在 DOM，只是身体 hidden',
+    await api.evaluate(count('[data-matter-notice]')) === 2
+    && await api.evaluate(`return document.getElementById('wb-matter-section-notices').hidden === true`)
+    && await api.evaluate(count('[data-matter-add-notice]')) === 1)
+  await clickSelector('[data-matter-fold="deadlines"]')
+  check('折合期限后届满日与完成按钮仍在 DOM',
+    await api.evaluate(count('[data-matter-deadline]')) === 2
+    && await api.evaluate(`return document.getElementById('wb-matter-section-deadlines').hidden === true`)
+    && await api.evaluate(bodyHas('标记完成'))
+    && await api.evaluate(bodyHas('免除')))
+  await clickSelector('[data-matter-fold="notices"]')
+  await clickSelector('[data-matter-fold="deadlines"]')
+  check('再展开后官文与期限回到可见，条数不变',
+    await api.evaluate(`return document.getElementById('wb-matter-section-notices').hidden === false`)
+    && await api.evaluate(`return document.getElementById('wb-matter-section-deadlines').hidden === false`)
+    && await api.evaluate(count('[data-matter-notice]')) === 2
+    && await api.evaluate(count('[data-matter-deadline]')) === 2)
 
   // ---------------------------------------------------------------- 引擎降级
   await api.evaluate('__h4.setEngineAvailable(false); return true;')

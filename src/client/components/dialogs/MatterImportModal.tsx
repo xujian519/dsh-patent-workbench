@@ -84,7 +84,7 @@ function footerFor(props: MatterImportModalProps): JSX.Element {
   }
   return (
     <>
-      <span className="wb-field-note">导入的案卷已出现在「案件」列表里</span>
+      <span className="wb-field-note">导入的案卷已出现在「案卷」列表里</span>
       <button className="wb-btn" type="button" onClick={props.onBack}>再扫一次</button>
       <button className="wb-btn primary" type="button" onClick={props.onClose}><Icon name="check" />完成</button>
     </>
