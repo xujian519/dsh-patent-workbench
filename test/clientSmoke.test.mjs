@@ -361,11 +361,11 @@ const CASES = [
     stats: { overdue: 1, todayDue: 2, doing: 3, total: 9 },
     deadlines: [{
       id: 'dl1', matterId: 'm1', caseNumber: '2026-UM-001', matterTitle: '甲案',
-      label: '答复期限', dueDate: '2026-10-02', status: 'open', overdue: false,
+      label: '答复期限', dueDate: '2026-09-28', status: 'open', overdue: true,
     }],
-    upcomingDays: 14, engineAvailable: true, onRecomputeAll: noop, busy: false,
+    upcomingDays: 14, engineAvailable: true, onRecomputeAll: noop, onOpenMatter: noop, busy: false,
     dayPanelProps: dayPanelProps(), onQuickEntry: noop, onNewTask: noop,
-  }), /wb-stats[\s\S]*逾期[\s\S]*wb-dl-board[\s\S]*答复期限/],
+  }), /data-urgency-strip[\s\S]*任务逾期[\s\S]*今日到期[\s\S]*期限紧迫[\s\S]*含已过期与今日届满[\s\S]*进行中 3[\s\S]*总数 9[\s\S]*data-deadline-board[\s\S]*法定期限[\s\S]*已过期[\s\S]*答复期限/],
 
   ['TasksView', 'components/views/TasksView.js', (m) => h(m.TasksView, {
     filter: { keyword: '', statusCodes: [], priorityCodes: [], typeCodes: [] }, filterEmpty: true,

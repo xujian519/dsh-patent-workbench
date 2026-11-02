@@ -96,6 +96,15 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-nav > :first-child:not(.wb-stats-sticky) { margin-top:16px; }
 .wb-detail { flex:1; min-width:0; overflow:auto; padding:16px 18px; box-sizing:border-box; }
 .wb-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+/* 方案 A 紧迫条：三块可点 + 次级「进行中 / 总数」，压过上面的四等分网格。 */
+.wb-stats.wb-urgency { grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr) auto; gap:8px; align-items:stretch; margin-bottom:10px; }
+.wb-urgency-item { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:1px; min-width:0; margin:0; padding:7px 10px; border:1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.20)); background:var(--dsw-alias-bg-layer-1, rgba(255,255,255,.03)); border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.06); color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.wb-urgency-item b { font-size:18px; line-height:1.05; font-variant-numeric:tabular-nums; }
+.wb-urgency-label { font-size:12px; font-weight:650; line-height:1.25; }
+.wb-urgency-sub { font-size:10.5px; line-height:1.3; color:var(--dsw-alias-label-secondary); }
+.wb-urgency-item.is-hot b, .wb-urgency-item.is-hot .wb-urgency-label { color:var(--wb-warn, #d9a03f); }
+.wb-urgency-item:hover { border-color:color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8ef7) 42%, transparent); }
+.wb-urgency-secondary { display:flex; flex-direction:column; justify-content:center; gap:2px; padding:0 2px 0 4px; font-size:11px; line-height:1.35; color:var(--dsw-alias-label-secondary); white-space:nowrap; }
 .wb-stat { border:1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.20)); background:var(--dsw-alias-bg-layer-1, rgba(255,255,255,.03)); border-radius:12px; padding:12px 14px; box-shadow:0 2px 8px rgba(0,0,0,.06); }
 .wb-stat b { font-size:20px; }
 .wb-stat span { display:block; color:var(--dsw-alias-label-secondary); font-size:12px; }
@@ -774,6 +783,15 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 }
 [data-dsh-personal-workbench-view] .wb-stat b { font-size: 24px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 [data-dsh-personal-workbench-view] .wb-stat span { font-size: 11.5px; }
+[data-dsh-personal-workbench-view] .wb-stats.wb-urgency { gap: 8px; margin-bottom: 10px; }
+[data-dsh-personal-workbench-view] .wb-stats-sticky.wb-urgency { padding: 8px 18px 10px; }
+[data-dsh-personal-workbench-view] .wb-urgency-item {
+  border: 1px solid var(--wb-line); border-radius: var(--wb-r-2); background: var(--wb-surface);
+  box-shadow: var(--wb-sh-1); padding: 7px 10px;
+}
+[data-dsh-personal-workbench-view] .wb-urgency-item b { font-size: 18px; font-variant-numeric: tabular-nums; }
+[data-dsh-personal-workbench-view] .wb-urgency-sub,
+[data-dsh-personal-workbench-view] .wb-urgency-secondary { color: var(--wb-ink-3); }
 
 
 /* ── 案卷视图（阶段 5 · 5B）───────────────────────────────────────────────────
@@ -824,10 +842,18 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-matter-tl-undated-head { font-size: 11.5px; color: var(--wb-ink-3); margin-bottom: 4px; }
 
 /* 期限看板（阶段 5 · 5C）：今日视图的跨案卷"近 N 天到期" + 案卷详情里的期限区共用行样式 */
-.wb-dl-board { margin-bottom: 12px; }
+.wb-dl-board { margin-bottom: 12px; scroll-margin-top: 84px; }
+.wb-today-panel { scroll-margin-top: 84px; }
 .wb-dl-list { display: flex; flex-direction: column; }
+.wb-dl-group-title { font-size: 11px; font-weight: 650; color: var(--wb-ink-3); margin: 8px 0 2px; }
+.wb-dl-group[data-deadline-group="overdue"] .wb-dl-group-title { color: var(--wb-warn, #d9a03f); }
+.wb-dl-group[data-deadline-group="due-today"] .wb-dl-group-title { color: var(--dsw-alias-state-business-primary, #4f8ef7); }
 .wb-dl-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--wb-line) 50%, transparent); font-size: 12px; }
+button.wb-dl-row { width: 100%; margin: 0; border-left: 0; border-right: 0; border-top: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+button.wb-dl-row:hover { background: color-mix(in srgb, var(--wb-ink-1, #fff) 6%, transparent); }
 .wb-dl-row:last-child { border-bottom: none; }
+.wb-dl-more { display: inline-flex; margin: 6px 0 2px; padding: 2px 0; border: 0; background: transparent; color: var(--wb-ink-3, var(--dsw-alias-label-secondary)); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.wb-dl-more:hover { color: var(--wb-ink-1, var(--dsw-alias-label-primary)); }
 /* 已过期用警示色 + 左侧竖条：一眼能在列表里挑出来 */
 .wb-dl-row.overdue { border-left: 2px solid var(--wb-warn, #d9a03f); padding-left: 8px; }
 .wb-dl-date { flex: none; width: 84px; color: var(--wb-ink-3); font-variant-numeric: tabular-nums; }
