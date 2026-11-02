@@ -207,7 +207,7 @@ export type { SetProgressResult, SubmitCompletionResult, SubmitCompletionOutcome
 
 // 每日计划域已抽到 repo/plans.ts（T2/D05–D06：minutes 快照 + effortDone + 原子追加/项级更新）
 export {
-  getDailyPlan, saveDailyPlan, updateDailyPlan, deleteDailyPlan, confirmDailyPlanDraft, getPendingDailyPlanDraft,
+  getDailyPlan, listDailyPlanSignalDates, saveDailyPlan, updateDailyPlan, deleteDailyPlan, confirmDailyPlanDraft, getPendingDailyPlanDraft,
   addDailyPlanItem, updateDailyPlanItem,
 } from './repo/plans.js'
 export type {

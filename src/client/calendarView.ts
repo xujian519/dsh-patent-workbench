@@ -21,8 +21,11 @@
  * 所以 hook 由容器调用（state 存在容器实例里），视图只收 props。见
  * `docs/tasks/h4-split-workbench-app/plan.md` §3 那条规则。
  */
-import { useState } from 'react'
-import { startOfWeek } from './format.js'
+import { useCallback, useEffect, useState } from 'react'
+import { dailyPlanHasSignal } from '../shared/dailyPlanPolicy.js'
+import { api } from './api.js'
+import { localDateString, startOfWeek } from './format.js'
+import { isTaskDueOnDay, type TaskLike } from './taskFilterSort.js'
 
 export type CalendarMode = 'week' | 'month'
 
@@ -86,6 +89,152 @@ export interface CalendarCursor {
   shift: (delta: number) => void
   /** 回到"今天"（周 → 本周周首；月 → 本月 1 号）。 */
   jumpToToday: () => void
+}
+
+/** 周格上「有计划」的短文案。 */
+export const CALENDAR_WEEK_PLAN_LABEL = '有计划'
+/** 月格图例（实心 = 截止，空心 = 计划）。 */
+export const CALENDAR_MONTH_LEGEND = '● 截止  ○ 计划'
+
+/** 选中日计划请求处在哪一步。失败必须停在 `error`，不许收成 `ready` + 空计划。 */
+export type PlanLoadPhase = 'idle' | 'loading' | 'ready' | 'error'
+
+export interface CalendarCellSignal {
+  /** `isTaskDueOnDay` 命中的条数（已取消不计）。0 = 这一格没有截止信号。 */
+  dueCount: number
+  /** 这一天有当日计划项（与计划 API / DayPanel 同一信号）。 */
+  hasPlan: boolean
+}
+
+/** 周格截止文案。口径是截止条数，不是「格子里任何任务」。 */
+export function weekDueLabel(dueCount: number): string | null {
+  if (dueCount <= 0) return null
+  return `${dueCount} 个截止`
+}
+
+/**
+ * 一格上的两个信号。截止只走 `isTaskDueOnDay`；计划只看调用方给的日期集合
+ *（那份集合必须来自计划 API 或其等价派生，不许用截止日期冒充）。
+ */
+export function calendarCellSignal<T extends TaskLike>(
+  tasks: readonly T[],
+  day: Date,
+  planDates: ReadonlySet<string>,
+): CalendarCellSignal {
+  let dueCount = 0
+  for (const task of tasks) {
+    if (isTaskDueOnDay(task, day)) dueCount += 1
+  }
+  return { dueCount, hasPlan: planDates.has(localDateString(day)) }
+}
+
+/** 可见格子覆盖的本地日闭区间。空列表没有可请求的范围。 */
+export function planDateSpan(days: readonly Date[]): { from: string; to: string } | null {
+  const first = days[0]
+  if (first === undefined) return null
+  let from = localDateString(first)
+  let to = from
+  for (const day of days) {
+    const key = localDateString(day)
+    if (key < from) from = key
+    if (key > to) to = key
+  }
+  return { from, to }
+}
+
+export interface PickedPlanOverlay {
+  day: string
+  /** 缺省表示这一天的计划请求还没接到面板上（测试夹具）。 */
+  phase?: PlanLoadPhase
+  plan: { planDate: string; items?: readonly unknown[]; readable?: boolean } | null
+}
+
+/**
+ * 把「这一天的计划请求已经成功」叠到区间结果上。
+ *
+ * 加载中 / 失败 / 还没请求：**不删**区间里已有的点 —— 删掉就会把失败画成「没有计划」。
+ * 只有 `ready` 才以这一天的 `GET /plans?date=` 为准（有信号就点上，没有就拿掉）。
+ */
+export function overlayPickedPlanDate(fetched: ReadonlySet<string>, picked: PickedPlanOverlay): Set<string> {
+  const next = new Set(fetched)
+  const phase = picked.phase
+  switch (phase) {
+    case undefined:
+    case 'idle':
+    case 'loading':
+    case 'error':
+      return next
+    case 'ready': {
+      if (picked.plan !== null && picked.plan.planDate !== picked.day) return next
+      if (dailyPlanHasSignal(picked.plan)) next.add(picked.day)
+      else next.delete(picked.day)
+      return next
+    }
+    default: {
+      const _exhaustive: never = phase
+      return _exhaustive
+    }
+  }
+}
+
+function planDateList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const dates: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') return null
+    dates.push(item)
+  }
+  return dates
+}
+
+export interface VisiblePlanDates {
+  dates: ReadonlySet<string>
+  /** 区间请求失败。此时 `dates` 为空，调用方必须把失败说出来，不许当成「这些天都没计划」。 */
+  failed: boolean
+  retry: () => void
+}
+
+/**
+ * 可见格子上哪些天有计划。`override` 给定时不发请求（验证脚手架注入固定集合）。
+ *
+ * 挂在日历视图里，而不是 `WorkbenchApp`：容器的 hook 预算不加这一条。
+ */
+export function useVisiblePlanDates(
+  days: readonly Date[],
+  refreshKey: number,
+  override?: ReadonlySet<string>,
+): VisiblePlanDates {
+  const [attempt, setAttempt] = useState(0)
+  const span = planDateSpan(days)
+  const from = span?.from ?? ''
+  const to = span?.to ?? ''
+  const requestKey = override !== undefined || span === null ? '' : `${from}|${to}|${refreshKey}|${attempt}`
+  const [loaded, setLoaded] = useState<{ requestKey: string; dates: string[]; failed: boolean } | null>(null)
+
+  useEffect(() => {
+    if (requestKey === '' || from === '' || to === '') return
+    let cancelled = false
+    void api<{ dates?: unknown }>(`/api/workbench/plans?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)
+      .then((body) => {
+        if (cancelled) return
+        const dates = planDateList(body.dates)
+        if (dates === null) {
+          setLoaded({ requestKey, dates: [], failed: true })
+          return
+        }
+        setLoaded({ requestKey, dates, failed: false })
+      })
+      .catch(() => {
+        if (cancelled) return
+        setLoaded({ requestKey, dates: [], failed: true })
+      })
+    return () => { cancelled = true }
+  }, [requestKey, from, to])
+
+  const retry = useCallback(() => { setAttempt((value) => value + 1) }, [])
+  if (override !== undefined) return { dates: override, failed: false, retry }
+  if (loaded === null || loaded.requestKey !== requestKey) return { dates: new Set<string>(), failed: false, retry }
+  return { dates: new Set(loaded.dates), failed: loaded.failed, retry }
 }
 
 export function useCalendarView(now: Date): CalendarCursor {

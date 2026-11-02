@@ -366,6 +366,13 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-day.today { border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #8fa8c8) 50%, transparent); }
 .wb-day.selected { border-color:var(--dsw-alias-state-business-primary, #8fa8c8); background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #8fa8c8) 10%, transparent); }
 .wb-month { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin-bottom:10px; }
+.wb-cal-legend { font-size:12px; color:var(--dsw-alias-label-secondary); margin:-2px 0 8px; }
+.wb-cal-plan-error { display:flex; align-items:center; gap:8px; font-size:12px; color:#e7634c; margin:0 0 8px; }
+.wb-plan-mark { margin-top:4px; font-size:11px; line-height:1.3; color:#d9a03f; }
+.wb-mday-marks { display:flex; align-items:center; gap:4px; }
+.wb-plan-dot { font-size:12px; line-height:1; color:#d9a03f; }
+.wb-plan-request { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--dsw-alias-label-secondary); margin:0 0 8px; }
+.wb-plan-request[role="alert"] { color:#e7634c; }
 .wb-mday { min-height:52px; border:1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.16)); background:var(--dsw-alias-bg-layer-1, rgba(255,255,255,.03)); border-radius:10px; padding:5px; cursor:pointer; color:var(--dsw-alias-label-secondary); }
 .wb-mday.other { opacity:.35; }
 .wb-mday.today { border-color: var(--dsw-alias-state-business-primary, #4f8ef7); }

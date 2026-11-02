@@ -75,8 +75,8 @@ async function clickText(selector, text) {
 }
 
 /**
- * 点某个**日期格子**。不能按 `textContent` 匹配：格子里除了日期还有"1 个任务"标记，
- * 整格文本是 `10/11 个任务`。所以按内层日期标签定位。
+ * 点某个**日期格子**。不能按 `textContent` 匹配：格子里除了日期还有「N 个截止」/「有计划」，
+ * 整格文本不是纯日期。所以按内层日期标签定位。
  */
 async function clickCell(cellSelector, label) {
   const point = await api.evaluate(`
@@ -114,9 +114,28 @@ try {
     JSON.stringify(await api.evaluate(cellLabels('.wb-day'))))
   check('“今天”落在 10/3 那一格（class=today）',
     await api.evaluate('return document.querySelector(".wb-day.today .wb-day-date")?.textContent === "10/3"'))
-  check('出标记的格子 = 9/30、10/1、10/3（**已取消的 10/2 不出现**）',
+  check('出截止标记的格子 = 9/30、10/1、10/3（**已取消的 10/2 不出现**）',
     JSON.stringify(await api.evaluate(labelsWithChip('.wb-day'))) === JSON.stringify(['9/30', '10/1', '10/3']),
     JSON.stringify(await api.evaluate(labelsWithChip('.wb-day'))))
+  check('仅计划的 10/4 有「有计划」、没有截止',
+    await api.evaluate(`
+      const cell = document.querySelector('.wb-day[data-cal-day="2026-10-04"]');
+      return cell?.getAttribute('data-plan') === '1' && cell?.getAttribute('data-due') === '0'
+        && cell?.querySelector('.wb-plan-mark')?.textContent === '有计划'
+        && cell?.querySelector('.wb-chip') === null;
+    `))
+  check('10/3 截止与计划并存',
+    await api.evaluate(`
+      const cell = document.querySelector('.wb-day[data-cal-day="2026-10-03"]');
+      return cell?.getAttribute('data-due') === '1' && cell?.getAttribute('data-plan') === '1'
+        && cell?.textContent.includes('1 个截止') && cell?.textContent.includes('有计划');
+    `))
+  check('无截止无计划的 9/28 格子是空的',
+    await api.evaluate(`
+      const cell = document.querySelector('.wb-day[data-cal-day="2026-09-28"]');
+      return cell?.getAttribute('data-due') === '0' && cell?.getAttribute('data-plan') === '0'
+        && cell?.querySelector('.wb-chip, .wb-plan-mark') === null;
+    `))
   check('日期面板用 dayPanelProps.day 渲染（2026-09-28）',
     await api.evaluate('return document.body.textContent.includes("2026-09-28 没有计划任务")'))
 
@@ -124,6 +143,28 @@ try {
   await clickText('.wb-btn', 'AI 智能排序')
   check('空态「AI 智能排序」走到 dayPanelProps.onSort()',
     (await api.evaluate('return __h4.events()')).includes('onSort'))
+
+  // 选中日计划的加载 / 失败放在周视图里测：月格子更高，重试按钮容易被挤出视口。
+  await api.evaluate('__h4.setPlanRequest("loading"); return true')
+  await api.waitFor('return document.body.textContent.includes("加载中…")', { description: '计划区出现加载中' })
+  check('加载中可见，且没有先闪成「没有计划任务」',
+    await api.evaluate('return document.body.textContent.includes("加载中…") && !document.body.textContent.includes("没有计划任务")'))
+  await api.evaluate('__h4.setPlanRequest("error"); return true')
+  await api.waitFor('return document.body.textContent.includes("当天计划加载失败")', { description: '计划区出现失败' })
+  check('失败是「当天计划加载失败」，不是空计划',
+    await api.evaluate('return document.body.textContent.includes("当天计划加载失败") && !document.body.textContent.includes("没有计划任务")'))
+  await api.evaluate(`
+    const btn = [...document.querySelectorAll('.wb-btn')].find((el) => el.textContent.trim() === '重试');
+    btn?.scrollIntoView({ block: 'center' });
+    return btn !== undefined;
+  `)
+  await clickText('.wb-btn', '重试')
+  check('失败行的「重试」会再请求',
+    (await api.evaluate('return __h4.events()')).includes('retryPlan'))
+  await api.evaluate('__h4.setPlanRequest("ready"); return true')
+  await api.waitFor('return document.body.textContent.includes("没有计划任务")', { description: '成功空态恢复' })
+  check('请求成功且为空时仍是「没有计划任务」+「AI 智能排序」',
+    await api.evaluate('return document.body.textContent.includes("没有计划任务") && document.body.textContent.includes("AI 智能排序") && !document.body.textContent.includes("当天计划加载失败")'))
 
   // ---------------------------------------------------------------- 周视图点格子 → 选中
   await clickCell('.wb-day', '10/1')
@@ -144,9 +185,18 @@ try {
   check('月视图标题 = 2026年9月（游标仍在 9/28 所在月）',
     await api.evaluate('return document.querySelector(".wb-cal-nav div").textContent.trim() === "2026年9月"'),
     await api.evaluate('return document.querySelector(".wb-cal-nav div").textContent.trim()'))
-  check('月视图出标记的格子 = 3（已取消那条仍不计）',
+  check('月视图出截止标记的格子 = 3（已取消那条仍不计）',
     (await api.evaluate(labelsWithChip('.wb-mday'))).length === 3,
     JSON.stringify(await api.evaluate(labelsWithChip('.wb-mday'))))
+  check('月格图例是「● 截止  ○ 计划」',
+    await api.evaluate('return document.querySelector(".wb-cal-legend")?.textContent === "● 截止  ○ 计划"'))
+  check('月格：10/4 只有空心计划点，10/3 实心截止与空心计划并存',
+    await api.evaluate(`
+      const onlyPlan = document.querySelector('.wb-mday[data-cal-day="2026-10-04"]');
+      const both = document.querySelector('.wb-mday[data-cal-day="2026-10-03"]');
+      return onlyPlan?.querySelector('.wb-plan-dot')?.textContent === '○' && onlyPlan?.querySelector('.wb-chip') === null
+        && both?.querySelector('.wb-chip')?.textContent === '●' && both?.querySelector('.wb-plan-dot')?.textContent === '○';
+    `))
   check('“今天”在月视图仍然只有一格被高亮',
     await api.evaluate('return document.querySelectorAll(".wb-mday.today").length === 1'))
 

@@ -7,26 +7,44 @@
  *   选中日（`picked`，与「今日」视图共用一份 state）、以及日期面板的**整份 props**
  *   （`dayPanelProps`：今日与日历共用一份装配，两份清单迟早漂移，见 `index.tsx` 的注释）。
  * - **留在这里的**：只有"怎么画格子"。格子的计算走 `calendarView.ts` 的纯函数
- *   （`weekDaysOf` / `monthGridOf`），本组件不自己算日期。
+ *   （`weekDaysOf` / `monthGridOf` / `calendarCellSignal`），本组件不自己算日期，
+ *   也不自己判断「算不算截止 / 算不算有计划」。
+ *
+ * ## 格子上的两件事
+ *
+ * - **截止**：`isTaskDueOnDay` 的条数。周格写「N 个截止」，月格是实心点。
+ * - **计划**：该日有当日计划项（`GET /plans?from=&to=`，与单日计划同一信号）。
+ *   周格写「有计划」，月格是空心点。两件事可以同时出现。
+ * - **不画**法定期限 / `UpcomingDeadlines`。没有日视图。
  *
  * ## 不许在这里做判定
  *
- * 「哪天算今天」「是不是同一格」用 `format.ts#sameDay`；某天有几个任务用
- * `taskFilterSort.ts#isTaskDueOnDay`；计划成员口径在 `shared/dailyPlanPolicy.ts`。
+ * 「哪天算今天」「是不是同一格」用 `format.ts#sameDay`；截止条数用
+ * `calendarCellSignal`（内部只有 `isTaskDueOnDay`）；计划成员口径在
+ * `shared/dailyPlanPolicy.ts#dailyPlanHasSignal`。
  *
  * ## ⚠️ 两个"看起来多余"的写法，别顺手改
  *
  * 1. `cal` 由容器传进来（里面是 `useCalendarView` 的两个 state）。**不要**在这里
  *    `useState`：视图在 `{view === 'calendar' && …}` 里，切页签即卸载，"切走再切回"
  *    会把月份与周/月模式重置 —— 那是没人要求的行为回归（H4 plan §3）。
+ *    计划标记的请求可以住在这里：它不是游标，卸掉再拉一次没有行为回归。
  * 2. 空态的「AI 智能排序」直接调 `dayPanelProps.onSort()`：它的实现就是
  *    `startAISession('plan', null, dayPanel.day)`，与拆分前那一行**逐字同义**。
  *    另起一个回调等于给同一件事开第二个入口。
  */
 import { DayPanel, type DayPanelProps } from './DayPanel.js'
-import { isTaskDueOnDay } from '../taskFilterSort.js'
-import { sameDay } from '../format.js'
-import type { CalendarCursor } from '../calendarView.js'
+import { sameDay, localDateString } from '../format.js'
+import {
+  CALENDAR_MONTH_LEGEND, CALENDAR_WEEK_PLAN_LABEL, calendarCellSignal, overlayPickedPlanDate,
+  useVisiblePlanDates, weekDueLabel, type CalendarCellSignal, type CalendarCursor,
+} from '../calendarView.js'
+
+export interface CalendarPlanMarks {
+  dates: ReadonlySet<string>
+  failed: boolean
+  retry?: () => void
+}
 
 export interface CalendarViewProps {
   /** 今天（高亮"今天"那一格 + 「今天」按钮的落点）。 */
@@ -39,10 +57,31 @@ export interface CalendarViewProps {
   cal: CalendarCursor
   /** 日期面板的共装配（今日与日历同一份）。 */
   dayPanelProps: Omit<DayPanelProps, 'emptyPlanAction'>
+  /** 计划保存后递增，用来重拉格子上的计划标记。 */
+  planRefreshKey?: number
+  /**
+   * 给定时不再请求区间（验证脚手架注入固定集合）。
+   * `failed` 为真时格子不假装这些天都没有计划。
+   */
+  planMarks?: CalendarPlanMarks
 }
 
-export function CalendarView({ now, picked, onPickDay, cal, dayPanelProps }: CalendarViewProps): JSX.Element {
+export function CalendarView({
+  now, picked, onPickDay, cal, dayPanelProps, planRefreshKey = 0, planMarks,
+}: CalendarViewProps): JSX.Element {
   const tasks = dayPanelProps.tasks
+  const visibleDays = cal.mode === 'week' ? cal.weekDays : cal.monthGrid
+  const remote = useVisiblePlanDates(visibleDays, planRefreshKey, planMarks?.dates)
+  const baseDates = planMarks?.dates ?? remote.dates
+  const marksFailed = planMarks !== undefined ? planMarks.failed : remote.failed
+  const retryMarks = planMarks?.retry ?? remote.retry
+  const planDates = overlayPickedPlanDate(baseDates, {
+    day: dayPanelProps.day,
+    phase: dayPanelProps.planRequest,
+    plan: dayPanelProps.plan,
+  })
+  const signalOf = (day: Date): CalendarCellSignal => calendarCellSignal(tasks, day, planDates)
+
   return (
     <>
       <div className="wb-cal-nav">
@@ -59,15 +98,29 @@ export function CalendarView({ now, picked, onPickDay, cal, dayPanelProps }: Cal
           <button className={`wb-seg ${cal.mode === 'month' ? 'on' : ''}`} onClick={() => cal.setMode('month')}>月</button>
         </div>
       </div>
+      {cal.mode === 'month' && <div className="wb-cal-legend">{CALENDAR_MONTH_LEGEND}</div>}
+      {marksFailed && (
+        <div className="wb-cal-plan-error" role="alert">
+          <span>日历计划标记加载失败</span>
+          <button type="button" className="wb-btn" onClick={() => { retryMarks() }}>重试</button>
+        </div>
+      )}
 
       {cal.mode === 'week' && (
         <div className="wb-week">
-          {cal.weekDays.map((d) => {
-            const n = tasks.filter((t) => isTaskDueOnDay(t, d)).length
+          {cal.weekDays.map((day) => {
+            const signal = signalOf(day)
+            const dueLabel = weekDueLabel(signal.dueCount)
             return (
-              <div key={d.toISOString()} className={`wb-day ${sameDay(d, now) ? 'today' : ''} ${sameDay(d, picked) ? 'selected' : ''}`} onClick={() => onPickDay(d)}>
-                <div className="wb-day-date" style={{ fontSize: 12, color: '#999' }}>{d.getMonth() + 1}/{d.getDate()}</div>
-                {n > 0 && <div className="wb-chip" style={{ background: '#4f8ef7', marginTop: 4 }}>{n} 个任务</div>}
+              <div
+                key={day.toISOString()}
+                {...cellAttrs(day, signal)}
+                className={`wb-day ${sameDay(day, now) ? 'today' : ''} ${sameDay(day, picked) ? 'selected' : ''}`}
+                onClick={() => onPickDay(day)}
+              >
+                <div className="wb-day-date" style={{ fontSize: 12, color: '#999' }}>{day.getMonth() + 1}/{day.getDate()}</div>
+                {dueLabel !== null && <div className="wb-chip wb-due-mark" style={{ background: '#4f8ef7', marginTop: 4 }}>{dueLabel}</div>}
+                {signal.hasPlan && <div className="wb-plan-mark">{CALENDAR_WEEK_PLAN_LABEL}</div>}
               </div>
             )
           })}
@@ -75,12 +128,25 @@ export function CalendarView({ now, picked, onPickDay, cal, dayPanelProps }: Cal
       )}
       {cal.mode === 'month' && (
         <div className="wb-month">
-          {cal.monthGrid.map((d) => (
-            <div key={d.toISOString()} className={`wb-mday ${d.getMonth() !== cal.cursor.getMonth() ? 'other' : ''} ${sameDay(d, now) ? 'today' : ''} ${sameDay(d, picked) ? 'selected' : ''}`} onClick={() => onPickDay(d)}>
-              <div className="wb-mday-date" style={{ fontSize: 12 }}>{d.getDate()}</div>
-              {tasks.some((t) => isTaskDueOnDay(t, d)) && <div className="wb-chip" style={{ background: '#4f8ef7', marginTop: 2 }}>•</div>}
-            </div>
-          ))}
+          {cal.monthGrid.map((day) => {
+            const signal = signalOf(day)
+            return (
+              <div
+                key={day.toISOString()}
+                {...cellAttrs(day, signal)}
+                className={`wb-mday ${day.getMonth() !== cal.cursor.getMonth() ? 'other' : ''} ${sameDay(day, now) ? 'today' : ''} ${sameDay(day, picked) ? 'selected' : ''}`}
+                onClick={() => onPickDay(day)}
+              >
+                <div className="wb-mday-date" style={{ fontSize: 12 }}>{day.getDate()}</div>
+                {(signal.dueCount > 0 || signal.hasPlan) && (
+                  <div className="wb-mday-marks">
+                    {signal.dueCount > 0 && <div className="wb-chip wb-due-mark" style={{ background: '#4f8ef7', marginTop: 2 }} title="截止">●</div>}
+                    {signal.hasPlan && <span className="wb-plan-dot" title="计划">○</span>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -100,4 +166,12 @@ export function CalendarView({ now, picked, onPickDay, cal, dayPanelProps }: Cal
       />
     </>
   )
+}
+
+function cellAttrs(day: Date, signal: CalendarCellSignal): { 'data-cal-day': string; 'data-due': string; 'data-plan': string } {
+  return {
+    'data-cal-day': localDateString(day),
+    'data-due': signal.dueCount > 0 ? '1' : '0',
+    'data-plan': signal.hasPlan ? '1' : '0',
+  }
 }
