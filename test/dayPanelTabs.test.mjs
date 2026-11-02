@@ -324,6 +324,46 @@ test('排入今日：只在逾期/未排期两个页签出现（计划/已完成
   assert.equal(doneTab.includes('wb-schedule'), false)
 })
 
+test('计划请求加载中：计划区写「加载中…」，不落到「没有计划任务」', () => {
+  const html = render({
+    plan: null,
+    planRequest: 'loading',
+    emptyPlanAction: createElement('div', null, '2026-10-04 没有计划任务'),
+  })
+  assert.ok(html.includes('加载中…'))
+  assert.equal(html.includes('没有计划任务'), false)
+  assert.equal(html.includes('当天计划加载失败'), false)
+})
+
+test('计划请求失败：一行失败 + 重试，不许装成空计划', () => {
+  const html = render({
+    plan: null,
+    planRequest: 'error',
+    onRetryPlan: () => {},
+    emptyPlanAction: createElement('div', null, '2026-10-04 没有计划任务'),
+  })
+  assert.ok(html.includes('当天计划加载失败'))
+  assert.ok(html.includes('>重试<'))
+  assert.equal(html.includes('没有计划任务'), false)
+})
+
+test('计划请求成功且为空：空态动作照旧', () => {
+  const html = render({
+    plan: null,
+    planRequest: 'ready',
+    emptyPlanAction: createElement('div', null, '2026-10-04 没有计划任务'),
+  })
+  assert.ok(html.includes('2026-10-04 没有计划任务'))
+  assert.equal(html.includes('加载中…'), false)
+  assert.equal(html.includes('当天计划加载失败'), false)
+})
+
+test('计划请求加载中不改其它页签的空态', () => {
+  const html = render({ tab: 'overdue', planRequest: 'loading' })
+  assert.ok(html.includes('没有逾期任务'))
+  assert.equal(html.includes('加载中…'), false)
+})
+
 test('排入今日：日历选中未来日期（isToday=false）即使传了回调也不出现', () => {
   const html = render({
     ...withButton,

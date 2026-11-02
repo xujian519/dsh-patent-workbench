@@ -22,6 +22,7 @@ import {
   DEFAULT_PLAN_MINUTES,
   checkPlanMinutes,
   checkPlanTaskSet,
+  dailyPlanHasSignal,
   mergePlanItems,
   parsePlanItems,
   type PlanItemShape,
@@ -154,6 +155,27 @@ function parseDailyPlan(row: RawDailyPlanRow | undefined): DailyPlanRow | undefi
 
 export function getDailyPlan(db: DatabaseSync, planDate: string): DailyPlanRow | undefined {
   return parseDailyPlan(db.prepare('SELECT * FROM daily_plans WHERE plan_date = ?').get(planDate) as RawDailyPlanRow | undefined)
+}
+
+/**
+ * 一段本地日内「有计划」的日期（升序）。
+ *
+ * 与 `getDailyPlan` 共用 `parsePlanItems` + `dailyPlanHasSignal`：格子上的计划点
+ * 必须和单日 `GET /plans?date=` 对得上，不能另写一套「有没有项」的判断。
+ */
+export function listDailyPlanSignalDates(db: DatabaseSync, from: string, to: string): string[] {
+  const rows = db.prepare(
+    'SELECT plan_date, items_json FROM daily_plans WHERE plan_date >= ? AND plan_date <= ? ORDER BY plan_date',
+  ).all(from, to) as unknown as Array<{ plan_date: string; items_json: string }>
+  const dates: string[] = []
+  for (const row of rows) {
+    const parsed = parsePlanItems(row.items_json)
+    const signal = dailyPlanHasSignal(parsed.readable
+      ? { readable: true, items: parsed.items }
+      : { readable: false, items: [] })
+    if (signal) dates.push(row.plan_date)
+  }
+  return dates
 }
 
 function insertDailyPlan(db: DatabaseSync, input: { planDate: string; summary: string; items: DailyPlanItem[]; sourceCode: string; sessionId: string | null }, at: string, id: string = randomUUID()): void {

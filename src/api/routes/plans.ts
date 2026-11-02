@@ -15,7 +15,7 @@
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import {
-  addDailyPlanItem, deleteDailyPlan, getDailyPlan, updateDailyPlan, updateDailyPlanItem,
+  addDailyPlanItem, deleteDailyPlan, getDailyPlan, listDailyPlanSignalDates, updateDailyPlan, updateDailyPlanItem,
   type DailyPlanRow, type ManualPlanItemInput,
 } from '../../db/repo.js'
 import { PERIOD_DATE_RE, PLANS_PREFIX, badRequest, pathSegments, readJsonBody, requireLoopback, writeJson } from './helpers.js'
@@ -36,6 +36,18 @@ function planResponse(db: DatabaseSync, plan: DailyPlanRow | undefined): Record<
       items: plan.items.map((item) => ({ ...item, taskStatusCode: statusOf.get(item.taskId) ?? 'missing' })),
     },
   }
+}
+
+/** 月格子最多 42 天；留一点余量，避免一次扫整张表。 */
+const PLAN_SIGNAL_RANGE_LIMIT = 62
+
+/** `from`/`to` 都是 `YYYY-MM-DD` 且 from ≤ to 时返回含首尾的天数，否则 null。 */
+function planSignalRangeDays(from: string, to: string): number | null {
+  if (!PERIOD_DATE_RE.test(from) || !PERIOD_DATE_RE.test(to) || from > to) return null
+  const start = Date.parse(`${from}T00:00:00Z`)
+  const end = Date.parse(`${to}T00:00:00Z`)
+  if (Number.isNaN(start) || Number.isNaN(end)) return null
+  return Math.round((end - start) / 86_400_000) + 1
 }
 
 function readItemsFromBody(body: Record<string, unknown>): ManualPlanItemInput[] | undefined {
@@ -65,8 +77,18 @@ export function makePlanRoutes(db: DatabaseSync): WebRoute[] {
         const method = req.method ?? 'GET'
         const today = localDateString()
 
-        // GET /plans?date=YYYY-MM-DD
+        // GET /plans?from=&to= —— 可见格子上「有计划」的日期（与 GET ?date= 同一信号）
+        // GET /plans?date=YYYY-MM-DD —— 单日计划全文
         if (segments.length === 0 && method === 'GET') {
+          const from = url.searchParams.get('from')
+          const to = url.searchParams.get('to')
+          if (from !== null || to !== null) {
+            if (from === null || to === null) return writeJson(res, 400, { error: 'from and to are required' })
+            const days = planSignalRangeDays(from, to)
+            if (days === null) return writeJson(res, 400, { error: 'from/to must be YYYY-MM-DD and from <= to' })
+            if (days > PLAN_SIGNAL_RANGE_LIMIT) return writeJson(res, 400, { error: 'range too large' })
+            return writeJson(res, 200, { ok: true, dates: listDailyPlanSignalDates(db, from, to) })
+          }
           const planDate = url.searchParams.get('date') ?? today
           if (!PERIOD_DATE_RE.test(planDate)) return writeJson(res, 400, { error: 'date must be YYYY-MM-DD' })
           return writeJson(res, 200, planResponse(db, getDailyPlan(db, planDate)))

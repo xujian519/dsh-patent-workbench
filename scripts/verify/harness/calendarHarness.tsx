@@ -49,6 +49,8 @@ const TASKS: Task[] = [
 
 const picks: string[] = []
 const events: string[] = []
+/** 10/3 既有截止也有计划；10/4 只有计划。已取消的 10/2 两边都没有。 */
+const PLAN_DATES = new Set(['2026-10-03', '2026-10-04'])
 
 const dayPanelProps: Omit<DayPanelProps, 'emptyPlanAction'> = {
   day: PANEL_DAY,
@@ -81,6 +83,7 @@ function Harness(): JSX.Element {
   const cal = useCalendarView(NOW)
   const [view, setView] = useState<'calendar' | 'today'>('calendar')
   const [picked, setPicked] = useState<Date>(() => startOfDay(NOW))
+  const [planRequest, setPlanRequest] = useState<'ready' | 'loading' | 'error'>('ready')
 
   useEffect(() => {
     ;(globalThis as unknown as { __h4: unknown }).__h4 = {
@@ -89,6 +92,7 @@ function Harness(): JSX.Element {
       picks: () => picks.slice(),
       events: () => events.slice(),
       setView: (next: 'calendar' | 'today') => setView(next),
+      setPlanRequest: (next: 'ready' | 'loading' | 'error') => setPlanRequest(next),
     }
   })
 
@@ -100,7 +104,12 @@ function Harness(): JSX.Element {
           picked={picked}
           onPickDay={(day) => { picks.push(day.toISOString()); setPicked(startOfDay(day)) }}
           cal={cal}
-          dayPanelProps={dayPanelProps}
+          dayPanelProps={{
+            ...dayPanelProps,
+            planRequest,
+            onRetryPlan: () => { events.push('retryPlan'); setPlanRequest('loading') },
+          }}
+          planMarks={{ dates: PLAN_DATES, failed: false }}
         />
       </div>
     )

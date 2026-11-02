@@ -157,6 +157,19 @@ export function parsePlanItems(raw: unknown): PlanItemsParse {
   return { readable: true, items, diagnostics }
 }
 
+/**
+ * 这一天算不算「有计划」（日历格子与 `GET /plans?date=` 同一口径）。
+ *
+ * - 没有记录 → 没有计划；
+ * - 至少一项可读计划项 → 有计划；
+ * - 整份 `items_json` 无法解析 → **不能当成没有计划**（面板会显示「不可计算」，格子若空白就是撒谎）。
+ */
+export function dailyPlanHasSignal(plan: { items?: readonly unknown[]; readable?: boolean } | null | undefined): boolean {
+  if (plan == null) return false
+  if (plan.readable === false) return true
+  return (plan.items?.length ?? 0) > 0
+}
+
 // ---------------------------------------------------------------------------
 // 写入校验：任务存在 / 关闭 / 父子链
 // ---------------------------------------------------------------------------

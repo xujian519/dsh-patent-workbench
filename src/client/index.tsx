@@ -28,6 +28,7 @@ import { CalendarView } from './components/CalendarView.js'
 import { TodayView } from './components/views/TodayView.js'
 import { TaskDetailPane, type ReviewSinkInput, type SubtaskDraft, type TaskDetailTab } from './components/views/TaskDetailPane.js'
 import { useCalendarView } from './calendarView.js'
+import { usePickedDayPlan } from './pickedDayPlan.js'
 import { useDayPanelModel } from './dayPanelModel.js'
 import { buildPlanPrompt } from './dailyPlanPrompt.js'
 import { WORKBENCH_CSS } from './styles.js'
@@ -430,9 +431,9 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   const [dictForm, setDictForm] = useState<{ name: string; code: string; color: string; sortOrder: number } | null>(null)
   const [dictEditCode, setDictEditCode] = useState<string | null>(null)
   const [dictError, setDictError] = useState<string | null>(null)
-  const [pickedPlan, setPickedPlan] = useState<DailyPlanView | null>(null)
-  const [pickedPlanSession, setPickedPlanSession] = useState<{ sessionId: string } | null>(null)
   const [planRefreshKey, setPlanRefreshKey] = useState(0)
+  /** 日期面板页签。放在选中日计划请求之前：要不要拉那一天取决于当前页签。 */
+  const [dayTab, setDayTab] = useState<DayTab>('plan')
   const [knowledgeEntries, setKnowledgeEntries] = useState<KnowledgeEntry[]>([])
   /**
    * 案卷列表（案卷视图与「归入案卷」下拉共用一份）。
@@ -2447,6 +2448,13 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    */
   const [picked, setPicked] = useState<Date>(todayStart)
   const pickedAnchor = localDateString(picked)
+  /** 失败停在 error；锚点还没对上的那一帧是 loading，不是「没有计划」。 */
+  const pickedDay = usePickedDayPlan({
+    enabled: view === 'calendar' && dayTab === 'plan',
+    anchor: pickedAnchor,
+    refreshKey: planRefreshKey,
+  })
+  const pickedPlan = pickedDay.plan
   /**
    * 候选判定的**唯一调用点**（AI 排序提示词与两处手动池全走这里）。
    *
@@ -2623,7 +2631,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   // 周/月日历（H4-1：游标与派生搬去 `calendarView.ts`；state 仍挂在**本组件**上，
   // 因为视图会随页签卸载 —— 搬进视图会让"切走再切回"重置月份与周/月模式）
   const cal = useCalendarView(now)
-  const [dayTab, setDayTab] = useState<DayTab>('plan')
   const todayAnchor = localDateString(new Date())
 
   useEffect(() => {
@@ -2631,17 +2638,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
       .then((r) => setTodayPlanSession(r.session))
       .catch(() => setTodayPlanSession(null))
   }, [todayAnchor, bootstrap])
-
-  useEffect(() => {
-    if (view !== 'calendar' || dayTab !== 'plan') {
-      setPickedPlan(null); setPickedPlanSession(null)
-      return
-    }
-    void Promise.all([
-      api<{ plan: DailyPlanView | null }>(`/api/workbench/plans?date=${pickedAnchor}`),
-      api<{ session: { sessionId: string } | null }>(`/api/workbench/ai-sessions?scope_code=daily_plan&anchor=${pickedAnchor}`),
-    ]).then(([planRes, sessionRes]) => { setPickedPlan(planRes.plan); setPickedPlanSession(sessionRes.session) }).catch(() => { setPickedPlan(null); setPickedPlanSession(null) })
-  }, [view, dayTab, pickedAnchor, planRefreshKey])
 
   /**
    * 「改父任务」选择项的候选列表（v1.14.0）。
@@ -2747,6 +2743,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
     },
     onSavePlan: (items: Array<{ taskId: string; note: string; minutes?: number }>) => savePlan(dayPanel.day, items),
+    planRequest: view === 'calendar' ? pickedDay.phase : undefined,
+    onRetryPlan: view === 'calendar' ? pickedDay.retry : undefined,
   }
 
   /** 同上：`?.list.getSnapshot()` 只保护外层，低版本宿主缺 `list` 时会抛 —— 一并加固。 */
@@ -3409,6 +3407,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               onPickDay={(day) => setPicked(startOfDay(day))}
               cal={cal}
               dayPanelProps={dayPanelProps}
+              planRefreshKey={planRefreshKey}
             />
           )}
           {/**

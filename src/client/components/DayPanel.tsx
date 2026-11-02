@@ -26,6 +26,7 @@ import { TaskTreeRows, countTaskTree, type PendingMap } from './TaskList.js'
 import type { DailyPlanView, Dict, Task } from '../viewTypes.js'
 import { countTaskTreeBy, type TaskTreeNode } from '../taskFilterSort.js'
 import { isDayPanelExtraTab, resolveDayPanelTab, type DayPanelTabCode } from '../../shared/dailyPlanPolicy.js'
+import type { PlanLoadPhase } from '../calendarView.js'
 
 /** 面板的页签（**类型定义在共享层**：装配层与组件引用同一份，不许各写一份字面量联合）。 */
 export type DayTab = DayPanelTabCode
@@ -41,8 +42,15 @@ export interface DayPanelProps {
   extraTabsAvailable: boolean
   tab: DayTab
   onTabChange: (tab: DayTab) => void
-  /** 该日计划（`null` = 还没有计划）。 */
+  /** 该日计划（`null` = 还没有计划）。加载中或失败时也是 null，要看 `planRequest`，不能把 null 当成空计划。 */
   plan: DailyPlanView | null
+  /**
+   * 选中日计划请求。缺省 = 已就绪（今日的计划来自 bootstrap，不走这条请求）。
+   * `loading` / `error` 时计划区必须说人话，不许落到「没有计划任务」。
+   */
+  planRequest?: PlanLoadPhase
+  /** `planRequest === 'error'` 时的重试。 */
+  onRetryPlan?: () => void
   /** 手动添加候选（父级用唯一候选函数算好）。 */
   candidateRows: Array<{ id: string; title: string }>
   /** AI 提示词候选被截断时的告知（不许给"全量排序"的假印象）。 */
@@ -95,7 +103,7 @@ export interface DayPanelProps {
 
 export function DayPanel(props: DayPanelProps): JSX.Element {
   const {
-    day, isToday, readOnly, extraTabsAvailable, tab, onTabChange, plan, candidateRows, promptInfo,
+    day, isToday, readOnly, extraTabsAvailable, tab, onTabChange, plan, planRequest, onRetryPlan, candidateRows, promptInfo,
     planTree, overdueTree, unscheduledTree, doneTree,
     doneContextIds, overdueContextIds, unscheduledContextIds,
     expanded, onToggleExpanded, sourceLabelOf, tasks, dicts, selectedId, pending, childrenOf,
@@ -136,6 +144,8 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
    */
   const showScheduleAction = isToday && onScheduleToday !== undefined
     && (activeTab === 'overdue' || activeTab === 'unscheduled')
+  /** 计划还在请求或请求失败时，空树不是「没有计划」。 */
+  const planRequestBlocking = activeTab === 'plan' && (planRequest === 'loading' || planRequest === 'error')
 
   return (
     <>
@@ -158,6 +168,7 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
             {/* 候选被截断时必须当场说出来：不给"全量排序"的假印象（需求 §5.1） */}
             {promptInfo.truncated && <span style={{ fontSize: 12, color: '#d9a03f' }} role="status">{promptInfo.notice}</span>}
           </div>
+          <PlanRequestNotice phase={planRequest} onRetry={onRetryPlan} />
           {plan !== null && (
             <PlanPanel
               plan={plan}
@@ -202,7 +213,7 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
             scheduledIds={showScheduleAction ? scheduledIds : undefined}
             schedulingTaskId={showScheduleAction ? schedulingTaskId : undefined}
           />
-          {roots.length === 0 && (
+          {roots.length === 0 && !planRequestBlocking && (
             <div className="wb-empty" style={{ padding: '24px 18px' }} data-day-empty={activeTab}>
               {planEmptyNode(activeTab, day, emptyPlanAction)}
             </div>
@@ -217,6 +228,28 @@ export function DayPanel(props: DayPanelProps): JSX.Element {
  *
  * 「逾期」/「未排期」必须解释判据 —— 否则用户会以为"任务丢了"（这次需求就是这么来的）。
  */
+function PlanRequestNotice({ phase, onRetry }: { phase: DayPanelProps['planRequest']; onRetry: (() => void) | undefined }): JSX.Element | null {
+  switch (phase) {
+    case undefined:
+    case 'idle':
+    case 'ready':
+      return null
+    case 'loading':
+      return <div className="wb-plan-request" role="status">加载中…</div>
+    case 'error':
+      return (
+        <div className="wb-plan-request" role="alert">
+          <span>当天计划加载失败</span>
+          <button type="button" className="wb-btn" onClick={() => { onRetry?.() }}>重试</button>
+        </div>
+      )
+    default: {
+      const _exhaustive: never = phase
+      return _exhaustive
+    }
+  }
+}
+
 function planEmptyNode(tab: DayTab, day: string, emptyPlanAction: ReactNode): ReactNode {
   if (tab === 'plan') {
     return emptyPlanAction !== undefined

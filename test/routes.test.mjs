@@ -1264,3 +1264,54 @@ test('[估时] 客户端与服务端的 estimatedMinutes 夹取必须同口径�
   }
 })
 
+test('GET /plans?from=&to= 的「有计划」与 GET /plans?date= 同一信号', async () => {
+  await withServer(async ({ db, request }) => {
+    const shift = (days) => {
+      const date = new Date()
+      date.setDate(date.getDate() + days)
+      return localDateString(date)
+    }
+    const today = shift(0)
+    const tomorrow = shift(1)
+    const emptyDay = shift(2)
+    const brokenDay = shift(3)
+    const task = createTask(db, { title: 'range plan', typeCode: 'code_impl', priorityCode: 'p2' })
+    const second = createTask(db, { title: 'range plan 2', typeCode: 'code_impl', priorityCode: 'p2' })
+    const putToday = await request('PUT', `/api/workbench/plans/${today}`, {
+      items: [{ taskId: task.id, order: 1, note: 'today' }],
+    })
+    const putTomorrow = await request('PUT', `/api/workbench/plans/${tomorrow}`, {
+      items: [{ taskId: second.id, order: 1, note: 'tomorrow' }],
+    })
+    assert.equal(putToday.status, 200)
+    assert.equal(putTomorrow.status, 200)
+    const stamp = new Date().toISOString()
+    db.prepare(
+      'INSERT INTO daily_plans (id, plan_date, summary, items_json, source_code, created_at, updated_at) VALUES (?, ?, \'\', ?, \'manual\', ?, ?)',
+    ).run('plan-empty', emptyDay, '[]', stamp, stamp)
+    db.prepare(
+      'INSERT INTO daily_plans (id, plan_date, summary, items_json, source_code, created_at, updated_at) VALUES (?, ?, \'\', ?, \'manual\', ?, ?)',
+    ).run('plan-broken', brokenDay, 'not-json', stamp, stamp)
+
+    const range = await request('GET', `/api/workbench/plans?from=${today}&to=${brokenDay}`)
+    assert.equal(range.status, 200)
+    for (const date of [today, tomorrow, emptyDay, brokenDay]) {
+      const one = await request('GET', `/api/workbench/plans?date=${date}`)
+      const plan = one.body.plan
+      const has = plan !== null && (plan.readable === false || plan.items.length > 0)
+      assert.equal(range.body.dates.includes(date), has, `${date} 的区间信号必须和单日 GET 一致`)
+    }
+    assert.deepEqual(range.body.dates, [today, tomorrow, brokenDay])
+
+    const missingTo = await request('GET', `/api/workbench/plans?from=${today}`)
+    assert.equal(missingTo.status, 400)
+    const backwards = await request('GET', `/api/workbench/plans?from=${brokenDay}&to=${today}`)
+    assert.equal(backwards.status, 400)
+    const tooWide = await request('GET', '/api/workbench/plans?from=2020-01-01&to=2020-04-01')
+    assert.equal(tooWide.status, 400)
+    const stillByDate = await request('GET', `/api/workbench/plans?date=${today}`)
+    assert.equal(stillByDate.status, 200)
+    assert.equal(stillByDate.body.plan.items.length, 1)
+  })
+})
+
