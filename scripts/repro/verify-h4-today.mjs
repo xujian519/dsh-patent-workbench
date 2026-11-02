@@ -75,24 +75,44 @@ try {
   await api.goto(pathToFileURL(PAGE).href)
   await api.waitFor('return globalThis.__h4 !== undefined', { description: 'harness 就绪（挂载 TodayView）' })
 
-  // ---------------------------------------------------------------- 统计卡
-  check('统计卡四格数字来自 props（7 / 3 / 11 / 42）',
-    JSON.stringify(await api.evaluate('return [...document.querySelectorAll(".wb-stat b")].map((el) => el.textContent)')) === JSON.stringify(['7', '3', '11', '42']),
-    JSON.stringify(await api.evaluate('return [...document.querySelectorAll(".wb-stat b")].map((el) => el.textContent)')))
-  check('统计卡四格标签：逾期 / 今天到期 / 进行中 / 总数',
-    JSON.stringify(await api.evaluate('return [...document.querySelectorAll(".wb-stat span")].map((el) => el.textContent)')) === JSON.stringify(['逾期', '今天到期', '进行中', '总数']))
+  // ---------------------------------------------------------------- 紧迫条（方案 A：替换四等分统计卡）
+  check('紧迫条三块数字：任务逾期 7 / 今日到期 3 / 期限紧迫 2',
+    JSON.stringify(await api.evaluate('return [...document.querySelectorAll("[data-urgency] b")].map((el) => el.textContent)')) === JSON.stringify(['7', '3', '2']),
+    JSON.stringify(await api.evaluate('return [...document.querySelectorAll("[data-urgency] b")].map((el) => el.textContent)')))
+  check('紧迫条文案：任务逾期 / 今日到期 / 期限紧迫',
+    await api.evaluate('const t = document.querySelector("[data-urgency-strip]")?.textContent ?? ""; return t.includes("任务逾期") && t.includes("今日到期") && t.includes("期限紧迫") && t.includes("含已过期与今日届满")'))
+  check('进行中 / 总数降到次级',
+    await api.evaluate('const t = document.querySelector("[data-urgency-secondary]")?.textContent ?? ""; return t.includes("进行中 11") && t.includes("总数 42")'))
 
   // ---------------------------------------------------------------- 期限看板
   check('期限看板渲染出来了（data-deadline-board）', await api.evaluate('return document.querySelector("[data-deadline-board]") !== null'))
-  check('看板两行（服务端给的两条期限）',
+  check('默认只展开已过期 + 今日届满（其余折叠，所以是两行）',
     await api.evaluate('return document.querySelectorAll(".wb-dl-row").length === 2'),
     String(await api.evaluate('return document.querySelectorAll(".wb-dl-row").length')))
+  check('已过期组在首屏内（不滚动）',
+    await api.evaluate('const el = document.querySelector("[data-deadline-group=\\"overdue\\"]"); if (el === null) return false; const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight'))
   check('看板内容含案号与标签', await api.evaluate('return document.body.textContent.includes("2026-UM-002") && document.body.textContent.includes("答复一通")'))
-  check('只有 overdue=1 那条带 overdue 样式（已过期标记由服务端给，界面不自己算）',
+  check('只有 overdue 那条带 overdue 样式（已过期标记由服务端给，界面不自己算）',
     await api.evaluate('return document.querySelectorAll(".wb-dl-row.overdue").length === 1'),
     String(await api.evaluate('return document.querySelectorAll(".wb-dl-row.overdue").length')))
-  check('「已过期」文案出现', await api.evaluate('return document.body.textContent.includes("已过期")'))
+  check('「已过期」文案出现，其余默认不在 DOM',
+    await api.evaluate('return document.body.textContent.includes("已过期") && !document.body.textContent.includes("缴年费") && document.body.textContent.includes("另有 1 条未展开")'))
   check('引擎可用时不显示降级说明', await api.evaluate('return document.querySelector("[data-deadline-degraded]") === null'))
+
+  await clickByText('.wb-dl-row', '2026-09-28')
+  check('点期限行 → onOpenMatter 带上 matterId',
+    (await api.evaluate('return __h4.events()')).includes('openMatter:m1'),
+    JSON.stringify(await api.evaluate('return __h4.events()')))
+
+  await clickByText('[data-deadline-more]', '另有')
+  check('点「另有 N 条未展开」→ 其余行出现',
+    await api.evaluate('return document.body.textContent.includes("缴年费") && document.querySelectorAll(".wb-dl-row").length === 3'))
+  await clickByText('[data-deadline-collapse]', '收起')
+  check('收起后其余行离开 DOM',
+    await api.evaluate('return !document.body.textContent.includes("缴年费") && document.querySelector("[data-deadline-more]") !== null'))
+  await clickByText('[data-urgency="deadlines"]', '2')
+  check('点紧迫条「期限紧迫」→ 展开其余',
+    await api.evaluate('return document.body.textContent.includes("缴年费") && document.querySelector("[data-deadline-group=\\"rest\\"]") !== null'))
 
   // ---------------------------------------------------------------- 「重算全部」走到容器回调
   await clickByText('.wb-btn', '重算全部')
@@ -120,9 +140,9 @@ try {
     await api.evaluate('return document.body.textContent.includes("AI 智能排序（2026-10-03）")'))
   await api.evaluate('__h4.setIsToday(true); return true;')
 
-  // ---------------------------------------------------------------- 面板页签切换（真的换了树）
-  await clickByText('[data-day-tabs] .wb-seg', '逾期')
-  check('点「逾期」页签 → 生效页签变了', await api.evaluate('return __h4.dayTab() === "overdue"'))
+  // ---------------------------------------------------------------- 紧迫条「任务逾期」切到逾期页签（真的换了树）
+  await clickByText('[data-urgency="tasks-overdue"]', '7')
+  check('点紧迫条「任务逾期」→ 生效页签变了', await api.evaluate('return __h4.dayTab() === "overdue"'))
   check('点「逾期」页签 → 树容器跟着换（data-day-tree）',
     await api.evaluate('return document.querySelector("[data-day-tree]")?.dataset.dayTree === "overdue"'),
     String(await api.evaluate('return document.querySelector("[data-day-tree]")?.dataset.dayTree')))

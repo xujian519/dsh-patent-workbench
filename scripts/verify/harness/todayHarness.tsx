@@ -41,6 +41,7 @@ const OVERDUE_TREE: TaskTreeNode<Task>[] = [{ task: TASKS[0], children: [] }]
 
 const DEADLINES: UpcomingDeadlineView[] = [
   { id: 'a', matterId: 'm1', caseNumber: '2026-UM-002', matterTitle: '某装置', label: '答复一通', dueDate: '2026-09-28', status: 'pending', overdue: true },
+  { id: 'c', matterId: 'm3', caseNumber: '2026-INV-003', matterTitle: '某电路', label: '今日答复', dueDate: TODAY, status: 'pending', overdue: false },
   { id: 'b', matterId: 'm2', caseNumber: '2026-INV-001', matterTitle: '某方法', label: '缴年费', dueDate: '2026-10-02', status: 'pending', overdue: false },
 ]
 
@@ -104,6 +105,7 @@ function Harness(): JSX.Element {
           upcomingDays={7}
           engineAvailable={engineAvailable}
           onRecomputeAll={() => { events.push('recomputeAll') }}
+          onOpenMatter={(matterId) => { events.push(`openMatter:${matterId}`) }}
           busy={busy}
           dayPanelProps={dayPanelProps}
           onQuickEntry={() => { events.push('quickEntry') }}

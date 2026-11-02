@@ -15,8 +15,10 @@
  * 它的字段（申请号/公开号/申请日/优先权要求/技术领域…）根本不适合塞进任务详情，
  * 而任务语义（今日/优先级/重复）对案卷也不成立 —— 混着放的结果是两边都别扭。
  */
+import { useEffect, useRef, useState } from 'react'
 import type { Dict } from '../viewTypes.js'
 import type { MatterTimeline, MatterTimelineEntry } from '../matterTimeline.js'
+import { groupUpcomingDeadlines } from '../deadlineBoard.js'
 import { Icon } from './Icon.js'
 
 /** 案卷行（与 `MatterRow` 同形；字段可空性照抄后端，避免"界面比库里更乐观"）。 */
@@ -193,26 +195,86 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   )
 }
 
+/** 看板一行：届满日、期限名、案号、发明名称。过期必须有文字「已过期」，不能只靠颜色。 */
+function DeadlineRow({ deadline, onOpenMatter }: {
+  deadline: UpcomingDeadlineView
+  onOpenMatter: (matterId: string) => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={deadline.overdue ? 'wb-dl-row overdue' : 'wb-dl-row'}
+      data-deadline-row={deadline.id}
+      data-matter-id={deadline.matterId}
+      onClick={() => onOpenMatter(deadline.matterId)}
+    >
+      <span className="wb-dl-date">{deadline.dueDate}</span>
+      <span className="wb-dl-main">
+        <span className="wb-dl-label">{deadline.label}</span>
+        <span className="wb-dl-meta">{deadline.caseNumber} · {deadline.matterTitle}</span>
+      </span>
+      {deadline.overdue ? <span className="wb-dl-flag">已过期</span> : null}
+    </button>
+  )
+}
+
+function DeadlineGroup({ code, title, items, onOpenMatter }: {
+  code: 'overdue' | 'due-today' | 'rest'
+  title: string
+  items: readonly UpcomingDeadlineView[]
+  onOpenMatter: (matterId: string) => void
+}): JSX.Element {
+  return (
+    <div className="wb-dl-group" data-deadline-group={code}>
+      <div className="wb-dl-group-title">{title}</div>
+      {items.map((deadline) => (
+        <DeadlineRow key={deadline.id} deadline={deadline} onOpenMatter={onOpenMatter} />
+      ))}
+    </div>
+  )
+}
+
 /**
  * 期限看板（跨案卷的"近 N 天到期"）——放在「今日」视图里。
  *
  * 为什么放今日而不是另开一个顶级页签：**期限是"今天要办的事"的一部分**。
  * 用户在今日视图的工作流是"看今天该做什么"，而"三天后要交答复"正属于这个判断；
  * 另开一页会变成"要记得去看"的另一处（决策 D5-3 的推荐口径）。
+ *
+ * 分组在 `deadlineBoard.ts`：已过期（服务端字段）→ 今日届满（`dueDate === todayKey`）
+ * → 其余默认折叠。`todayKey` 由调用方传入，与日期面板同一日键。
  */
-export function UpcomingDeadlines({ deadlines, days, engineAvailable, onRecomputeAll, busy }: {
+export function UpcomingDeadlines({ deadlines, days, todayKey, engineAvailable, onRecomputeAll, onOpenMatter, busy, expandToken = 0 }: {
   deadlines: readonly UpcomingDeadlineView[]
   days: number
+  /** 面板日键（YYYY-MM-DD）。「今日届满」只跟它比相等，不在这里取时钟。 */
+  todayKey: string
   /** 引擎是否可用（软探测结果）；不可用时明确说明"为什么这里没有期限"。 */
   engineAvailable: boolean
   onRecomputeAll: () => void
+  onOpenMatter: (matterId: string) => void
   busy: boolean
+  /**
+   * 外部请求展开「其余」并滚到看板（紧迫条「期限紧迫」）。
+   * 0 = 没有请求；每次点击递增。折叠本身仍是这块的本地 state。
+   */
+  expandToken?: number
 }): JSX.Element {
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [restExpanded, setRestExpanded] = useState(false)
+  const groups = groupUpcomingDeadlines(deadlines, todayKey)
+
+  useEffect(() => {
+    if (expandToken <= 0) return
+    setRestExpanded(true)
+    boardRef.current?.scrollIntoView({ block: 'start' })
+  }, [expandToken])
+
   return (
-    <div className="wb-card wb-dl-board" data-deadline-board>
+    <div className="wb-card wb-dl-board" data-deadline-board ref={boardRef}>
       <div className="wb-matter-head">
         <h3 className="wb-matter-title">
-          期限 <span className="wb-matter-count">近 {days} 天 {deadlines.length} 条（含已过期）</span>
+          法定期限 · 近 {days} 天 <span className="wb-matter-count">含已过期</span>
         </h3>
         <button className="wb-btn" disabled={busy || !engineAvailable} onClick={onRecomputeAll} data-deadline-recompute>
           <Icon name="refresh" />重算全部
@@ -232,16 +294,24 @@ export function UpcomingDeadlines({ deadlines, days, engineAvailable, onRecomput
         ? <div className="wb-empty">{engineAvailable ? '近 ' + days + ' 天内没有待办期限。' : '（引擎不可用，无法列出自动期限）'}</div>
         : (
           <div className="wb-dl-list">
-            {deadlines.map((deadline) => (
-              <div key={deadline.id} className={`wb-dl-row ${deadline.overdue ? 'overdue' : ''}`} data-deadline-row={deadline.id}>
-                <span className="wb-dl-date">{deadline.dueDate}</span>
-                <span className="wb-dl-main">
-                  <span className="wb-dl-label">{deadline.label}</span>
-                  <span className="wb-dl-meta">{deadline.caseNumber} · {deadline.matterTitle}</span>
-                </span>
-                {deadline.overdue ? <span className="wb-dl-flag">已过期</span> : null}
-              </div>
-            ))}
+            {groups.overdue.length === 0 ? null : (
+              <DeadlineGroup code="overdue" title="已过期" items={groups.overdue} onOpenMatter={onOpenMatter} />
+            )}
+            {groups.dueToday.length === 0 ? null : (
+              <DeadlineGroup code="due-today" title="今日届满" items={groups.dueToday} onOpenMatter={onOpenMatter} />
+            )}
+            {groups.rest.length === 0 ? null : restExpanded
+              ? (
+                <>
+                  <DeadlineGroup code="rest" title={`近 ${days} 天其余`} items={groups.rest} onOpenMatter={onOpenMatter} />
+                  <button type="button" className="wb-dl-more" data-deadline-collapse onClick={() => setRestExpanded(false)}>收起</button>
+                </>
+              )
+              : (
+                <button type="button" className="wb-dl-more" data-deadline-more onClick={() => setRestExpanded(true)}>
+                  另有 {groups.rest.length} 条未展开
+                </button>
+              )}
           </div>
         )}
     </div>

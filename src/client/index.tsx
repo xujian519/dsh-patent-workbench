@@ -3372,11 +3372,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
           onClose={() => setShowSettings(false)}
         />
       )}
-          {/**
-            * 今日视图（H4-2）：统计卡 + 期限看板 + 日期面板 today 实例，三块都搬去
-            * `components/views/TodayView.tsx`。这里只负责把容器持有的数据与入口递进去 ——
-            * 「重算全部」仍在这层装配，因为它要逐个案卷重算（依赖 `matters` 与重算函数）。
-            */}
+          {/* 今日（方案 A）：紧迫条 + 期限看板 + 日期面板。重算与打开案卷仍由容器装配。 */}
           {view === 'today' && (
             <TodayView
               stats={bootstrap?.stats}
@@ -3391,6 +3387,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               dayPanelProps={dayPanelProps}
               onQuickEntry={openQuickEntry}
               onNewTask={() => setShowForm((v) => !v)}
+              onOpenMatter={(matterId) => { setSelectedMatterId(matterId); setView('matters') }}
             />
           )}
           {view === 'calendar' && (

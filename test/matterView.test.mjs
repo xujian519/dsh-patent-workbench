@@ -332,37 +332,59 @@ test('5C：期限状态标签是闭集 —— 客户端这张表必须与仓储�
   assert.equal(deadlineStatusLabel('brand_new'), 'brand_new', '查不到原样显示码')
 })
 
+const boardProps = (over = {}) => ({
+  days: 7, todayKey: '2026-10-03', engineAvailable: true, onRecomputeAll: () => {}, onOpenMatter: () => {}, busy: false,
+  ...over,
+})
+
 test('SSR：今日期限看板 —— 引擎缺失时明确说明降级，空看板必须能自证原因', () => {
   const degraded = renderToStaticMarkup(createElement(UpcomingDeadlines, {
-    deadlines: [], days: 7, engineAvailable: false, onRecomputeAll: () => {}, busy: false,
+    deadlines: [], ...boardProps({ engineAvailable: false }),
   }))
   assert.match(degraded, /data-deadline-degraded/, '引擎不可用时必须有一段说明')
   assert.match(degraded, /未探测到期限引擎/)
   assert.match(degraded, /明确降级/)
+  assert.match(degraded, /法定期限 · 近 7 天/)
+  assert.match(degraded, /含已过期/)
   // 引擎不可用时重算按钮要**禁用**（不给用户点一个必然 409 的按钮）
   assert.match(buttonTag(degraded, 'data-deadline-recompute'), /disabled/, '引擎不可用时重算按钮要禁用')
 
   const empty = renderToStaticMarkup(createElement(UpcomingDeadlines, {
-    deadlines: [], days: 7, engineAvailable: true, onRecomputeAll: () => {}, busy: false,
+    deadlines: [], ...boardProps(),
   }))
   assert.doesNotMatch(empty, /data-deadline-degraded/)
   assert.match(empty, /近 7 天内没有待办期限/)
 })
 
-test('SSR：期限看板渲染行（案号 + 标签 + 已过期标记），过期由服务端给的 overdue 决定', () => {
+test('SSR：期限看板按已过期 → 今日届满 → 其余折叠；过期只信服务端 overdue', () => {
   const html = renderToStaticMarkup(createElement(UpcomingDeadlines, {
+    ...boardProps(),
     deadlines: [
       { id: 'a', matterId: 'm1', caseNumber: '2026-UM-002', matterTitle: '某装置', label: '答复一通', dueDate: '2026-09-28', status: 'pending', overdue: true },
+      // 届满日等于面板日键，但服务端说已过期：仍只进「已过期」，不许客户端改判成今日届满
+      { id: 'c', matterId: 'm3', caseNumber: '2026-UM-009', matterTitle: '某电路', label: '补正', dueDate: '2026-10-03', status: 'pending', overdue: true },
+      { id: 'd', matterId: 'm4', caseNumber: '2026-INV-003', matterTitle: '某结构', label: '今日答复', dueDate: '2026-10-03', status: 'pending', overdue: false },
       { id: 'b', matterId: 'm2', caseNumber: '2026-INV-001', matterTitle: '某方法', label: '缴年费', dueDate: '2026-10-02', status: 'pending', overdue: false },
     ],
-    days: 7, engineAvailable: true, onRecomputeAll: () => {}, busy: false,
   }))
   assert.match(html, /2026-UM-002/)
   assert.match(html, /答复一通/)
+  assert.match(html, /某装置/)
   assert.match(html, /已过期/)
-  assert.match(html, /2026-INV-001/)
-  // 只有过期那条带 overdue 样式
-  assert.equal((html.match(/wb-dl-row overdue/g) ?? []).length, 1)
+  assert.match(html, /今日届满/)
+  assert.match(html, /今日答复/)
+  assert.match(html, /data-matter-id="m4"/)
+  // 其余默认不进 DOM
+  assert.doesNotMatch(html, /缴年费/)
+  assert.doesNotMatch(html, /2026-INV-001/)
+  assert.match(html, /另有 1 条未展开/)
+  assert.doesNotMatch(html, /data-deadline-group="rest"/)
+  const overdueAt = html.indexOf('data-deadline-group="overdue"')
+  const todayAt = html.indexOf('data-deadline-group="due-today"')
+  const moreAt = html.indexOf('data-deadline-more')
+  assert.ok(overdueAt >= 0 && todayAt > overdueAt && moreAt > todayAt, '组顺序必须是已过期 → 今日届满 → 折叠其余')
+  // 只有服务端 overdue 的两条带 overdue 样式（今日届满那条届满日相同，但 overdue=false）
+  assert.equal((html.match(/wb-dl-row overdue/g) ?? []).length, 2)
 })
 
 test('SSR：案卷详情的期限区 —— 重算说明、顺延口径双日期、状态按钮、日历未覆盖提示', () => {
@@ -399,7 +421,30 @@ test('5C：前端全部走服务端 —— 重算/状态/看板都打端点，�
   assert.match(clientSource, /\/deadlines\/\$\{deadlineId\}`/, '状态改动走 PATCH 端点')
   assert.match(clientSource, /matter-deadlines\/upcoming\?days=/, '看板读聚合端点（不是遍历案卷 N+1 次）')
   // 界面不许自己拿今天比日期（时区口径只该在服务端算一次）
-  assert.doesNotMatch(clientSource, /dueDate\s*<\s*localDateString/, '不许在客户端自己算"是否过期"')
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, '')
+  for (const file of [
+    'src/client/index.tsx',
+    'src/client/deadlineBoard.ts',
+    'src/client/components/MattersView.tsx',
+    'src/client/components/views/TodayView.tsx',
+  ]) {
+    assert.doesNotMatch(stripComments(read(file)), /dueDate\s*<\s*/, `${file} 不许自己比日期判过期`)
+  }
+  // 容器里的 `localDateString(new Date())` 是日期面板既有日键，不在这条禁令里。
+  // 看板与今日视图不许再取一次时钟。
+  for (const file of [
+    'src/client/deadlineBoard.ts',
+    'src/client/components/MattersView.tsx',
+    'src/client/components/views/TodayView.tsx',
+  ]) {
+    assert.doesNotMatch(stripComments(read(file)), /new Date\s*\(/, `${file} 不许另取本地时钟重算过期或今日`)
+  }
+  assert.match(read('src/client/deadlineBoard.ts'), /deadline\.overdue/, '已过期只读服务端字段')
+  assert.match(read('src/client/deadlineBoard.ts'), /dueDate === todayKey/, '今日届满只跟传入日键比相等')
+  assert.match(read('src/client/components/views/TodayView.tsx'), /todayKey=\{dayPanelProps\.day\}/, '日键必须来自日期面板')
+  assert.match(read('src/client/components/views/TodayView.tsx'), /onTabChange\('overdue'\)/, '点「任务逾期」切日期面板逾期页签')
+  assert.match(read('src/client/components/views/TodayView.tsx'), /onTabChange\('plan'\)/, '点「今日到期」回到计划页签（今日到期任务的落点）')
+  assert.match(clientSource, /onOpenMatter=\{\(matterId\) => \{ setSelectedMatterId\(matterId\); setView\('matters'\) \}\}/, '点期限行打开案卷详情')
   // 引擎可用性来自服务端软探测，而不是客户端猜
   assert.match(read('src/api/routes.ts'), /deadlineEngineAvailable: deps\.patentDeadline\?\.\(\) !== undefined/, 'bootstrap 要暴露引擎可用性')
   assert.match(clientSource, /bootstrap\?\.deadlineEngineAvailable === true/, '客户端读服务端的探测结果')
