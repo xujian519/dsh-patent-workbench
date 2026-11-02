@@ -104,20 +104,20 @@ test('可见格子的日期区间是闭区间', () => {
 test('选中日计划：对不上的快照是 loading；失败不是 ready+null', () => {
   assert.deepEqual(resolvePickedPlanView({
     enabled: true, anchor: '2026-10-04', refreshKey: 1, retryKey: 0,
-    snapshot: { anchor: '2026-10-03', refreshKey: 1, retryKey: 0, phase: 'ready', plan: null, session: null },
+    snapshot: { anchor: '2026-10-03', refreshKey: 1, retryKey: 0, phase: 'ready', plan: null },
   }), { phase: 'loading', plan: null })
   assert.deepEqual(resolvePickedPlanView({
     enabled: true, anchor: '2026-10-04', refreshKey: 0, retryKey: 1,
-    snapshot: { anchor: '2026-10-04', refreshKey: 0, retryKey: 1, phase: 'error', plan: null, session: null },
+    snapshot: { anchor: '2026-10-04', refreshKey: 0, retryKey: 1, phase: 'error', plan: null },
   }), { phase: 'error', plan: null })
   assert.deepEqual(resolvePickedPlanView({
     enabled: true, anchor: '2026-10-04', refreshKey: 0, retryKey: 0,
-    snapshot: { anchor: '2026-10-04', refreshKey: 0, retryKey: 0, phase: 'ready', plan: null, session: null },
+    snapshot: { anchor: '2026-10-04', refreshKey: 0, retryKey: 0, phase: 'ready', plan: null },
   }), { phase: 'ready', plan: null })
   const kept = { planDate: '2026-10-04', items: [{ taskId: 'a' }] }
   assert.equal(resolvePickedPlanView({
     enabled: false, anchor: '2026-10-04', refreshKey: 0, retryKey: 0,
-    snapshot: { anchor: '2026-10-04', refreshKey: 0, retryKey: 0, phase: 'ready', plan: kept, session: null },
+    snapshot: { anchor: '2026-10-04', refreshKey: 0, retryKey: 0, phase: 'ready', plan: kept },
   }).plan, null, '离开日历 / 计划页签时不把计划交给面板')
 })
 

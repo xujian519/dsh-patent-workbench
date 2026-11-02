@@ -15,7 +15,6 @@ export interface PickedPlanSnapshot {
   retryKey: number
   phase: 'ready' | 'error'
   plan: DailyPlanView | null
-  session: { sessionId: string } | null
 }
 
 export function resolvePickedPlanView(input: {
@@ -59,15 +58,11 @@ export function usePickedDayPlan(input: {
     void (async () => {
       try {
         const planRes = await api<{ plan: DailyPlanView | null }>(`/api/workbench/plans?date=${anchor}`)
-        // 会话登记原先和计划一起拉。登记失败不把已经拿到的计划画成失败。
-        const sessionRes = await api<{ session: { sessionId: string } | null }>(
-          `/api/workbench/ai-sessions?scope_code=daily_plan&anchor=${anchor}`,
-        ).catch(() => ({ session: null }))
         if (cancelled) return
-        setSnapshot({ ...ticket, phase: 'ready', plan: planRes.plan, session: sessionRes.session })
+        setSnapshot({ ...ticket, phase: 'ready', plan: planRes.plan })
       } catch {
         if (cancelled) return
-        setSnapshot({ ...ticket, phase: 'error', plan: null, session: null })
+        setSnapshot({ ...ticket, phase: 'error', plan: null })
       }
     })()
     return () => { cancelled = true }
