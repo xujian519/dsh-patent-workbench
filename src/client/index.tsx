@@ -900,9 +900,6 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
     const res = await api<{ entries: KnowledgeEntry[] }>('/api/workbench/knowledge')
     setKnowledgeEntries(res.entries)
   }, [])
-  useEffect(() => {
-    if (view === 'knowledge') void loadKnowledge().catch(() => undefined)
-  }, [view, loadKnowledge, knowledgeRefreshKey])
   useEffect(() => { void loadMatters().catch(() => undefined) }, [loadMatters])
   /**
    * 进入案卷视图时**重新拉**一次列表 —— 只靠上面那条挂载时的拉取不够。
@@ -2435,7 +2432,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * 判定（过滤/排序/分组/分页）在 `listPresentation.ts`，这里只是把它接上。
    */
   const knowledgeDicts = useMemo(() => dictOf('knowledge_kind'), [dictOf])
-  const knowledge = useKnowledgeView({ knowledgeEntries, knowledgeDicts })
+  const knowledge = useKnowledgeView({ knowledgeEntries, knowledgeDicts, active: view === 'knowledge', refreshKey: knowledgeRefreshKey, loadEntries: loadKnowledge })
 
   const now = new Date()
   const todayStart = startOfDay(now)
@@ -3427,6 +3424,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               onNew={beginNewKnowledge}
               onOpenEntry={openKnowledgeById}
               onSummarizeDoc={openFilePicker}
+              listStatus={knowledge.listStatus}
+              onRetry={knowledge.reloadKnowledge}
             />
           )}
           {/**
@@ -3541,6 +3540,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 onDelete={() => void deleteKnowledge()}
                 onOpenFile={(link) => void openKnowledgeFile(link)}
                 onOpenTask={(taskId) => openTaskById(taskId)}
+                recentTasks={tasks}
               />
             )            : (
               <TaskDetailPane

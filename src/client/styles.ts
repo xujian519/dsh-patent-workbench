@@ -1055,6 +1055,11 @@ button.wb-dl-row:hover { background: color-mix(in srgb, var(--wb-ink-1, #fff) 6%
   border-radius:999px; padding:1px 6px; color:var(--wb-ink-3); font-variant-numeric:tabular-nums; }
 .wb-tab.on .wb-tab-cnt { color:var(--wb-ink-1); background:var(--wb-accent-soft); }
 
+/* 关系筛芯片（有本地文件 / 有关联任务）：与 kind Tab、标签并存，点一下开关。 */
+.wb-kb-facets { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 8px; }
+/* 详情关系条：案卷 / 关联任务 / 本地文件，缺哪段就不画哪段。 */
+.wb-kb-rel { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0; font-size:13px; }
+
 /* 标签筛选：**单行**（横向滚动），不再 flex-wrap 铺开——标签一多就吃好几行高度。
    超出 VISIBLE_TAG_LIMIT 的收进「更多 ▾」浮层（TagFilter.tsx）。 */
 .wb-kb-tags { display:flex; gap:5px; flex-wrap:nowrap; overflow-x:auto; margin-bottom:10px;

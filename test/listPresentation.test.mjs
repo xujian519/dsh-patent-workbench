@@ -18,6 +18,8 @@ import {
   normalizeSortDir,
   normalizeSortKey,
   slicePage,
+  itemHasLinkedTask,
+  itemHasLocalFile,
   toContentItem,
 } from '../lib/client/listPresentation.js'
 
@@ -51,8 +53,10 @@ test('listPresentation: 坏值一律落回默认，不把界面打挂', () => {
   assert.equal(normalizeSortKey('title'), 'title')
   assert.equal(normalizeSortDir('nope'), 'desc')
   assert.equal(normalizeSortDir('asc'), 'asc')
+  assert.equal(DEFAULT_PAGE_SIZE, 20, '未存偏好时每页 20')
   assert.equal(normalizePageSize(999), DEFAULT_PAGE_SIZE)
   assert.equal(normalizePageSize('100'), 100)
+  assert.equal(normalizePageSize(10), 10, '已经存过的 10 不能被默认值盖掉')
   assert.equal(normalizePageSize(undefined), DEFAULT_PAGE_SIZE)
 })
 
@@ -223,6 +227,28 @@ const build = (items, query, tabOf = (i) => i.kindCode ?? 'note', tabCodes = ['n
   items, query: { tab: 'all', keyword: '', tags: [], sortKey: 'updatedAt', sortDir: 'desc', page: 0, pageSize: 50, ...query }, now: NOW, tabOf, tabCodes,
 })
 
+test('listPresentation: 关系筛与关键词 / 标签 / Tab 叠加，命中数与徽标一致', () => {
+  const items = [
+    { ...item('a', { title: '登录闪退', tags: ['TTS'], fileLink: 'file:///a.md', sourceTaskId: 't1' }), kindCode: 'note' },
+    { ...item('b', { title: '登录慢', tags: ['TTS'], fileLink: null, sourceTaskId: 't2' }), kindCode: 'note' },
+    { ...item('c', { title: '别的主题', tags: ['其他'], fileLink: '/tmp/c.md', sourceTaskId: null }), kindCode: 'lesson' },
+    { ...item('d', { title: '空白不算', tags: ['TTS'], fileLink: '  ', sourceTaskId: '  ' }), kindCode: 'note' },
+  ]
+  assert.equal(itemHasLocalFile(items[0]), true)
+  assert.equal(itemHasLocalFile(items[3]), false, '纯空白不是本地文件')
+  assert.equal(itemHasLinkedTask(items[1]), true)
+  assert.equal(itemHasLinkedTask(items[3]), false, '纯空白不是关联任务')
+  assert.equal(build(items, { hasLocalFile: true }).total, 2, 'a 与 c 有文件')
+  assert.equal(build(items, { hasLinkedTask: true }).total, 2, 'a 与 b 有任务；空白 d 不算')
+  const combined = build(items, { hasLocalFile: true, hasLinkedTask: true, keyword: '登录', tags: ['TTS'], tab: 'note' })
+  assert.equal(combined.total, 1, '四条件 AND 只剩 a')
+  assert.equal(combined.groups.flatMap((g) => g.items.map((i) => i.id))[0], 'a')
+  const badges = build(items, { hasLocalFile: true, tab: 'note' })
+  assert.equal(badges.total, 1, '当前 Tab 只计 note')
+  assert.deepEqual(badges.tabCounts, { all: 2, other: 0, note: 1, lesson: 1 }, '徽标不受当前 Tab 限制，但受「有本地文件」限制')
+  assert.equal(build(items, {}).total, 4, '两把刀都关时与改前一样，不收窄')
+})
+
 test('listPresentation: 搜索 / 标签 / Tab 三者是叠加（AND）关系', () => {
   const items = [
     { ...item('a', { title: '登录闪退', tags: ['TTS'] }), kindCode: 'lesson' },
@@ -372,9 +398,14 @@ test('listPresentation: 排序时时间戳只解析一次（缓存 O(n)，不是
 })
 
 test('listPresentation: 适配函数把 contentMd 映射到 body（知识库与点子共用一个）', () => {
-  const entry = { id: 'k1', title: '标题', contentMd: '正文内容', tags: ['a'], kindCode: 'note', createdAt: at(DAY), updatedAt: at(0) }
+  const entry = { id: 'k1', title: '标题', contentMd: '正文内容', tags: ['a'], kindCode: 'note', createdAt: at(DAY), updatedAt: at(0), fileLink: 'file:///a.md', sourceTaskId: 't1' }
   const mapped = toContentItem(entry)
   assert.equal(mapped.body, '正文内容')
   assert.equal(mapped.kindCode, 'note')
+  assert.equal(mapped.fileLink, 'file:///a.md', '本地文件要带到列表筛')
+  assert.equal(mapped.sourceTaskId, 't1', '关联任务 id 要带到列表筛')
   assert.equal(matchesKeyword(mapped, '正文内容'), true)
+  const bare = toContentItem({ id: 'k2', title: '无关系', contentMd: '', tags: [], kindCode: 'note', createdAt: at(DAY), updatedAt: at(0) })
+  assert.equal(bare.fileLink, null)
+  assert.equal(bare.sourceTaskId, null)
 })

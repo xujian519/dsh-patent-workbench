@@ -12,6 +12,8 @@ import {
   knowledgeFilterActive,
   reconcileKnowledgeKinds,
 } from '../lib/client/components/KnowledgeList.js'
+import { KnowledgeView } from '../lib/client/components/views/KnowledgeView.js'
+import { KnowledgeDetailPane } from '../lib/client/components/views/KnowledgeDetailPane.js'
 import { ALL, buildTabs, isTabActive, toggleTab } from '../lib/client/components/TabBar.js'
 import { filterTagOptions, pinnedVisibleTags, visibleTags } from '../lib/client/components/TagFilter.js'
 import { EMPTY_TASK_FILTER, countTasksByType } from '../lib/client/taskFilterSort.js'
@@ -206,6 +208,24 @@ test('KnowledgeToolbar: 没筛选时「清空筛选」是禁用的（不做无�
   assert.equal(knowledgeFilterActive(EMPTY_KNOWLEDGE_FILTERS), false)
   assert.equal(knowledgeFilterActive({ ...EMPTY_KNOWLEDGE_FILTERS, tags: ['a'] }), true)
   assert.equal(knowledgeFilterActive({ ...EMPTY_KNOWLEDGE_FILTERS, kinds: ['lesson'] }), true)
+  assert.equal(knowledgeFilterActive({ ...EMPTY_KNOWLEDGE_FILTERS, hasLocalFile: true }), true, '有本地文件也算筛选')
+  assert.equal(knowledgeFilterActive({ ...EMPTY_KNOWLEDGE_FILTERS, hasLinkedTask: true }), true, '有关联任务也算筛选')
+})
+
+test('KnowledgeToolbar: 两把关系筛芯片可开关，选中态写在按钮上', () => {
+  const html = renderToStaticMarkup(KnowledgeToolbar({
+    filters: { ...EMPTY_KNOWLEDGE_FILTERS, hasLocalFile: true },
+    tabs: [], tagCounts: [], total: 3,
+    onChange: () => {}, onClear: () => {}, onCreate: () => {}, onSummarizeDoc: () => {},
+  }))
+  assert.match(html, /data-kb-facet="file"/)
+  assert.match(html, /data-kb-facet="task"/)
+  assert.match(html, /有本地文件/)
+  assert.match(html, /有关联任务/)
+  const fileBtn = html.match(/<button[^>]*data-kb-facet="file"[^>]*>/)?.[0] ?? ''
+  assert.match(fileBtn, /aria-pressed="true"/, '打开的芯片是按下态：' + fileBtn)
+  const taskBtn = html.match(/<button[^>]*data-kb-facet="task"[^>]*>/)?.[0] ?? ''
+  assert.match(taskBtn, /aria-pressed="false"/, '没打开的芯片不是按下态：' + taskBtn)
 })
 
 /* ------------------------------ 分页 ------------------------------ */
@@ -264,6 +284,9 @@ test('reconcileKnowledgeKinds: 字典里没有的分类回「全部」，合法�
   assert.deepEqual(fixed.kinds, ['all'], '未知分类回全部')
   assert.equal(fixed.page, 0, '页码归零')
   assert.equal(fixed.keyword, '关键词', '其他条件不丢')
+  assert.equal(fixed.hasLocalFile, false, '没打开的关系筛保持关闭')
+  const kept = reconcileKnowledgeKinds({ ...base, kinds: ['已经被删掉的分类'], hasLinkedTask: true }, known)
+  assert.equal(kept.hasLinkedTask, true, '校正分类时不丢掉关系筛')
 
   // 合法分类 / all / 其他 → 不动（返回 null 避免无谓重渲染）
   assert.equal(reconcileKnowledgeKinds({ ...base, kinds: ['lesson'] }, known), null)
@@ -388,4 +411,111 @@ test('countTasksByType: 搜索/状态/优先级照常生效（它们与类型是
   assert.equal(countTasksByType(tree, { ...base, keyword: '闪退' }, ['code_impl']).all, 1)
   assert.equal(countTasksByType(tree, { ...base, statusCodes: ['doing'] }, ['code_impl']).all, 1)
   assert.deepEqual(countTasksByType(tree, { ...base, statusCodes: ['doing'] }, ['code_impl']).byType, { code_impl: 1 })
+})
+
+/* ------------------------------ 加载反馈与详情关系条 ------------------------------ */
+
+const blankPage = {
+  groups: [], pageCount: 0, total: 0, pageTotal: 1, page: 0, rangeStart: 0, rangeEnd: 0,
+  tagCounts: [], tabCounts: { all: 0 },
+}
+
+function knowledgeView(overrides = {}) {
+  return KnowledgeView({
+    entries: [],
+    dicts: KINDS,
+    page: blankPage,
+    filters: EMPTY_KNOWLEDGE_FILTERS,
+    selectedId: undefined,
+    busy: false,
+    onChange: () => {},
+    onNew: () => {},
+    onOpenEntry: () => {},
+    onSummarizeDoc: () => {},
+    ...overrides,
+  })
+}
+
+test('KnowledgeView: 拉取中显示加载文案，不把空数组画成空库', () => {
+  const html = renderToStaticMarkup(knowledgeView({ listStatus: 'loading', entries: [] }))
+  assert.match(html, /data-kb-loading/)
+  assert.match(html, /加载中…/)
+  assert.doesNotMatch(html, /还没有知识条目/, '加载中不许看起来像库是空的')
+  assert.doesNotMatch(html, /没有符合条件的知识条目/)
+})
+
+test('KnowledgeView: 失败给出原因和重试，成功的空库文案保持原样', () => {
+  const failed = renderToStaticMarkup(knowledgeView({
+    listStatus: 'error',
+    entries: [{ id: 'k1', title: '不该在失败时出现', contentMd: '', tags: [], kindCode: 'note', sourceTaskId: null, sourceSessionId: null, sourceReviewId: null, matterId: null, fileLink: null, createdAt: at(0), updatedAt: at(0) }],
+  }))
+  assert.match(failed, /data-kb-load-error/)
+  assert.match(failed, /知识列表加载失败/)
+  assert.match(failed, /data-kb-retry/)
+  assert.match(failed, /重试/)
+  assert.doesNotMatch(failed, /不该在失败时出现/, '失败时不拿旧列表冒充成功')
+  assert.doesNotMatch(failed, /还没有知识条目/)
+
+  const empty = renderToStaticMarkup(knowledgeView({ listStatus: 'ready', entries: [] }))
+  assert.match(empty, /还没有知识条目/)
+  assert.match(empty, /新建知识/)
+  assert.doesNotMatch(empty, /知识列表加载失败/)
+})
+
+const detailEntry = (overrides = {}) => ({
+  id: 'k1', title: '某条知识', contentMd: '正文', tags: ['检索'], kindCode: 'lesson',
+  sourceTaskId: null, sourceSessionId: null, sourceReviewId: null, matterId: null, fileLink: null,
+  createdAt: at(0), updatedAt: at(0),
+  ...overrides,
+})
+
+function detail(overrides = {}) {
+  return KnowledgeDetailPane({
+    draft: null, editing: false, selected: detailEntry(), dictOf: () => KINDS, matters: [],
+    taskTitleOf: (id) => id === 't1' ? '某案的权利要求改写' : id,
+    onDraftChange: () => {}, onSubmit: () => {}, onCancel: () => {}, onEdit: () => {}, onDelete: () => {},
+    onOpenFile: () => {}, onOpenTask: () => {},
+    ...overrides,
+  })
+}
+
+test('KnowledgeDetailPane: 关系条有则显示案卷 / 可点关联任务 / 打开文件，无则整段省略', () => {
+  const full = renderToStaticMarkup(detail({
+    selected: detailEntry({ matterId: 'm1', sourceTaskId: 't1', fileLink: 'file:///tmp/检索笔记.md' }),
+    matters: [{ id: 'm1', caseNumber: '2026-INV-001', title: '某方法' }],
+  }))
+  assert.match(full, /data-kb-rel-strip/)
+  assert.match(full, /data-kb-rel="matter"/)
+  assert.match(full, /案卷：2026-INV-001/)
+  assert.match(full, /data-kb-open-task="t1"/)
+  assert.match(full, /关联任务：某案的权利要求改写/)
+  assert.match(full, /data-kb-open-file/)
+  assert.match(full, /打开文件/)
+  assert.match(full, /file:\/\/\/tmp\/检索笔记.md/)
+
+  const gone = renderToStaticMarkup(detail({
+    selected: detailEntry({ matterId: 'missing' }),
+    matters: [],
+  }))
+  assert.match(gone, /案卷：（已删除的案卷）/, '案卷被删仍要说清楚，不能假装没有')
+
+  const none = renderToStaticMarkup(detail({ selected: detailEntry() }))
+  assert.doesNotMatch(none, /data-kb-rel-strip/, '三段都没有时不画空关系条')
+  assert.doesNotMatch(none, /案卷：/)
+  assert.doesNotMatch(none, /关联任务/)
+  assert.doesNotMatch(none, /打开文件/)
+})
+
+test('KnowledgeDetailPane: 关联任务帮助文案在，新建默认分类仍是表单里的 note', () => {
+  const html = renderToStaticMarkup(detail({
+    draft: { title: '', contentMd: '', kindCode: 'note', tags: '', sourceTaskId: '', sourceReviewId: '', matterId: '', fileLink: '' },
+    editing: false,
+    selected: null,
+    recentTasks: [{ id: 't9', title: '刚改过的任务', updatedAt: '2026-10-01T00:00:00.000Z' }],
+  }))
+  assert.match(html, /data-kb-task-help/)
+  assert.match(html, /可选。填写任务 id，保存后可在详情打开。/)
+  assert.match(html, /data-kb-recent-task/)
+  assert.match(html, /刚改过的任务/)
+  assert.match(html, /<option[^>]*value="note"/)
 })

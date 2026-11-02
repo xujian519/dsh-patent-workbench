@@ -36,6 +36,16 @@ export interface PresentableItem {
   updatedAt: string
   /** 仅用于「创建时间」排序；缺省时该项落到稳定兜底。 */
   createdAt?: string
+  /**
+   * 本地文件链接。缺省 / 空 / 纯空白 = 没有本地文件。
+   * 知识列表的「有本地文件」筛与详情关系条共用 `itemHasLocalFile`，不在组件里再写一遍。
+   */
+  fileLink?: string | null
+  /**
+   * 关联任务 id（溯源，不是案卷归属）。缺省 / 空 / 纯空白 = 没有关联任务。
+   * 与 `matterId` 不是一回事：案卷归属不参与这把筛。
+   */
+  sourceTaskId?: string | null
 }
 
 /**
@@ -65,9 +75,9 @@ export const DEFAULT_SORT_KEY: SortKey = 'updatedAt'
 /** 默认方向：更新时间倒序（与验收要求一致）。 */
 export const DEFAULT_SORT_DIR: SortDir = 'desc'
 
-/** 每页条数档位。**默认 10**（用户要求）：列表区一屏约 7 行，10 条最接近"一屏看完、少滚"。 */
+/** 每页条数档位。**默认 20**（方案 A）；10/20/50/100 仍都可选，已存的偏好继续生效。 */
 export const PAGE_SIZES: readonly number[] = Object.freeze([10, 20, 50, 100])
-export const DEFAULT_PAGE_SIZE = 10
+export const DEFAULT_PAGE_SIZE = 20
 
 /** 少于这个条数的组不单独占一行组头，并回下一组。 */
 export const MIN_GROUP = 6
@@ -102,6 +112,13 @@ export interface ListQuery {
   keyword: string
   /** 选中的标签（同维度 OR）。 */
   tags: readonly string[]
+  /**
+   * 只要带本地文件的条目。缺省 / false = 不筛。
+   * 与关键词、标签、Tab 是 AND：开了就在切 Tab 之前收窄命中集。
+   */
+  hasLocalFile?: boolean
+  /** 只要带关联任务（`sourceTaskId`）的条目。缺省 / false = 不筛。语义同 `hasLocalFile`。 */
+  hasLinkedTask?: boolean
   sortKey: SortKey
   sortDir: SortDir
   /** 0 起。 */
@@ -173,6 +190,26 @@ export function matchesKeyword(item: PresentableItem, keyword: string): boolean 
  */
 export function normalizeTag(tag: string): string {
   return tag.trim()
+}
+
+/** 非空本地文件链接（纯空白不算）。列表筛与详情关系条共用，避免两处口径。 */
+export function itemHasLocalFile(item: { fileLink?: string | null }): boolean {
+  return typeof item.fileLink === 'string' && item.fileLink.trim() !== ''
+}
+
+/** 非空关联任务 id（纯空白不算）。这是 `sourceTaskId`，不是案卷 `matterId`。 */
+export function itemHasLinkedTask(item: { sourceTaskId?: string | null }): boolean {
+  return typeof item.sourceTaskId === 'string' && item.sourceTaskId.trim() !== ''
+}
+
+/**
+ * 关系筛：两把刀各自可选，彼此以及和关键词都是 AND。
+ * 没打开的那把不收窄；条目缺字段视为「没有」。
+ */
+export function matchesRelation(item: { fileLink?: string | null; sourceTaskId?: string | null }, query: { hasLocalFile?: boolean; hasLinkedTask?: boolean }): boolean {
+  if (query.hasLocalFile === true && !itemHasLocalFile(item)) return false
+  if (query.hasLinkedTask === true && !itemHasLinkedTask(item)) return false
+  return true
 }
 
 /** 标签筛选：同维度 OR（空选 = 全放行）。两侧都用 `normalizeTag` 后的值比较。 */
@@ -351,10 +388,12 @@ export function buildListPage<T extends PresentableItem>(input: BuildInput<T>): 
   const keyword = query.keyword
   const tags = query.tags
 
-  const searched = items.filter((item) => matchesKeyword(item, keyword))
+  // 关系筛与关键词同一层：Tab 徽标不受「当前 Tab」限制，但受这两刀限制，
+  // 否则徽标上的数字和「命中 N 条」会对不上。
+  const searched = items.filter((item) => matchesKeyword(item, keyword) && matchesRelation(item, query))
   const tagFiltered = searched.filter((item) => matchesTags(item, tags))
 
-  // Tab 徽标：**不受当前 tab 限制**，其余条件（搜索 + 标签）照常生效。
+  // Tab 徽标：**不受当前 tab 限制**，其余条件（搜索 + 标签 + 关系筛）照常生效。
   // 未知 code 记进「其他」而不是被静默丢掉 —— 否则"all 有 2 条、各 Tab 相加只有 1 条"，
   // 用户会以为列表漏了东西（静默丢件是禁区）。
   const tabCounts: Record<string, number> = { all: tagFiltered.length, other: 0 }
@@ -396,7 +435,7 @@ export function buildListPage<T extends PresentableItem>(input: BuildInput<T>): 
  * 知识库条目 → 展示条目的**唯一**适配点。
  * 两者的字段形状一致（`contentMd` → `body`），所以只有一个函数，不留两份。
  */
-export function toContentItem(source: { id: string; title: string; contentMd: string; tags: readonly string[]; kindCode: string; createdAt: string; updatedAt: string }): ContentItem {
+export function toContentItem(source: { id: string; title: string; contentMd: string; tags: readonly string[]; kindCode: string; createdAt: string; updatedAt: string; fileLink?: string | null; sourceTaskId?: string | null }): ContentItem {
   return {
     id: source.id,
     title: source.title,
@@ -405,5 +444,7 @@ export function toContentItem(source: { id: string; title: string; contentMd: st
     kindCode: source.kindCode,
     createdAt: source.createdAt,
     updatedAt: source.updatedAt,
+    fileLink: source.fileLink ?? null,
+    sourceTaskId: source.sourceTaskId ?? null,
   }
 }
