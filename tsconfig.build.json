@@ -22,6 +22,7 @@
     "src/client/matterImportApi.ts",
     "src/client/matterTimeline.ts",
     "src/client/deadlineBoard.ts",
+    "src/client/noticeDraft.ts",
     "src/client/components/MattersView.tsx",
     "src/client/dailyPlanPrompt.ts",
     "src/client/taskProgressView.ts",

@@ -44,6 +44,9 @@ test('码翻中文走调用方给的字典；查不到就原样显示码（不�
   const unknown = build({ notices: [notice({ noticeKind: 'brand_new_kind', deliveryMode: 'pigeon' })] })
   assert.equal(unknown.entries[0].title, '官文：brand_new_kind', '字典查不到也要看得见是什么码')
   assert.match(unknown.entries[0].detail, /送达方式：pigeon/)
+  // 未登记 = 事实缺失：必须显式说出来，不能省略这一行让人以为"没有送达方式这回事"
+  const missing = build({ notices: [notice({ deliveryMode: null })] })
+  assert.match(missing.entries[0].detail, /送达方式：未登记/)
 })
 
 test('日期缺失/无法解析的条目不参与排序，但**不许静默丢弃**（进 undated）', () => {

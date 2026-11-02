@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 25
+export const SCHEMA_VERSION = 26
 
 /** 迁移 23 用的 uuid（与 `repo/task-primitives.ts#appendEvent` 同一套生成方式）。 */
 function randomUUIDForMigration(): string {
@@ -1050,6 +1050,75 @@ export const MIGRATIONS: Migration[] = [
         (db.prepare('PRAGMA table_info(task_drafts)').all() as Array<{ name: string }>).map((column) => column.name),
       )
       if (!columns.has('created_by')) db.exec('ALTER TABLE task_drafts ADD COLUMN created_by TEXT')
+    },
+  },
+  {
+    version: 26,
+    name: 'delivery-mode-required',
+    /**
+     * 送达方式不再是"缺省电子送达"（宪法第 3 条、第 11 条之一、第 13 条之二；
+     * 破例 EX-2026-001 的偿还）。
+     *
+     * `matter_notices.delivery_mode` 原先写着 `NOT NULL DEFAULT 'electronic'`：
+     * 任何省略送达方式的写入都会被**数据库**静默补成电子送达，而送达日正是期限链的起点。
+     * 默认值的错不是"显示错"，是**期限算错**。宪法点名的三个危险默认值之一就是它。
+     *
+     * 两件事：
+     * 1. 重建 `matter_notices`：`delivery_mode` 改为**可空、无默认值**。
+     *    `NULL` 的语义是"这条官文的送达方式尚未登记"，不是"电子送达"。
+     *    存量行的 `'electronic'` 原样保留 —— 它们可能是用户显式选的，也可能是旧默认值填的，
+     *    库里没有证据区分；**不猜测、不改写**，由人核对后逐条更正。
+     * 2. 补齐 `delivery_mode` 字典项。此前这张表**出厂没有字典行**，于是登记表单
+     *    连选项都没有，客户端只好回落到硬编码的 `'electronic'` —— 默认值同时长在
+     *    数据库、仓储层和界面三处。
+     *
+     * 标记 `destructive`：重建表会 DROP 原表。数据虽逐列复制，但升级前必须先有回滚点
+     * （宪法第 16 条「升级即发布」，第 38 条恢复路径依赖备份）。
+     */
+    destructive: true,
+    up(db) {
+      // 与 v22 之后的其他迁移一样可重跑：临时表先清掉，避免"物理 schema 已最新"时撞名。
+      db.exec(`
+        DROP TABLE IF EXISTS matter_notices_v26;
+        CREATE TABLE matter_notices_v26 (
+          id                TEXT PRIMARY KEY,
+          matter_id         TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
+          notice_kind       TEXT NOT NULL,
+          dispatch_date     TEXT NOT NULL,
+          delivery_mode     TEXT,
+          delivery_date     TEXT,
+          designated_months INTEGER,
+          file_link         TEXT,
+          note              TEXT,
+          created_at        TEXT NOT NULL
+        ) STRICT;
+        INSERT INTO matter_notices_v26 (
+          id, matter_id, notice_kind, dispatch_date, delivery_mode, delivery_date,
+          designated_months, file_link, note, created_at
+        )
+        SELECT
+          id, matter_id, notice_kind, dispatch_date, delivery_mode, delivery_date,
+          designated_months, file_link, note, created_at
+        FROM matter_notices;
+        DROP TABLE matter_notices;
+        ALTER TABLE matter_notices_v26 RENAME TO matter_notices;
+        CREATE INDEX idx_matter_notices_matter ON matter_notices(matter_id, dispatch_date DESC);
+      `)
+
+      const at = new Date().toISOString()
+      const insert = db.prepare(
+        `INSERT OR IGNORE INTO dictionaries (kind, code, name, config, builtin, active, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)`,
+      )
+      const modes: Array<[string, string]> = [
+        ['electronic', '电子送达'],
+        ['postal', '邮寄送达'],
+        ['personal', '直接送交'],
+        ['publication', '公告送达'],
+      ]
+      modes.forEach(([code, name], index) => {
+        insert.run('delivery_mode', code, name, '{}', (index + 1) * 10, at, at)
+      })
     },
   },
 ]

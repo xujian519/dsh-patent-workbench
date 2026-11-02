@@ -237,21 +237,36 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
                 })
               }
               const raw = body ?? {}
-              const today = typeof raw.today === 'string' && raw.today !== '' ? raw.today : localDateString()
+              /**
+               * 判定时点**必须由调用方给出**（宪法第 4 条、第 13 条之二）：
+               * 省略即取系统当天，会让同一份事实在不同日子得出不同报告，
+               * 也让"按 (事实快照, 规则版本, 判定时点) 离线复算"失去复算对象。
+               */
+              if (typeof raw.today !== 'string' || raw.today.trim() === '') {
+                return writeJson(res, 400, {
+                  error: '判定时点（today）必填（YYYY-MM-DD）：期限结论必须能按该时点离线复算，不能用系统当天兜底',
+                })
+              }
+              const today = raw.today.trim()
               try {
-                const report = service.evaluate(buildDeadlineQuery({
+                const built = buildDeadlineQuery({
                   matter,
                   notices: listMatterNotices(db, id),
                   today,
                   restDayRule: raw.restDayRule === 'apply' || raw.restDayRule === 'omit' ? raw.restDayRule : undefined,
-                }), typeof raw.reminderLeadDays === 'number' ? { reminderLeadDays: raw.reminderLeadDays } : undefined)
+                })
+                const report = service.evaluate(built.query, typeof raw.reminderLeadDays === 'number' ? { reminderLeadDays: raw.reminderLeadDays } : undefined)
                 const deadlines = replaceMatterDeadlines(db, id, reportToDeadlineRows(report, { today, engine: engineId }))
                 return writeJson(res, 200, {
                   ok: true,
                   today,
                   restDayRule: report.restDayRule,
                   deadlines,
-                  pending: report.pending,
+                  /**
+                   * 两段 pending 合并上报：适配层拦下的（缺送达方式、根本没送进引擎）
+                   * 与引擎报的（缺授权公告日之类）。少报一段会让"为什么这条期限没出现"无解。
+                   */
+                  pending: [...built.pending, ...report.pending],
                   calendarCoverage: service.calendarCoverage(),
                 })
               } catch (error) {

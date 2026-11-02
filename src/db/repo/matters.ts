@@ -141,7 +141,11 @@ export interface MatterNoticeInput {
   matterId: string
   noticeKind: NoticeKind
   dispatchDate: string
-  deliveryMode?: DeliveryMode
+  /**
+   * 送达方式**必填**（宪法第 3 条、第 11 条之一、第 13 条之二）。
+   * 省略不是"按电子送达"，而是"送达日不确定"—— 这里当场拒绝，不交给下游猜。
+   */
+  deliveryMode: DeliveryMode
   deliveryDate?: string | null
   designatedMonths?: number | null
   fileLink?: string | null
@@ -153,7 +157,8 @@ export interface MatterNoticeRow {
   matterId: string
   noticeKind: NoticeKind
   dispatchDate: string
-  deliveryMode: DeliveryMode
+  /** `null` = 送达方式尚未登记（历史行或人工留空）。不得据此推断送达日。 */
+  deliveryMode: DeliveryMode | null
   deliveryDate: string | null
   designatedMonths: number | null
   fileLink: string | null
@@ -493,7 +498,7 @@ function parseNotice(row: Record<string, unknown>): MatterNoticeRow {
     matterId: row.matter_id as string,
     noticeKind: row.notice_kind as NoticeKind,
     dispatchDate: row.dispatch_date as string,
-    deliveryMode: row.delivery_mode as DeliveryMode,
+    deliveryMode: (row.delivery_mode ?? null) as DeliveryMode | null,
     deliveryDate: (row.delivery_date ?? null) as string | null,
     designatedMonths: (row.designated_months ?? null) as number | null,
     fileLink: (row.file_link ?? null) as string | null,
@@ -512,7 +517,11 @@ export function createMatterNotice(db: DatabaseSync, input: MatterNoticeInput): 
   const noticeKind = requireMember(input.noticeKind, NOTICE_KINDS, '官文种类')
   const dispatchDate = optionalDate(input.dispatchDate, '发文日')
   if (dispatchDate === null) throw new Error('发文日不能为空')
-  const deliveryMode = input.deliveryMode === undefined ? 'electronic' : requireMember(input.deliveryMode, DELIVERY_MODES, '送达方式')
+  const deliveryMode = input.deliveryMode
+  if (deliveryMode === undefined || deliveryMode === null || (deliveryMode as unknown) === '') {
+    throw new Error('送达方式必填：官文送达方式缺失时送达日无法确定，本系统不默认按电子送达推断。请按官文实际送达方式选择')
+  }
+  const mode = requireMember(deliveryMode, DELIVERY_MODES, '送达方式')
   const deliveryDate = optionalDate(input.deliveryDate, '送达日')
   let designatedMonths: number | null = null
   if (input.designatedMonths !== undefined && input.designatedMonths !== null) {
@@ -534,7 +543,7 @@ export function createMatterNotice(db: DatabaseSync, input: MatterNoticeInput): 
   db.prepare(`
     INSERT INTO matter_notices (id, matter_id, notice_kind, dispatch_date, delivery_mode, delivery_date, designated_months, file_link, note, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, input.matterId, noticeKind, dispatchDate, deliveryMode, deliveryDate, designatedMonths,
+  `).run(id, input.matterId, noticeKind, dispatchDate, mode, deliveryDate, designatedMonths,
     optionalText(input.fileLink, '官文文件链接'), optionalText(input.note, '备注'), nowIso())
   return parseNotice(db.prepare('SELECT * FROM matter_notices WHERE id = ?').get(id) as Record<string, unknown>)
 }

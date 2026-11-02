@@ -14,7 +14,7 @@
 | 0 建模定案 | ✅ | 本文件（提交 `4d60464`） |
 | 1 改名 | ✅ | `dsh-patent-workbench`：包名 / cordis id / PANEL_NAME / 模块 id / 仓库 URL / README；**刻意保留** DOM 前缀 `data-dsh-personal-workbench-*` 与数据目录 `~/.dsh/workbench/`（提交 `662f335`） |
 | 2 领域字典 + matters | ✅ | 迁移 20：`matters` / `matter_notices` / `matter_deadlines` / `matter_events` + `knowledge_entries.matter_id` + 四类领域字典；`db/repo/matters.ts`（CRUD + 校验）与 `api/routes/matters.ts`（REST）；`test/matters.test.mjs` 9 例 |
-| 3 期限引擎接入 | ◐ | **DSH Patent 侧已完成**（`deepseek-harness` 分支 `feat/patent-deadline-service`）：`patent-deadline` 新增 `provideService` / `exposeTool` 两个 Config 开关，profile 根域多注册一行即发布 `patentDeadline` 服务（不是新建包）；工作台侧已完成软探测 + `shared/patentDeadline.ts`（案卷/官文 → 引擎入参、报告 → 期限行，唯一映射处）+ `POST /api/workbench/matters/:id/deadlines/recompute`，引擎缺失时 409 明确降级。**待做**：期限看板 UI（归到阶段 5）与实机装盘 |
+| 3 期限引擎接入 | ✅ | **DSH Patent 侧已完成**（`deepseek-harness` 分支 `feat/patent-deadline-service`）：`patent-deadline` 新增 `provideService` / `exposeTool` 两个 Config 开关，profile 根域多注册一行即发布 `patentDeadline` 服务（不是新建包）；工作台侧已完成软探测 + `shared/patentDeadline.ts`（案卷/官文 → 引擎入参、报告 → 期限行，唯一映射处）+ `POST /api/workbench/matters/:id/deadlines/recompute`，引擎缺失时 409 明确降级。期限看板 UI 归到阶段 5。**实机装盘 2026-10-16 补上**（原先漏做，看板一直停在降级态；见第 9 / 12 节的订正与写法） |
 | 4 删除通用功能 | ✅ | 分五片（D4）：**A** 日报/周报（`6ea289f`，−544 行，工具 17→16）；**B** 点子/点子王（`a15dc51`，34 文件 −2326 行，工具 16→14）；**C** 容量账本（`def51ad`，−3223 行，`capacity.ts` → `dailyPlanCandidates.ts`，迁移 21 = 两个 meta 键）；**D** 重复任务（`d746305`，`db/repo/recurring.ts` 整删）；**E** 迁移 22（`DROP TABLE` ×4 + `DROP COLUMN` ×4 + 16 行字典 `active=0` + 破坏性迁移前自动备份）。**留存的**：`daily_plans` + AI 智能排序、`estimatedMinutes`、`planIncludeOverdue`（原 `dailyCapacityIncludeOverdue`） |
 | 5 知识库加法 + UI | ◐ | **5A 已完成**：出厂分类扩到专利域 10 类（`05546f2`）；`matter_id` 全链路接线（列在迁移 20 就加了、此前代码一处未读写）+ AI 工具 `workbench_link_knowledge_matter` + 知识条目「归入案卷」下拉；召回候选集加**本案卷**域（`recallScopeRank` 唯一定义：本任务 0 → 本案卷 1 → 全库 2；打分/阈值/闸门/日志字段未动）。**5B 已完成**：顶级视图「案件」（列表 + 详情 + 时间线，`matterTimeline.ts` 纯模块合成三源）；**5C 已完成**：跨案卷「近 7 天到期」看板（新聚合端点 `GET /matter-deadlines/upcoming`）+ 案卷详情期限区（重算按钮、状态标记、日历未覆盖提示）+ `bootstrap.deadlineEngineAvailable` 软探测（引擎缺失时明确降级）。**5D 已完成**：产品名与实体称谓统一（界面/模型可见串自称「专利工作台」；实体统称「**案卷**」，DOM 前缀与数据目录**刻意保留**）；README 亮点补齐专利域能力、`package.json` 描述不再宣传已删功能。**阶段 5 完成**，剩阶段 6 bridge 收口 |
 | 6 bridge 收口 | ✅ | **投影器**：`_matter-log.md` → `matter_events`（`shared/matterLog.ts` 解析 + `projectMatterLogEvents` 幂等追加 + `POST /matters/:id/events/sync` + 工具 `workbench_sync_matter_events` + 案卷详情「同步事件日志」）。**迁移 23**（破坏性，自动备份）：bridge 遗留任务树整体**归档 + 追加标注 + 留 system 事件**，`patent_*` 类型字典保持 active。**DSH 侧 `workbench_link_patent_case` 不改**（用户决定「到此为止」） |
@@ -252,7 +252,9 @@ ALTER TABLE knowledge_entries ADD COLUMN matter_id TEXT;
 | **5 知识库加法 + UI** | `matter_id` 关联、新 kind、本案卷优先；案件视图/时间线；域名词替换 | 2,3 | 中 |
 | **6 bridge 收口** | `workbench_link_patent_case` 降级为 `_matter-log.md` → `matter_events` 投影器 | 5, D1 | 中 |
 
-**跨仓库任务（`deepseek-harness`）**：已完成——`patent-deadline` 新增 `provideService` / `exposeTool` 两个 Config 开关 + `src/service.ts`；在 `web` / `desktop-runtime` profile 根域再注册一行（**不是新建包**）已过 `tsc -b tsconfig.host.json`、包内 76 例、翻译配对 / Agent Note / 配置与 cordis 目录门禁。
+**跨仓库任务（`deepseek-harness`）**：包侧已完成——`patent-deadline` 新增 `provideService` / `exposeTool` 两个 Config 开关 + `src/service.ts`，已过 `tsc -b tsconfig.host.json`、包内 76 例、翻译配对 / Agent Note / 配置与 cordis 目录门禁。
+
+⚠️ **订正（2026-10-16）**：本段原先还断言"在 `web` / `desktop-runtime` profile 根域再注册一行"也已完成 —— **不成立**：两个 profile 的补丁层里当时都没有这一行（含各自的 `.bak` 副本，全库 `grep` 无命中），所以期限看板一直在"未探测到期限引擎"的明确降级态上。实际装盘见第 12 节；写法必须是 `insert:`（见那里记的坑）。
 
 ## 10. 风险与已知限制
 
@@ -278,7 +280,20 @@ ALTER TABLE knowledge_entries ADD COLUMN matter_id TEXT;
 
 - [x] 阶段 1 前置：已 `git clone upstream`（v1.16.2 + 完整历史）→ `upstream` 仅 fetch、`origin` = `xujian519/dsh-patent-workbench`；`pnpm install` / 构建 / 回归均可跑。
 - [x] DSH Patent 侧 B′ 的接口定稿：`evaluate` / `periodEnd` / `resolveDeliveryDate` / `describePatentKind` / `calendarCoverage`；日期以 `CalendarDate` 对象跨边界。
-- [ ] 部署：把 `deepseek-harness` 分支 `feat/patent-deadline-service` 合入并重打包桌面 App，然后在 `~/.dsh/profiles/{web,desktop-runtime}/cordis.patch.yml` 根域加 `{ id: patent-deadline-service, name: '@deepseek-ai/dsh-patent-deadline', config: { provideService: true, exposeTool: false } }`。
+- [x] 部署（2026-10-16 完成）：`~/.dsh/profiles/{web,desktop-runtime}/cordis.patch.yml` 根域加一行 `patent-deadline` 发布服务。
+  **写法**（`insert:` 必不可少，逐字）：
+
+  ```yaml
+  - insert:
+      - id: patent-deadline-service
+        name: '@deepseek-ai/dsh-patent-deadline'
+        config:
+          provideService: true
+          exposeTool: false
+  ```
+
+  ⚠️ **踩过的坑**：本项原先写的写法是普通条目（`- id: patent-deadline-service` / `name: …`，不带 `insert:`）—— loader 的普通条目只能**按 id 改已有行**，对未知 id 是「warn 后静默跳过」（`config-schema/document.ts`：*Unknown targets and non-insert patches without a nonempty id are warned and skipped*）。实测：按那个写法加进 profile 补丁，`--dump-config` 里根本不出现这一行，`bootstrap.deadlineEngineAvailable` 仍是 `false`、重算仍是 409；包一层 `insert:` 后立刻变 `true`、重算 200。引擎 README「根域挂载」那段给的是 bundle 语境，直接抄进 profile 补丁同样会被静默跳过。
+  验收链（2026-10-16 实测）：改前 `deadlineEngineAvailable=false` + `POST /deadlines/recompute` 409；改后 `true` + 200（6 条期限落库）+ `GET /matter-deadlines/upcoming?days=7` 有数；界面降级文案消失、「重算全部」可用。
 - [ ] 案号 vs 工作目录：`patent-workspace/<案号>/` 与用户既有 `/Users/xujian/工作/` 目录的关系（`workspace_path` 可配置，不硬编码）。
 - [ ] 官文 PDF 字段抽取（发文日/官文类型）是走 AI 草稿门禁还是人工录入（阶段 3 决定）。
 - [ ] 服务缺失时的降级粒度：整块期限看板隐藏，还是保留手工录入（倾向后者）。

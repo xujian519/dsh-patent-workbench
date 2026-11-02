@@ -144,7 +144,7 @@ export function buildMatterTimeline(input: {
       date: datePartOf(notice.dispatchDate),
       title: `官文：${input.labelOf('notice_kind', notice.noticeKind)}`,
       detail: [
-        mode === '' ? '' : `送达方式：${mode}`,
+        mode === '' ? '送达方式：未登记' : `送达方式：${mode}`,
         notice.deliveryDate === null || notice.deliveryDate === undefined || notice.deliveryDate === '' ? '' : `送达日：${notice.deliveryDate}`,
         notice.designatedMonths === null || notice.designatedMonths === undefined ? '' : `指定期限：${notice.designatedMonths} 个月`,
         notice.fileLink === null || notice.fileLink === undefined || notice.fileLink === '' ? '' : `文件：${notice.fileLink}`,

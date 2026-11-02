@@ -142,22 +142,32 @@ test('matter_notices: 一案一份的官文重复登记被拒，可重复种类�
   try {
     const matter = createMatter(db, baseMatter())
     const first = createMatterNotice(db, {
-      matterId: matter.id, noticeKind: 'office-action-first', dispatchDate: '2026-03-01', designatedMonths: 4,
+      matterId: matter.id, noticeKind: 'office-action-first', dispatchDate: '2026-03-01', deliveryMode: 'electronic', designatedMonths: 4,
     })
     assert.equal(first.deliveryMode, 'electronic')
     assert.equal(first.designatedMonths, 4)
     // 一案只有一份 → 第二份拒绝
-    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'office-action-first', dispatchDate: '2026-04-01' }), /已登记过/)
+    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'office-action-first', dispatchDate: '2026-04-01', deliveryMode: 'electronic' }), /已登记过/)
     // 可重复种类 → 允许多份
-    createMatterNotice(db, { matterId: matter.id, noticeKind: 'office-action-subsequent', dispatchDate: '2026-05-01' })
-    createMatterNotice(db, { matterId: matter.id, noticeKind: 'office-action-subsequent', dispatchDate: '2026-07-01' })
+    createMatterNotice(db, { matterId: matter.id, noticeKind: 'office-action-subsequent', dispatchDate: '2026-05-01', deliveryMode: 'electronic' })
+    createMatterNotice(db, { matterId: matter.id, noticeKind: 'office-action-subsequent', dispatchDate: '2026-07-01', deliveryMode: 'postal' })
     assert.equal(listMatterNotices(db, matter.id).length, 3)
 
-    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'nope', dispatchDate: '2026-03-01' }), /官文种类 非法/)
-    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-02-30' }), /发文日/)
+    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'nope', dispatchDate: '2026-03-01', deliveryMode: 'electronic' }), /官文种类 非法/)
+    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-02-30', deliveryMode: 'electronic' }), /发文日/)
     assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01', deliveryMode: 'fax' }), /送达方式 非法/)
-    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01', designatedMonths: 0 }), /指定期限月数/)
-    assert.throws(() => createMatterNotice(db, { matterId: 'no-such', noticeKind: 'grant-notice', dispatchDate: '2026-03-01' }), /案卷不存在/)
+    assert.throws(() => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01', deliveryMode: 'electronic', designatedMonths: 0 }), /指定期限月数/)
+    assert.throws(() => createMatterNotice(db, { matterId: 'no-such', noticeKind: 'grant-notice', dispatchDate: '2026-03-01', deliveryMode: 'electronic' }), /案卷不存在/)
+
+    // 送达方式缺失 = 事实缺失：当场拒绝，不默认电子送达（宪法第 3 条 / 第 11 条之一）
+    assert.throws(
+      () => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01' }),
+      /送达方式必填/,
+    )
+    assert.throws(
+      () => createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01', deliveryMode: '' }),
+      /送达方式必填/,
+    )
 
     // 父资源 id 必须参与判据：`DELETE /matters/:id/notices/:noticeId` 的 `:id` 不能是"别的案卷"
     const otherMatter = createMatter(db, baseMatter({ caseNumber: 'CN-2026-0099', title: '乙案' }))
@@ -234,7 +244,7 @@ test('deleteMatter: 级联官文/期限/事件，并解绑知识条目的 matter
   const db = freshDb()
   try {
     const matter = createMatter(db, baseMatter())
-    createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01' })
+    createMatterNotice(db, { matterId: matter.id, noticeKind: 'grant-notice', dispatchDate: '2026-03-01', deliveryMode: 'electronic' })
     replaceMatterDeadlines(db, matter.id, [{ deadlineKey: 'd', label: 'd', dueDate: '2026-04-01', dueDateRaw: '2026-04-01' }])
     appendMatterEvent(db, { matterId: matter.id, action: '建案' })
     const entry = createKnowledge(db, { title: '挂在案卷上的沉淀', contentMd: '正文' })
@@ -317,11 +327,20 @@ test('routes: 建案 / 列表 / 详情 / 改阶段 / 官文 / 事件 / 删除', 
 
     const notice = await fetch(`${base}/${matter.id}/notices`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ noticeKind: 'office-action-first', dispatchDate: '2026-03-01', designatedMonths: 4 }),
+      body: JSON.stringify({ noticeKind: 'office-action-first', dispatchDate: '2026-03-01', deliveryMode: 'electronic', designatedMonths: 4 }),
     })
     assert.equal(notice.status, 201)
     const notices = await (await fetch(`${base}/${matter.id}/notices`)).json()
     assert.equal(notices.notices.length, 1)
+
+    // 缺送达方式 → 400 中文原因（不默认电子送达，也不静默落库）
+    const noMode = await fetch(`${base}/${matter.id}/notices`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ noticeKind: 'grant-notice', dispatchDate: '2026-05-01' }),
+    })
+    assert.equal(noMode.status, 400)
+    assert.match((await noMode.json()).error, /送达方式必填/)
+    assert.equal((await (await fetch(`${base}/${matter.id}/notices`)).json()).notices.length, 1, '被拒的官文不得落库')
 
     const event = await fetch(`${base}/${matter.id}/events`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: '建案' }),
@@ -362,7 +381,7 @@ test('路由：期限重算调引擎、落库、返回待补输入', async () =>
   await withServer(async (base) => {
     const created = await (await fetch(base, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ caseNumber: 'D-1', title: '期限案卷', matterType: 'drafting', patentKind: 'invention', filingDate: '2026-01-05' }),
+      body: JSON.stringify({ caseNumber: 'D-1', title: '期限案卷', matterType: 'drafting', patentKind: 'invention', applicationNo: '202610000001.0', filingDate: '2026-01-05' }),
     })).json()
     const matterId = created.matter.id
 
@@ -412,9 +431,11 @@ test('路由：期限引擎缺失时重算明确降级（409，且不偷偷写�
   await withServer(async (base) => {
     const created = await (await fetch(base, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ caseNumber: 'D-2', title: '无引擎案卷', matterType: 'drafting', patentKind: 'utility-model', filingDate: '2026-02-01' }),
+      body: JSON.stringify({ caseNumber: 'D-2', title: '无引擎案卷', matterType: 'drafting', patentKind: 'utility-model', applicationNo: '202620000002.0', filingDate: '2026-02-01' }),
     })).json()
-    const res = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, { method: 'POST' })
+    const res = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ today: '2026-09-20' }),
+    })
     assert.equal(res.status, 409)
     assert.match((await res.json()).error, /期限引擎不可用/)
     const list = await (await fetch(`${base}/${created.matter.id}/deadlines`)).json()
@@ -427,15 +448,44 @@ test('路由：必填缺失时重算返回 400 中文原因（不静默丢字段
   await withServer(async (base) => {
     const created = await (await fetch(base, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ caseNumber: 'D-3', title: '缺类型案卷', matterType: 'drafting' }),
+      body: JSON.stringify({ caseNumber: 'D-3', title: '缺类型案卷', matterType: 'drafting', applicationNo: '202620000003.0' }),
     })).json()
-    const res = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, { method: 'POST' })
+    const res = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ today: '2026-09-20' }),
+    })
     assert.equal(res.status, 400)
     assert.match((await res.json()).error, /专利类型/)
     assert.equal(seen.length, 0)
 
-    const notFound = await fetch(`${base}/no-such-matter/deadlines/recompute`, { method: 'POST' })
+    // 判定时点省略 → 400，不拿系统当天兜底（宪法第 4 条 / 第 13 条之二）
+    const noToday = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    })
+    assert.equal(noToday.status, 400)
+    assert.match((await noToday.json()).error, /判定时点（today）必填/)
+
+    const notFound = await fetch(`${base}/no-such-matter/deadlines/recompute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ today: '2026-09-20' }),
+    })
     assert.equal(notFound.status, 404)
+  }, { patentDeadline: () => stubEngine(seen) })
+})
+
+test('路由：预备案卷（无申请号）不产生期限，也不送进引擎', async () => {
+  const seen = []
+  await withServer(async (base) => {
+    const created = await (await fetch(base, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ caseNumber: 'D-4', title: '预备案卷', matterType: 'drafting', patentKind: 'invention', filingDate: '2026-01-05' }),
+    })).json()
+    const res = await fetch(`${base}/${created.matter.id}/deadlines/recompute`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ today: '2026-09-20' }),
+    })
+    assert.equal(res.status, 400)
+    assert.match((await res.json()).error, /预备案卷/)
+    assert.equal(seen.length, 0, '预备案卷不得送进引擎')
+    const list = await (await fetch(`${base}/${created.matter.id}/deadlines`)).json()
+    assert.equal(list.deadlines.length, 0)
   }, { patentDeadline: () => stubEngine(seen) })
 })
 

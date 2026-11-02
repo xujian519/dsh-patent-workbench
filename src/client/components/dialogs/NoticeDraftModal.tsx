@@ -46,7 +46,11 @@ export function NoticeDraftModal({
       <form className="wb-form" id="wb-notice-form" onSubmit={onSubmit}>
         <label className="full">官文类型<select required value={draft.noticeKind} onChange={(e) => set('noticeKind', e.target.value)}>{noticeKindOptions.map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
         <label>发文日<input required type="date" value={draft.dispatchDate} onChange={(e) => set('dispatchDate', e.target.value)} /></label>
-        <label>送达方式<select value={draft.deliveryMode} onChange={(e) => set('deliveryMode', e.target.value)}>{deliveryModeOptions.map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}</select></label>
+        <label>送达方式<select required value={draft.deliveryMode} onChange={(e) => set('deliveryMode', e.target.value)}>
+          {/* 空值 = 尚未选择。不预选任何一项：送达方式决定送达日，不能让默认值冒充事实。 */}
+          <option value="">请选择送达方式</option>
+          {deliveryModeOptions.map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}
+        </select></label>
         <label>送达日<input type="date" value={draft.deliveryDate} onChange={(e) => set('deliveryDate', e.target.value)} /></label>
         <label>指定期限（月）<input type="number" min={1} max={36} value={draft.designatedMonths} onChange={(e) => set('designatedMonths', e.target.value)} placeholder="留空 = 不指定" /></label>
         <label className="full">官文文件<input value={draft.fileLink} onChange={(e) => set('fileLink', e.target.value)} placeholder="file:// 或绝对路径（复用知识库同一套 file_link 机制）" /></label>

@@ -94,6 +94,7 @@ import { PendingModal } from './components/dialogs/PendingModal.js'
 import { retainSelectedMatterId } from './components/MattersView.js'
 import type { MatterDeadlineView, MatterNoticeView, MatterView, UpcomingDeadlineView } from './components/MattersView.js'
 import { buildMatterTimeline, type MatterTimelineEvent } from './matterTimeline.js'
+import { buildNoticePayload, initialNoticeDraft } from './noticeDraft.js'
 import {
   clientFileLinkToPath, fmtTime, localDateString, startOfDay, toLocalInput,
 } from './format.js'
@@ -735,37 +736,24 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
   }
 
   const openNoticeForm = useCallback(() => {
-    setNoticeDraft({
-      noticeKind: dicts.find((d) => d.kind === 'notice_kind')?.code ?? '',
+    setNoticeDraft(initialNoticeDraft({
+      noticeKindOptions: dictOf('notice_kind'),
       dispatchDate: localDateString(),
-      deliveryMode: dicts.find((d) => d.kind === 'delivery_mode')?.code ?? 'electronic',
-      deliveryDate: '',
-      designatedMonths: '',
-      fileLink: '',
-      note: '',
-    })
-  }, [dicts])
+    }))
+  }, [dictOf])
 
-  /** 登记一条官文。`designatedMonths` 只在填了合法正整数时才发（0/空 = 不指定）。 */
+  /** 登记一条官文。缺送达方式当场拦下：服务端也会拒，但用户应在这里就看到原因。 */
   const saveNotice = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     if (noticeDraft === null || selectedMatterId === null) return
-    const months = Number((noticeDraft.designatedMonths ?? '').trim())
-    const text = (key: string): string | null => (noticeDraft[key] ?? '').trim() === '' ? null : (noticeDraft[key] ?? '').trim()
+    const payload = buildNoticePayload(noticeDraft)
+    if (!payload.ok) { setError(payload.error); return }
     setBusy(true)
     try {
       await api(`/api/workbench/matters/${selectedMatterId}/notices`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          noticeKind: noticeDraft.noticeKind,
-          dispatchDate: (noticeDraft.dispatchDate ?? '').trim(),
-          deliveryMode: noticeDraft.deliveryMode ?? 'electronic',
-          deliveryDate: text('deliveryDate'),
-          designatedMonths: Number.isInteger(months) && months > 0 ? months : null,
-          fileLink: text('fileLink'),
-          note: text('note'),
-        }),
+        body: JSON.stringify(payload.value),
       })
       setNoticeDraft(null)
       await loadMatterDetail(selectedMatterId)
@@ -790,7 +778,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
         pending?: Array<{ label?: string; reason?: string }>
         restDayRule?: string
       }>(`/api/workbench/matters/${matterId}/deadlines/recompute`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ today: localDateString() }),
       })
       if (matterId === selectedMatterId) setMatterDeadlines(res.deadlines)
       const pendingCount = Array.isArray(res.pending) ? res.pending.length : 0

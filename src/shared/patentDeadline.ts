@@ -179,13 +179,26 @@ function evidencedDate(
 /** `buildDeadlineQuery` 的入参：工作台侧的案卷与官文。 */
 export interface BuildDeadlineQueryInput {
   /** 案卷（只用期限相关的字段）。 */
-  matter: Pick<MatterRow, 'patentKind' | 'filingDate' | 'priorityDate' | 'claimsPriority' | 'isPctNationalPhase' | 'extra'>
+  matter: Pick<MatterRow, 'applicationNo' | 'patentKind' | 'filingDate' | 'priorityDate' | 'claimsPriority' | 'isPctNationalPhase' | 'extra'>
   /** 本案已登记的官文。 */
   notices: ReadonlyArray<Pick<MatterNoticeRow, 'noticeKind' | 'dispatchDate' | 'deliveryMode' | 'deliveryDate' | 'designatedMonths'>>
   /** 出报告的当天 `YYYY-MM-DD`；由调用方给定以保证可复现。 */
   today: string
   /** 细则第5条顺延口径覆盖；缺省交给引擎（`apply`）。 */
   restDayRule?: 'apply' | 'omit'
+}
+
+/**
+ * `buildDeadlineQuery` 的结果：引擎入参 + **适配层自己发现的缺口**。
+ *
+ * 为什么缺口不交给引擎：引擎的 `NoticeInput.delivery.mode` 是必填的，而它把"省略"
+ * 解释为电子送达。缺送达方式的官文**不能送进去**——送进去就等于我们替当事人选了送达方式，
+ * 而那正是宪法第 3 条点名的危险默认值之一。这里把它拦在边界上，转成 pending 如实上报。
+ */
+export interface BuildDeadlineQueryResult {
+  query: PatentDeadlineQuery
+  /** 因事实缺失而**没有**送进引擎的官文（可机读点名缺哪一项）。 */
+  pending: PatentDeadlinePending[]
 }
 
 /** 从 `matters.extra` 读一个可选的日历日期；缺值返回 undefined，非法值抛错。 */
@@ -203,11 +216,25 @@ function optionalExtraDate(extra: Record<string, unknown>, key: string): Calenda
  * 由路由转成 400——**不静默丢字段**。`authorizationPublicationDate` 与
  * `marketingApprovalDate` 从 `matters.extra` 读；缺了引擎会把相关期限列为"待补输入"，
  * 这正是想要的行为（宁可 pending，也不拿申请日去近似）。
+ *
+ * **送达方式缺失的官文不进引擎**：`delivery.mode` 是引擎必填项，而引擎把省略解释为
+ * 电子送达。缺送达方式时送达日无法确定（第 3 条 / 第 11 条之一），因此该官文被收进
+ * 返回值里的 `pending`（`requiredInput: 'deliveryMode'`），其余官文与案卷字段照常计算——
+ * 一处事实缺失不该让整卷期限变成空白（第 12 条之一：缺口可点名、可上报）。
+ *
  * @param input - 案卷、官文与出报告日。
- * @returns 引擎入参。
+ * @returns 引擎入参，以及因缺送达方式而未送引擎的官文。
  */
-export function buildDeadlineQuery(input: BuildDeadlineQueryInput): PatentDeadlineQuery {
+export function buildDeadlineQuery(input: BuildDeadlineQueryInput): BuildDeadlineQueryResult {
   const { matter, notices } = input
+  /**
+   * 预备案卷不产生法律期限（宪法第 6 条之一第 3 点）：
+   * 没有申请号就无法与官文、缴费、客户对账对齐，任何届满日都无从附丽。
+   * 这里拒绝的是"算出来一个日期"，不是"登记案卷"——补全申请号后即可重算。
+   */
+  if (matter.applicationNo === null || matter.applicationNo.trim() === '') {
+    throw new Error('该案卷尚无申请号（预备案卷），按宪法第 6 条之一不产生法律期限。请先在案卷详情补全申请号，再重算期限')
+  }
   if (matter.patentKind === null) {
     throw new Error('案卷缺少专利类型（发明 / 实用新型 / 外观设计），期限无法起算——请先在案卷详情里补全')
   }
@@ -229,8 +256,20 @@ export function buildDeadlineQuery(input: BuildDeadlineQueryInput): PatentDeadli
   if (marketingApprovalDate !== undefined) query.marketingApprovalDate = marketingApprovalDate
   if (input.restDayRule !== undefined) query.restDayRule = input.restDayRule
 
-  const noticeInputs = notices.map((notice): PatentDeadlineNoticeInput => {
-    const mode = notice.deliveryMode as PatentDeadlineDeliveryMode
+  const pending: PatentDeadlinePending[] = []
+  const noticeInputs: PatentDeadlineNoticeInput[] = []
+  for (const notice of notices) {
+    if (notice.deliveryMode === null) {
+      pending.push({
+        id: `notice-${notice.noticeKind}-${notice.dispatchDate}-delivery`,
+        label: `官文（${notice.noticeKind}，发文 ${notice.dispatchDate}）的送达日`,
+        legalBasis: '专利法实施细则（2023 修订）第四条',
+        requiredInput: 'deliveryMode',
+        reason: '该官文未登记送达方式：送达日无法确定。本系统不默认按电子送达或发文日推断，请在官文登记里补选送达方式后重算',
+      })
+      continue
+    }
+    const mode: PatentDeadlineDeliveryMode = notice.deliveryMode
     const delivery: PatentDeadlineNoticeInput['delivery'] = {
       mode,
       dispatchDate: requireCalendarDate(notice.dispatchDate, `官文（${notice.noticeKind}）发文日`),
@@ -238,10 +277,10 @@ export function buildDeadlineQuery(input: BuildDeadlineQueryInput): PatentDeadli
     if (notice.deliveryDate !== null) Object.assign(delivery, evidencedDate(mode, requireCalendarDate(notice.deliveryDate, `官文（${notice.noticeKind}）送达日`)))
     const entry: PatentDeadlineNoticeInput = { kind: notice.noticeKind, delivery }
     if (notice.designatedMonths !== null) entry.designatedMonths = notice.designatedMonths
-    return entry
-  })
+    noticeInputs.push(entry)
+  }
   if (noticeInputs.length > 0) query.notices = noticeInputs
-  return query
+  return { query, pending }
 }
 
 /**

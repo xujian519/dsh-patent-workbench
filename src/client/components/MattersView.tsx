@@ -53,7 +53,8 @@ export interface MatterNoticeView {
   id: string
   noticeKind: string
   dispatchDate: string
-  deliveryMode: string
+  /** `null` = 送达方式尚未登记；界面上必须显式说出来，不能拿"电子送达"冒充。 */
+  deliveryMode: string | null
   deliveryDate: string | null
   designatedMonths: number | null
   fileLink: string | null
@@ -569,7 +570,9 @@ export function MatterDetail({ matter, dicts, timeline, notices, deadlines, engi
                 <div key={notice.id} className="wb-matter-notice" data-matter-notice={notice.id}>
                   <span className="wb-matter-notice-kind">{dictLabel(dicts, 'notice_kind', notice.noticeKind)}</span>
                   <span className="wb-matter-notice-date">发文 {notice.dispatchDate}</span>
-                  <span className="wb-matter-notice-mode">{dictLabel(dicts, 'delivery_mode', notice.deliveryMode)}</span>
+                  <span className="wb-matter-notice-mode">
+                    {notice.deliveryMode === null ? '送达方式未登记' : dictLabel(dicts, 'delivery_mode', notice.deliveryMode)}
+                  </span>
                   {notice.deliveryDate === null ? null : <span>送达 {notice.deliveryDate}</span>}
                   {notice.designatedMonths === null ? null : <span>指定 {notice.designatedMonths} 个月</span>}
                   {notice.fileLink === null || notice.fileLink === '' ? null : <span className="wb-matter-notice-file">{notice.fileLink}</span>}

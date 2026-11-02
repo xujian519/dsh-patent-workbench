@@ -319,7 +319,7 @@ const CASES = [
   }), /wb-new-task-form/],
 
   ['NoticeDraftModal', 'components/dialogs/NoticeDraftModal.js', (m) => h(m.NoticeDraftModal, {
-    draft: { noticeKind: 'oa', dispatchDate: '2026-10-01' }, onChange: noop,
+    draft: { noticeKind: 'oa', dispatchDate: '2026-10-01', deliveryMode: '' }, onChange: noop,
     noticeKindOptions: [dict('oa', 'notice_kind')], deliveryModeOptions: [dict('email', 'delivery_mode')],
     busy: false, onClose: noop, onSubmit: noop,
   }), /wb-notice-form/],

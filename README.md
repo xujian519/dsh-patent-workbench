@@ -56,6 +56,23 @@ dsh plugin --profile web add git+https://github.com/xujian519/dsh-patent-workben
 > ⚠️ **装完必须重启 `dsh web`，只刷新浏览器不够**：客户端 bundle 由宿主在**启动时**读进内存，
 > 刷新拿到的是旧代码。升级/回退同理。
 
+期限功能另需一行**宿主侧**配置（缺了不是报错，而是看板明确降级为"未探测到期限引擎，
+登记官文不会自动产生期限"，重算按钮不可用）：期限规则只在 DSH Patent 的
+`@deepseek-ai/dsh-patent-deadline` 里有一份，它随 agent preset 挂在隔离域内**只有工具**，
+profile 根域的同级插件（本工作台）拿不到。在该 profile 的 `cordis.patch.yml` 里补：
+
+```yaml
+- insert:
+    - id: patent-deadline-service
+      name: '@deepseek-ai/dsh-patent-deadline'
+      config:
+        provideService: true
+        exposeTool: false
+```
+
+⚠️ `insert:` 不能省：补丁的普通条目只能**按 id 改已有行**，给新 id 的普通条目会被 loader
+**警告后静默跳过**（`--dump-config` 里看不到、探测仍是 `false`）。改完同样要重启宿主。
+
 其它装法：
 
 ```sh
@@ -78,6 +95,7 @@ dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 |---|---|---|
 | **面板本体**（官方槽位 + `layout.selectPanel`） | **DSH `0.1.5-rc.1+`** | **面板整块不启动**并打一条可读日志（刻意不降级） |
 | 服务端能力：任务/日历/知识库/案卷/期限、提醒、`workbench_*` 工具 | `0.1.0-rc.6+` | — |
+| **自动算期限**（`patentDeadline` 服务） | 宿主带 `@deepseek-ai/dsh-patent-deadline` **且**该 profile 根域有发布服务的那一行（见「安装」） | 期限看板明确降级：写出"未探测到期限引擎"、重算按钮禁用、官文不会自动产生期限；不自行推算 |
 | 会话绑定 `sessions.retain()` | `0.1.7-rc.2+` | 旧宿主自动回落 `sessions.binding()` |
 | Skill 选择器 | 宿主 `skills` 注册表 | 选择器隐藏 |
 | 微信提醒 | 可选插件 `@xmanrui/dsh-im` | 静默降级为页内提醒 + 系统通知 |
@@ -106,6 +124,7 @@ pnpm build && pnpm dev:install   # 装盘到本机 profile（装完重启 dsh we
 | [`scripts/release-preflight.mjs`](scripts/release-preflight.mjs) | **发布门禁一键跑**：typecheck → 单测 → 全探针（每步 build）→ PII 两面 → 版本/文档；`--phase post` 做 tarball 与 sha1 对账、用户视角安装、Release 复核 |
 | [`scripts/dev-verify.mjs`](scripts/dev-verify.mjs) | 研发版本验收链：构建 → 装盘 → 隔离实例重启 → 浏览器套件 → 证据包 |
 | [`docs/issues/`](docs/issues/) | 滚动维护的已知问题与待办 |
+| [`docs/constitution-alignment.md`](docs/constitution-alignment.md) | 与 `dsh-PMS` 项目宪法 v0.3.0 的对齐记录：已偿还破例、逐条状态、剩余缺口与优先级 |
 | [`docs/adr/`](docs/adr/) | 已冻结的口径决策（进度、角色、验收链、每日投入） |
 
 ## 版本历史
@@ -233,12 +252,33 @@ dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 
 > ⚠️ **You must restart `dsh web` after installing** — the client bundle is read into memory at host startup, so a browser refresh keeps serving the old code.
 
+Deadlines also need one **host-side** config row. Without it the board does not fail — it degrades
+explicitly ("no deadline engine detected; registering a notice will not produce deadlines by
+itself") and the recompute button stays disabled. The period rules live in exactly one place,
+`@deepseek-ai/dsh-patent-deadline`, which the agent preset mounts inside an isolated realm as a
+**tool only**, so a sibling at the profile root (this plugin) cannot reach it. Add to that
+profile's `cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: patent-deadline-service
+      name: '@deepseek-ai/dsh-patent-deadline'
+      config:
+        provideService: true
+        exposeTool: false
+```
+
+⚠️ The `insert:` wrapper is required: a plain patch entry can only replace fields of an existing
+id, and one naming an unknown id is warned about and **silently skipped** (absent from
+`--dump-config`, the probe stays `false`). Restart the host afterward, as above.
+
 ## Compatibility
 
 | | Requirement | If missing |
 |---|---|---|
 | **Panel** (official slots + `layout.selectPanel`) | **DSH `0.1.5-rc.1+`** | Panel **refuses to start** and logs a readable reason (deliberately not degraded) |
 | Server-side features (tasks, reminders, `workbench_*` tools) | `0.1.0-rc.6+` | — |
+| **Computed deadlines** (the `patentDeadline` service) | A host shipping `@deepseek-ai/dsh-patent-deadline` **and** the profile-root row that publishes it (see Install) | The deadline board degrades explicitly ("no deadline engine detected"), the recompute button is disabled, and a registered notice produces no deadline; nothing is computed locally |
 | Session binding via `sessions.retain()` | `0.1.7-rc.2+` | Falls back to `sessions.binding()` on older hosts |
 | WeChat reminders | optional `@xmanrui/dsh-im` | Falls back to in-panel + system notifications |
 
