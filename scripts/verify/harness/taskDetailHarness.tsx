@@ -166,6 +166,7 @@ function Harness(): JSX.Element {
         onSaveProgress={async (percent) => { calls.push({ name: 'saveProgress', args: [percent] }) }}
         onCompleteFromProgress={async () => { calls.push({ name: 'completeFromProgress', args: [] }) }}
         onStartAI={record('startAI')}
+        onOpenAcceptance={record('openAcceptance')}
         onOpenSession={record('openSession')}
         onOpenTask={record('openTask')}
         onAddReminder={record('addReminder')}

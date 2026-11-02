@@ -378,6 +378,7 @@ const CASES = [
     archivedMode: false, onToggleArchived: noop, taskCount: 1, archivedCount: 0,
     expanded: new Set(), toggleExpanded: noop, dicts: [dict('code_impl')],
     onOpenTask: noop, selectedTaskId: undefined, pending: null, childrenOf: () => undefined,
+    onQuickEntry: noop, onNewTask: noop,
   }), /列表里的任务标题/],
 
   ['KnowledgeView', 'components/views/KnowledgeView.js', (m) => h(m.KnowledgeView, {
@@ -411,7 +412,7 @@ const CASES = [
     sessionPicker: { open: false, query: '', role: '', busy: false, candidates: [], linkedIds: new Set(), onOpen: noop, onClose: noop, onQuery: noop, onRole: noop, onLink: noop },
     sessionListSnapshot: { ids: [], byId: {} }, pending: null,
     onEdit: noop, onArchive: noop, onRestore: noop, onPatch: noop, onSaveProgress: async () => undefined,
-    onCompleteFromProgress: async () => undefined, onStartAI: noop, onOpenSession: noop, onOpenTask: noop,
+    onCompleteFromProgress: async () => undefined, onStartAI: noop, onOpenAcceptance: noop, onOpenSession: noop, onOpenTask: noop,
     onAddReminder: noop, onResetReminder: noop, notify: noop, taskKnowledge: [], onOpenKnowledge: noop,
     onSinkReview: noop, defaultEstimateMinutes: 30, defaultWorkspace: '/tmp/work',
   }), /← 从左侧选择一个任务查看详情/],
@@ -424,7 +425,7 @@ const CASES = [
     sessionPicker: { open: false, query: '', role: '', busy: false, candidates: [], linkedIds: new Set(), onOpen: noop, onClose: noop, onQuery: noop, onRole: noop, onLink: noop },
     sessionListSnapshot: { ids: [], byId: {} }, pending: null,
     onEdit: noop, onArchive: noop, onRestore: noop, onPatch: noop, onSaveProgress: async () => undefined,
-    onCompleteFromProgress: async () => undefined, onStartAI: noop, onOpenSession: noop, onOpenTask: noop,
+    onCompleteFromProgress: async () => undefined, onStartAI: noop, onOpenAcceptance: noop, onOpenSession: noop, onOpenTask: noop,
     onAddReminder: noop, onResetReminder: noop, notify: noop, taskKnowledge: [knowledge()], onOpenKnowledge: noop,
     onSinkReview: noop, defaultEstimateMinutes: 30, defaultWorkspace: '/tmp/work',
   }), /被选中的任务/],

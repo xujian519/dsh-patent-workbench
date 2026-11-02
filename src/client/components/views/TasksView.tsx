@@ -67,6 +67,9 @@ export interface TasksViewProps {
   /** 待验收投影（服务端不支持时为 null，界面据此不显示徽标）。 */
   pending: PendingMap
   childrenOf: (taskId: string) => readonly Task[] | undefined
+  /** 空态两个入口，与顶栏同一对回调。快速录入是主按钮。 */
+  onQuickEntry: () => void
+  onNewTask: () => void
 }
 
 export function TasksView({
@@ -75,6 +78,7 @@ export function TasksView({
   typeTabs, onSelectType, sortKey, onSortKey, sortDir, onToggleSortDir,
   tree, onClearFilter, archivedMode, onToggleArchived, taskCount, archivedCount,
   expanded, toggleExpanded, dicts, onOpenTask, selectedTaskId, pending, childrenOf,
+  onQuickEntry, onNewTask,
 }: TasksViewProps): JSX.Element {
   return (
     <>
@@ -135,7 +139,15 @@ export function TasksView({
       <div className="wb-list">
         <TaskTreeRows roots={tree} depth={0} expanded={expanded} toggle={toggleExpanded} dicts={dicts} onOpen={onOpenTask} selectedId={selectedTaskId} pending={pending} childrenOf={childrenOf} />
         {archivedMode && archivedCount === 0 && <div className="wb-empty">没有归档任务</div>}
-        {!archivedMode && taskCount === 0 && <div className="wb-empty">还没有任务，点“快速录入”或“新建”开始</div>}
+        {!archivedMode && taskCount === 0 && (
+          <div className="wb-empty">
+            <div>还没有任务，点“快速录入”或“新建”开始</div>
+            <div className="wb-empty-actions">
+              <button type="button" className="wb-btn primary" onClick={onQuickEntry}>快速录入</button>
+              <button type="button" className="wb-btn" onClick={onNewTask}>新建</button>
+            </div>
+          </div>
+        )}
         {!filterEmpty && tree.length === 0 && <div className="wb-empty">没有符合条件的任务，点“清空”恢复完整列表</div>}
       </div>
     </>

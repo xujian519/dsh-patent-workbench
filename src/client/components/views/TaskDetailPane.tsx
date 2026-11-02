@@ -25,7 +25,9 @@
 import { Icon } from '../Icon.js'
 import { Badge } from '../TaskList.js'
 import { MarkdownText } from '../MarkdownText.js'
+import { TaskFlowStrip } from '../TaskFlowStrip.js'
 import { TaskProgress } from '../TaskProgress.js'
+import { taskFlowSteps } from '../../taskFlowStage.js'
 import { taskProgressView } from '../../taskProgressView.js'
 import { eventIcon, eventLabel, fmtTime, roleLabel, shortId } from '../../format.js'
 import type { Dict, DshSessionListState, DshSessionSummary, KnowledgeEntry, Task, TaskDetail } from '../../viewTypes.js'
@@ -98,6 +100,10 @@ export interface TaskDetailPaneProps {
   onCompleteFromProgress: () => Promise<void>
   /** AI 动作（`review` 含"复用已有复盘会话"的判据，所以由容器按 mode 决定做什么）。 */
   onStartAI: (mode: 'review' | 'execute' | 'consult' | 'breakdown') => void
+  /**
+   * 闭环条上的「验收」：打开原来的确认链（待确认弹框 / 唤回暂存），不在这里标完成。
+   */
+  onOpenAcceptance: () => void
   onOpenSession: (sessionId: string) => void
   onOpenTask: (task: Task) => void
   onAddReminder: (offsetMinutes: number) => void
@@ -120,7 +126,7 @@ export function TaskDetailPane(props: TaskDetailPaneProps): JSX.Element {
     selected, busy, dictOf, editing, isSessionUsable, detailTab, onDetailTab,
     subtaskParent, onBeginSubtask, onEndSubtask, onCreateSubtask, eventsExpanded, onToggleEvents,
     sessionPicker, sessionListSnapshot, pending, onEdit, onArchive, onRestore, onPatch,
-    onSaveProgress, onCompleteFromProgress, onStartAI, onOpenSession, onOpenTask,
+    onSaveProgress, onCompleteFromProgress, onStartAI, onOpenAcceptance, onOpenSession, onOpenTask,
     onAddReminder, onResetReminder, notify, taskKnowledge, onOpenKnowledge, onSinkReview,
     defaultEstimateMinutes, defaultWorkspace,
   } = props
@@ -131,6 +137,30 @@ export function TaskDetailPane(props: TaskDetailPaneProps): JSX.Element {
     )
   }
   const task = selected.task
+  /**
+   * 进度与闭环共用同一次投影：待验收高亮以徽标为准（详情自身的 pending 优先，
+   * 服务端不支持时不推测）。阶段文案在 `taskFlowSteps()`，这里不再写一套完成判断。
+   */
+  const progress = taskProgressView({
+    task,
+    children: selected.children,
+    pending: selected.pendingCompletion !== undefined
+      ? new Map([[task.id, selected.pendingCompletion]])
+      : pending,
+  })
+  const flowSteps = taskFlowSteps({
+    statusCode: task.statusCode,
+    archived: task.archived,
+    aiPolicyCode: task.aiPolicyCode,
+    busy,
+    pending: progress.badgeKind === 'pending' || progress.badgeKind === 'deferred'
+      ? { deferred: progress.badgeKind === 'deferred' }
+      : undefined,
+    hasChildren: selected.children.length > 0,
+    hasExecuteSession: selected.sessions.some((item) => item.role_code === 'execute'),
+    hasReviewSession: selected.sessions.some((item) => item.role_code === 'review'),
+  })
+  const reviewIsCurrent = flowSteps.some((step) => step.id === 'review' && step.current)
 
   return (
     <>
@@ -181,20 +211,22 @@ export function TaskDetailPane(props: TaskDetailPaneProps): JSX.Element {
         </>
       </div>
 
+      <TaskFlowStrip
+        steps={flowSteps}
+        onExecute={() => onStartAI('execute')}
+        onAccept={onOpenAcceptance}
+        onReview={() => onStartAI('review')}
+      />
+
       {/**
         * 进度卡（T1/D04）：**独立组件** `TaskProgress`，列表/详情/计划行共用同一份。
         * 判定全部来自纯模块 `taskProgressView()`——这里不写 `statusCode === 'done' ?` 这类分支。
         * `pending` 传的是列表那次**共用查询**折出来的 Map（避免 N+1），
         * 但详情页以自身 `pendingCompletion` 为准（它是最新的单任务读取）。
+        * 上面闭环条用的是**同一次** `progress`，避免两套待验收判断。
         */}
       <TaskProgress
-        view={taskProgressView({
-          task,
-          children: selected.children,
-          pending: selected.pendingCompletion !== undefined
-            ? new Map([[task.id, selected.pendingCompletion]])
-            : pending,
-        })}
+        view={progress}
         onSave={task.statusCode === 'done' || task.statusCode === 'cancelled' || task.archived
           ? undefined
           : (percent) => onSaveProgress(percent)}
@@ -205,46 +237,24 @@ export function TaskDetailPane(props: TaskDetailPaneProps): JSX.Element {
 
       {!editing && (
         <>
-          <div className="wb-detail-actions">
-            {task.archived ? (
-              <button className="wb-btn primary" onClick={onRestore}><Icon name="refresh" />恢复任务</button>
-            ) : (
-              <>
-                {task.statusCode === 'done' || task.statusCode === 'cancelled'
-                  ? <button className="wb-btn" disabled={busy} onClick={() => onStartAI('review')}><Icon name="report" />{selected.sessions.some((x) => x.role_code === 'review') ? '进入复盘会话' : 'AI 复盘'}</button>
-                  : <>
-                      {/**
-                        * ⚠️ **文案精简**（2026-10-01 用户要求）。
-                        *
-                        * 原先把"父任务 / 新会话续作 / 需可执行"三件事全部拼进按钮文字，
-                        * 父任务上就成了「AI 执行（父任务）（新会话续作）（需可执行）」——
-                        * 一行放不下，整个动作行被挤到换行。用户明确要求精简。
-                        *
-                        * 精简口径：**按钮上只留"能不能点、点了干什么"**，
-                        * 其余全放进 `title`（悬停可看，不占宽度）。唯一保留在文字里的是
-                        * 「父任务」——它是**动作语义的一部分**（验收会级联子任务），
-                        * 不适合只藏在悬停里。
-                        */}
-                      <button
-                        className="wb-btn primary"
-                        disabled={busy || task.aiPolicyCode !== 'execute'}
-                        title={task.aiPolicyCode !== 'execute'
-                          ? '请先在“AI 策略”里开启「可执行」'
-                          : selected.children.length > 0
-                            ? '执行父任务：验收通过后未完成子任务会级联完成；所有子节点完成后父节点也会自动完成'
-                            : selected.sessions.some((x) => x.role_code === 'execute')
-                              ? '新建执行会话并携带此前会话提示'
-                              : '开始执行'}
-                        onClick={() => onStartAI('execute')}
-                      ><Icon name="ai" />AI 执行{selected.children.length > 0 ? '（父任务）' : ''}</button>
-                      <button className="wb-btn" disabled={busy} title="就这个任务向 AI 咨询（不改任务状态）" onClick={() => onStartAI('consult')}><Icon name="ai" />AI 协助</button>
-                      <button className="wb-btn" disabled={busy} title="让 AI 把任务拆成子任务提案（确认后才建）" onClick={() => onStartAI('breakdown')}><Icon name="ai" />AI 拆解</button>
-                      <button className="wb-btn" title="手动添加子任务" onClick={() => onBeginSubtask(task)}><Icon name="subtask" />子任务</button>
-                    </>}
-                {/* 「归档」已移到详情页右上角（与「编辑」并列），见本卡片标题那一行 */}
-              </>
-            )}
-          </div>
+          {(task.archived || !reviewIsCurrent) && (
+            <div className={task.archived ? 'wb-detail-actions' : 'wb-detail-actions assist'}>
+              {task.archived ? (
+                <button className="wb-btn primary" onClick={onRestore}><Icon name="refresh" />恢复任务</button>
+              ) : (
+                <>
+                  {/**
+                    * 执行 / 验收 / 复盘在上面的闭环条上（主路径）。
+                    * 协助、拆解、手动子任务留在这里，视觉降为次要，四个页签不动。
+                    * 「归档」仍在标题卡右上角。
+                    */}
+                  <button className="wb-btn" disabled={busy} title="就这个任务向 AI 咨询（不改任务状态）" onClick={() => onStartAI('consult')}><Icon name="ai" />AI 协助</button>
+                  <button className="wb-btn" disabled={busy} title="让 AI 把任务拆成子任务提案（确认后才建）" onClick={() => onStartAI('breakdown')}><Icon name="ai" />AI 拆解</button>
+                  <button className="wb-btn" title="手动添加子任务" onClick={() => onBeginSubtask(task)}><Icon name="subtask" />子任务</button>
+                </>
+              )}
+            </div>
+          )}
           {/**
             * ⚠️ 这里原本有一段独立提示（"执行父任务：验收通过后未完成子任务会级联完成…" /
             * "执行会话完成后，AI 会提交验收申请…"）。用户要求删除：它独占一行高度，

@@ -195,6 +195,24 @@ try {
   check('附件上限文案由共享常量现算（图片 / 文档两个上限都写出来）',
     await api.evaluate(`return document.body.textContent.includes(${JSON.stringify(`图片最多 ${limits.images} 张 · PDF/DOCX 最多 ${limits.documents} 份 · 单份 ≤ 5MB`)})`),
     `图片 ${limits.images} / 文档 ${limits.documents}`)
+  check('会话设置默认收起：工作区 / 技能 / 角色 / 模型都不在默认屏',
+    await api.evaluate(count('[data-workspace-picker]')) === 0
+    && await api.evaluate(count('.wb-skill-picker')) === 0
+    && await api.evaluate(count('.wb-persona-picker')) === 0
+    && await api.evaluate(count('.wb-model-picker')) === 0)
+  check('默认屏是一行摘要（工作区来源 · 技能数 · 角色 · 模型）',
+    (await api.evaluate(text('.wb-quick-settings-summary')) ?? '') === '上次手动选择 · 0 个技能 · 未指定 · 跟随 DSH 默认模型',
+    String(await api.evaluate(text('.wb-quick-settings-summary'))))
+  check('默认屏主按钮在视口内，正文不必滚到底',
+    await api.evaluate(`
+      const body = document.querySelector('.wb-dialog-body');
+      const btn = [...document.querySelectorAll('.wb-dialog-foot .wb-btn')].find((node) => node.textContent.includes('创建澄清会话'));
+      if (body === null || btn === undefined) return false;
+      const rect = btn.getBoundingClientRect();
+      return body.scrollTop === 0 && body.scrollHeight <= body.clientHeight + 1 && rect.top >= 0 && rect.bottom <= window.innerHeight;
+    `))
+  await clickByText('.wb-dialog-body', '会话设置')
+  await api.waitFor(`return document.querySelector('[data-workspace-picker]') !== null`, { description: '展开会话设置' })
   check('工作区预填 = 设置里的「上次手动选择」（不是某个任务的工作区）',
     await api.evaluate(value('[data-workspace-input]')) === '/Users/xujian/projects/demo',
     String(await api.evaluate(value('[data-workspace-input]'))))
@@ -403,6 +421,9 @@ try {
 
   // ---------------------------------------------------------------- busy
   await typeIn('.wb-dialog-body textarea', '忙的时候也要能取消')
+  // 重新打开后会话设置回到收起；模型按钮在展开后的那一组里，busy 仍要禁用它。
+  await clickByText('.wb-dialog-body', '会话设置')
+  await api.waitFor(`return document.querySelector('.wb-model-picker') !== null`, { description: '展开后模型按钮在' })
   await api.evaluate('__h4.setBusy(true); return true')
   check('busy：提交 / 添加附件 / 模型按钮都禁用',
     await api.evaluate(btnDisabled('.wb-dialog-foot', '创建澄清会话')) === true
