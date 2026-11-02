@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildKnowledgePayload } from '../lib/client/knowledgeView.js'
+import { buildKnowledgePayload, recentTaskOptions, relationFlagsFromSaved } from '../lib/client/knowledgeView.js'
 
 const draft = (over = {}) => ({
   title: '  某案的检索经验  ',
@@ -57,6 +57,29 @@ test('buildKnowledgePayload：填了的值 trim 后原样带上（关联任务/�
   assert.equal(payload.sourceReviewId, 'rv1')
   assert.equal(payload.matterId, 'm1', '案卷 id 不做 trim 之外的归一（它是 select 的值）')
   assert.equal(payload.fileLink, 'file:///tmp/a.md')
+})
+
+test('relationFlagsFromSaved：只有严格的 true 才打开，坏值一律当关', () => {
+  assert.deepEqual(relationFlagsFromSaved({}), { hasLocalFile: false, hasLinkedTask: false })
+  assert.deepEqual(relationFlagsFromSaved({ hasLocalFile: true, hasLinkedTask: true }), { hasLocalFile: true, hasLinkedTask: true })
+  assert.deepEqual(relationFlagsFromSaved({ hasLocalFile: 'true', hasLinkedTask: 1 }), { hasLocalFile: false, hasLinkedTask: false })
+})
+
+test('recentTaskOptions：按更新时间取前 20，当前 id 不在里面时补上', () => {
+  const tasks = Array.from({ length: 25 }, (_, i) => ({
+    id: `t${i}`,
+    title: `任务 ${i}`,
+    updatedAt: new Date(Date.parse('2026-10-01T00:00:00.000Z') + i * 1000).toISOString(),
+  }))
+  const head = recentTaskOptions(tasks, '')
+  assert.equal(head.length, 20)
+  assert.equal(head[0].id, 't24', '最近更新的排在最前')
+  assert.equal(head[19].id, 't5')
+  const withCurrent = recentTaskOptions(tasks, 't0')
+  assert.equal(withCurrent.length, 21)
+  assert.equal(withCurrent[withCurrent.length - 1].id, 't0', '已填但不在前 20 的 id 仍要出现在下拉里')
+  const unknown = recentTaskOptions(tasks, 'missing')
+  assert.equal(unknown[unknown.length - 1].title, 'missing', '库里没有的 id 用 id 自己当标题，避免下拉空白')
 })
 
 test('buildKnowledgePayload：分类与"新建/编辑"无关 —— 载荷里没有 id，编辑走 URL', () => {

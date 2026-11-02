@@ -24,6 +24,10 @@ export interface KnowledgeFilters {
   keyword: string
   kinds: readonly string[]
   tags: readonly string[]
+  /** 只看有本地文件的条目（与 kind / 标签 / 关键词 AND）。 */
+  hasLocalFile: boolean
+  /** 只看有关联任务（`sourceTaskId`）的条目。与案卷归属无关。 */
+  hasLinkedTask: boolean
   sortKey: SortKey
   sortDir: SortDir
   page: number
@@ -34,6 +38,8 @@ export const EMPTY_KNOWLEDGE_FILTERS: KnowledgeFilters = Object.freeze({
   keyword: '',
   kinds: Object.freeze([ALL]) as readonly string[],
   tags: Object.freeze([]) as readonly string[],
+  hasLocalFile: false,
+  hasLinkedTask: false,
   sortKey: 'updatedAt' as SortKey,
   sortDir: 'desc' as SortDir,
   page: 0,
@@ -72,7 +78,7 @@ export function reconcileKnowledgeKinds(filters: KnowledgeFilters, knownCodes: r
 }
 
 export function knowledgeFilterActive(f: KnowledgeFilters): boolean {
-  return f.keyword.trim() !== '' || f.tags.length > 0 || selectedKind(f) !== ALL
+  return f.keyword.trim() !== '' || f.tags.length > 0 || selectedKind(f) !== ALL || f.hasLocalFile === true || f.hasLinkedTask === true
 }
 
 /**
@@ -136,6 +142,22 @@ export function KnowledgeToolbar({ filters, tabs, tagCounts, total, onChange, on
         <button type="button" className="wb-btn" disabled={!knowledgeFilterActive(filters)} data-kb-clear onClick={onClear}>清空筛选</button>
       </div>
       <TabBar tabs={tabs} selected={filters.kinds} onSelect={(code, multi) => onChange({ kinds: toggleTab(filters.kinds, code, multi), page: 0 })} ariaLabel="知识库分类" />
+      <div className="wb-kb-facets" data-kb-facets>
+        <button
+          type="button"
+          className={`wb-kb-tag ${filters.hasLocalFile === true ? 'on' : ''}`}
+          data-kb-facet="file"
+          aria-pressed={filters.hasLocalFile === true}
+          onClick={() => onChange({ hasLocalFile: filters.hasLocalFile !== true, page: 0 })}
+        >有本地文件</button>
+        <button
+          type="button"
+          className={`wb-kb-tag ${filters.hasLinkedTask === true ? 'on' : ''}`}
+          data-kb-facet="task"
+          aria-pressed={filters.hasLinkedTask === true}
+          onClick={() => onChange({ hasLinkedTask: filters.hasLinkedTask !== true, page: 0 })}
+        >有关联任务</button>
+      </div>
       <TagFilter tagCounts={tagCounts} selected={filters.tags} onChange={(tags) => onChange({ tags, page: 0 })} />
     </>
   )

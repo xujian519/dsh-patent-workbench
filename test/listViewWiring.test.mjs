@@ -90,15 +90,29 @@ test('接线：改筛选只能走 onChange，不许在 JSX 里直接改状态', 
   assert.ok(toolbar !== null, 'KnowledgeToolbar 已接线（H4-4 起在 components/views/KnowledgeView.tsx）')
   assert.match(toolbar[0], /onChange=\{onChange\}/, 'onChange 直连容器给的唯一入口')
   assert.doesNotMatch(toolbar[0], /setKnowledgeFilters/, 'JSX 里不许再直接改状态')
+  assert.match(toolbar[0], /hasLocalFile: false/, '清空筛选要关掉「有本地文件」')
+  assert.match(toolbar[0], /hasLinkedTask: false/, '清空筛选要关掉「有关联任务」')
 })
 
 test('接线：Tab / 排序 / 每页条数在刷新后保持（验收项）', () => {
   const writer = knowledgeViewSource.match(/function writeKnowledgeFilters[\s\S]*?\n\}/)
   assert.ok(writer !== null, 'writeKnowledgeFilters 存在')
-  for (const key of ['kinds', 'tags', 'sortKey', 'sortDir', 'pageSize']) {
+  for (const key of ['kinds', 'tags', 'hasLocalFile', 'hasLinkedTask', 'sortKey', 'sortDir', 'pageSize']) {
     assert.match(writer[0], new RegExp(`${key}:`), `持久化字段缺 ${key}`)
   }
   assert.doesNotMatch(writer[0], /keyword:/, '关键词是瞬时意图，不该落盘')
+  assert.doesNotMatch(writer[0], /\bpage:/, '页码是瞬时意图，不该落盘')
+})
+
+test('接线：知识列表失败要可见，不许把 rejection 吞成空库', () => {
+  assert.doesNotMatch(indexSource, /loadKnowledge\(\)\.catch/, '容器里不许再吞掉加载失败')
+  assert.match(indexSource, /active: view === 'knowledge'/, '只有停在知识库页才拉')
+  assert.match(indexSource, /loadEntries: loadKnowledge/, '仍走原来那一次全量拉取')
+  assert.match(indexSource, /listStatus=\{knowledge\.listStatus\}/, '加载态交给视图画')
+  assert.match(indexSource, /onRetry=\{knowledge\.reloadKnowledge\}/, '重试走同一条拉取')
+  assert.match(knowledgeViewSource, /setListStatus\('error'\)/, '失败落成错误态，而不是空数组')
+  assert.match(knowledgeViewSource, /setListStatus\('loading'\)/, '拉取中有加载态')
+  assert.doesNotMatch(knowledgeViewSource, /setKnowledgeEntries\(\[\]\)/, '失败不许把列表清成空')
 })
 
 test('知识库与任务页共用同一个 Tab 组件（同一语义不写两遍）', () => {
@@ -187,10 +201,10 @@ test('迁移 16：给已存在的库回填这两类字典的颜色，且**不覆
   assert.match(migration, /SELECT config FROM dictionaries WHERE kind = \? AND code = \?/, '先读后写')
 })
 
-test('分页档位：默认 10，可选 10/20/50/100', () => {
+test('分页档位：默认 20，可选 10/20/50/100', () => {
   const presentation = readFileSync('src/client/listPresentation.ts', 'utf8')
   assert.match(presentation, /PAGE_SIZES: readonly number\[\] = Object\.freeze\(\[10, 20, 50, 100\]\)/, '档位')
-  assert.match(presentation, /DEFAULT_PAGE_SIZE = 10/, '默认 10')
+  assert.match(presentation, /DEFAULT_PAGE_SIZE = 20/, '默认 20')
 })
 
 test('标签区：单行 + 「更多」浮层，且**不再只渲染前 12 个**（静默截断是禁区）', () => {

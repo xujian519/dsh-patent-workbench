@@ -18,7 +18,8 @@ import { Icon } from '../Icon.js'
 import { Badge } from '../TaskList.js'
 import { MarkdownText } from '../MarkdownText.js'
 import type { MatterView } from '../MattersView.js'
-import type { KnowledgeDraft } from '../../knowledgeView.js'
+import { recentTaskOptions, type KnowledgeDraft, type TaskOption } from '../../knowledgeView.js'
+import { itemHasLinkedTask, itemHasLocalFile } from '../../listPresentation.js'
 import type { Dict, KnowledgeEntry } from '../../viewTypes.js'
 
 export interface KnowledgeDetailPaneProps {
@@ -43,12 +44,51 @@ export interface KnowledgeDetailPaneProps {
   onDelete: () => void
   onOpenFile: (link: string) => void
   onOpenTask: (taskId: string) => void
+  /**
+   * 容器里已经有的任务（按更新时间取近期若干条做成下拉）。
+   * 不传 = 只有 id 输入框，不做全库搜索。
+   */
+  recentTasks?: readonly TaskOption[]
+}
+
+function KnowledgeRelationStrip({ selected, matters, taskTitleOf, onOpenFile, onOpenTask }: {
+  selected: KnowledgeEntry
+  matters: readonly MatterView[]
+  taskTitleOf: (taskId: string) => string
+  onOpenFile: (link: string) => void
+  onOpenTask: (taskId: string) => void
+}): JSX.Element | null {
+  const showMatter = (selected.matterId ?? '') !== ''
+  const taskId = itemHasLinkedTask(selected) ? selected.sourceTaskId : null
+  const fileLink = itemHasLocalFile(selected) ? selected.fileLink : null
+  if (!showMatter && taskId === null && fileLink === null) return null
+  const caseNumber = showMatter
+    ? (matters.find((matter) => matter.id === selected.matterId)?.caseNumber ?? '（已删除的案卷）')
+    : ''
+  return (
+    <div className="wb-kb-rel" data-kb-rel-strip>
+      {showMatter && <span data-kb-rel="matter">案卷：{caseNumber}</span>}
+      {taskId !== null && (
+        <button type="button" className="wb-btn" data-kb-open-task={taskId} onClick={() => onOpenTask(taskId)}>
+          关联任务：{taskTitleOf(taskId)}
+        </button>
+      )}
+      {fileLink !== null && (
+        <>
+          <span className="wb-file-chip" data-kb-rel="file"><Icon name="file" size={12} /><code>{fileLink}</code></span>
+          <button type="button" className="wb-btn" data-kb-open-file onClick={() => onOpenFile(fileLink)}><Icon name="file" />打开文件</button>
+        </>
+      )}
+    </div>
+  )
 }
 
 export function KnowledgeDetailPane(props: KnowledgeDetailPaneProps): JSX.Element {
-  const { draft, editing, selected, dictOf, matters, taskTitleOf, onDraftChange, onSubmit, onCancel, onEdit, onDelete, onOpenFile, onOpenTask } = props
+  const { draft, editing, selected, dictOf, matters, taskTitleOf, onDraftChange, onSubmit, onCancel, onEdit, onDelete, onOpenFile, onOpenTask, recentTasks = [] } = props
 
   if (draft !== null) {
+    const taskChoices = recentTaskOptions(recentTasks, draft.sourceTaskId)
+    const pickedTaskId = taskChoices.some((task) => task.id === draft.sourceTaskId.trim()) ? draft.sourceTaskId.trim() : ''
     return (
       <form className="wb-form" onSubmit={(e) => {
         e.preventDefault()
@@ -65,7 +105,21 @@ export function KnowledgeDetailPane(props: KnowledgeDetailPaneProps): JSX.Elemen
           */}
         <label>归入案卷（可选）<select value={draft.matterId} onChange={(e) => onDraftChange({ matterId: e.target.value })}><option value="">（不归入）</option>{matters.map((m) => <option key={m.id} value={m.id}>{m.caseNumber}{m.title === '' ? '' : ` · ${m.title}`}</option>)}</select></label>
         <label className="full">本地文件链接（可选）<input value={draft.fileLink} onChange={(e) => onDraftChange({ fileLink: e.target.value })} placeholder="file:// 或绝对路径，如 D:\docs\方案.md、/mnt/d/docs/方案.md" /></label>
-        <label className="full">关联任务 id（可选）<input value={draft.sourceTaskId} onChange={(e) => onDraftChange({ sourceTaskId: e.target.value })} placeholder="留空表示不关联" /></label>
+        <label className="full">关联任务 id（可选）
+          <input value={draft.sourceTaskId} onChange={(e) => onDraftChange({ sourceTaskId: e.target.value })} placeholder="留空表示不关联" />
+          {taskChoices.length > 0 && (
+            <select
+              data-kb-recent-task
+              aria-label="从近期任务填入关联任务 id"
+              value={pickedTaskId}
+              onChange={(e) => onDraftChange({ sourceTaskId: e.target.value })}
+            >
+              <option value="">近期任务…</option>
+              {taskChoices.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+            </select>
+          )}
+        </label>
+        <p className="wb-hint full" data-kb-task-help>可选。填写任务 id，保存后可在详情打开。</p>
         <label className="full">正文（Markdown）<textarea rows={12} value={draft.contentMd} onChange={(e) => onDraftChange({ contentMd: e.target.value })} /></label>
         <div className="full" style={{ display: 'flex', gap: 8 }}><button className="wb-btn primary" type="submit"><Icon name="check" />保存</button><button className="wb-btn" type="button" onClick={onCancel}>取消</button></div>
       </form>
@@ -83,33 +137,18 @@ export function KnowledgeDetailPane(props: KnowledgeDetailPaneProps): JSX.Elemen
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '8px 0' }}>
           <Badge dict={dictOf('knowledge_kind')} code={selected.kindCode} />
           {selected.tags.map((tag) => <span key={tag} style={{ fontSize: 12, color: '#999' }}>#{tag}</span>)}
-          {/**
-            * ⚠️ 用 `?? ''` 而不是 `=== null`：装盘完成、宿主还没重启的那段时间里，
-            * 服务端还是**旧代码**，响应里根本没有 `matterId`（`undefined`）。
-            * 直接判 `=== null` 会把"旧服务端"渲染成「案卷：（已删除的案卷）」——
-            * 一句暴露给用户的假话（与 `withSettingsFallback` 防的是同一类事故）。
-            */}
-          {(selected.matterId ?? '') === '' ? null : (
-            <span style={{ fontSize: 12, color: '#999' }}>
-              案卷：{matters.find((m) => m.id === selected.matterId)?.caseNumber ?? '（已删除的案卷）'}
-            </span>
-          )}
         </div>
-        {selected.fileLink !== null && selected.fileLink !== '' && (
-          <div style={{ margin: '8px 0', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span>📎 本地文件：</span>
-            <span className="wb-file-chip"><Icon name="file" size={12} /><code>{selected.fileLink}</code></span>
-            <button className="wb-btn" onClick={() => onOpenFile(selected.fileLink!)}><Icon name="file" />打开文件</button>
-          </div>
-        )}
-        {selected.sourceTaskId !== null && (
-          <div style={{ margin: '8px 0', fontSize: 13 }}>
-            🔗 关联任务：
-            <button className="wb-btn" onClick={() => onOpenTask(selected.sourceTaskId!)}>
-              {taskTitleOf(selected.sourceTaskId)}
-            </button>
-          </div>
-        )}
+        {/**
+          * 关系条：案卷 / 关联任务 / 本地文件。缺哪段就不画哪段。
+          * 案卷仍用 `?? ''`：旧服务端响应里没有 `matterId`（`undefined`）时不能渲染成「已删除」。
+          */}
+        <KnowledgeRelationStrip
+          selected={selected}
+          matters={matters}
+          taskTitleOf={taskTitleOf}
+          onOpenFile={onOpenFile}
+          onOpenTask={onOpenTask}
+        />
         <MarkdownText text={selected.contentMd} />
       </div>
     )

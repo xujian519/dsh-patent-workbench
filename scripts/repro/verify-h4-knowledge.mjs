@@ -121,9 +121,13 @@ try {
   check('分类 Tab 由字典拼出（全部 / 经验教训 / 笔记 / 决策）',
     JSON.stringify(await api.evaluate(`return [...document.querySelectorAll('[data-tabbar] .wb-tab')].map((el) => el.textContent.replace(/\\d+/g, '').trim())`)) === JSON.stringify(['全部', '经验教训', '笔记', '决策']),
     JSON.stringify(await api.evaluate(`return [...document.querySelectorAll('[data-tabbar] .wb-tab')].map((el) => el.textContent.trim())`)))
-  check('首屏列表 10 行（默认每页 10）', await api.evaluate(count('[data-kb-row]')) === 10, String(await api.evaluate(count('[data-kb-row]'))))
-  check('分页器写清"第 1–10 条 / 共 12 条"', await api.evaluate(bodyHas('第 1–10 条 / 共 12 条')))
+  check('首屏列表 12 行（默认每页 20，12 条一页放完）', await api.evaluate(count('[data-kb-row]')) === 12, String(await api.evaluate(count('[data-kb-row]'))))
+  check('分页器写清"第 1–12 条 / 共 12 条"', await api.evaluate(bodyHas('第 1–12 条 / 共 12 条')))
   check('时间分组表头在（列表按更新时间分组）', await api.evaluate(count('[data-kb-group]') + ' >= 1'))
+  check('关系筛两颗芯片在', await api.evaluate(`return document.querySelector('[data-kb-facet="file"]') !== null && document.querySelector('[data-kb-facet="task"]') !== null`))
+
+  // 默认 20 时 12 条放得下一页。后面的翻页断言仍按每页 10 写，先切过去。
+  await setSelect('[data-kb-pagesize]', '10')
 
   // ---------------------------------------------------------------- 翻页 → 搜索把页码拨回 0
   await clickSelector('[data-kb-page="1"]')
@@ -208,7 +212,7 @@ try {
   check('点「打开文件」→ 容器 onOpenFile(链接)',
     JSON.stringify(await api.evaluate(lastCall('openFile'))) === JSON.stringify(['file:///tmp/检索笔记.md']),
     JSON.stringify(await api.evaluate(lastCall('openFile'))))
-  await clickByText('.wb-card .wb-btn', '某案的权利要求改写')
+  await clickByText('.wb-card .wb-btn', '关联任务')
   check('点关联任务 → 容器 onOpenTask(任务 id)',
     JSON.stringify(await api.evaluate(lastCall('openTask'))) === JSON.stringify(['t1']),
     JSON.stringify(await api.evaluate(lastCall('openTask'))))

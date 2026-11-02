@@ -15,7 +15,7 @@
  * 分类语义在 `KnowledgeList.tsx#selectedKind`；分类合法性收口在 `reconcileKnowledgeKinds`。
  * 本模块只做三件事：读回存下来的筛选、把它们喂给判定、把改动的筛选写回去。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DEFAULT_SORT_DIR, buildListPage, normalizePageSize, normalizeSortDir, normalizeSortKey, toContentItem,
   type ContentItem, type ListPage,
@@ -47,10 +47,13 @@ function readKnowledgeFilters(): KnowledgeFilters {
       : ['all']
     const tags = Array.isArray(saved.tags) ? saved.tags.filter((t): t is string => typeof t === 'string') : []
     const sortKey = normalizeSortKey(saved.sortKey)
+    const flags = relationFlagsFromSaved(saved)
     return {
       keyword: '',
       kinds,
       tags,
+      hasLocalFile: flags.hasLocalFile,
+      hasLinkedTask: flags.hasLinkedTask,
       sortKey,
       sortDir: saved.sortDir === undefined ? DEFAULT_SORT_DIR : normalizeSortDir(saved.sortDir),
       page: 0,
@@ -61,12 +64,25 @@ function readKnowledgeFilters(): KnowledgeFilters {
   }
 }
 
+/**
+ * 落盘里的两把关系筛：只有严格的 `true` 才打开。
+ * 缺字段、字符串 `"true"`、`1` 一律当关 —— 存储不可信，不能把坏值读成「筛着」。
+ */
+export function relationFlagsFromSaved(saved: Record<string, unknown>): { hasLocalFile: boolean; hasLinkedTask: boolean } {
+  return {
+    hasLocalFile: saved.hasLocalFile === true,
+    hasLinkedTask: saved.hasLinkedTask === true,
+  }
+}
+
 /** 只写"要在刷新后保持"的字段：关键词与页码是瞬时意图，不落盘。 */
 function writeKnowledgeFilters(filters: KnowledgeFilters): void {
   try {
     localStorage.setItem(KNOWLEDGE_FILTER_STORAGE_KEY, JSON.stringify({
       kinds: filters.kinds,
       tags: filters.tags,
+      hasLocalFile: filters.hasLocalFile,
+      hasLinkedTask: filters.hasLinkedTask,
       sortKey: filters.sortKey,
       sortDir: filters.sortDir,
       pageSize: filters.pageSize,
@@ -119,10 +135,52 @@ export function buildKnowledgePayload(draft: KnowledgeDraft): KnowledgePayload {
   }
 }
 
+/** 知识列表这次拉取走到哪一步。失败是独立态，不能靠「条目数组为空」来表示。 */
+export type KnowledgeListStatus = 'loading' | 'ready' | 'error'
+
+/** 近期任务下拉里最多列几条（按更新时间）。不是全库搜索。 */
+export const RECENT_TASK_PICK_LIMIT = 20
+
+export interface TaskOption { id: string; title: string; updatedAt: string }
+
+/**
+ * 表单里的近期任务：已在内存里的任务按更新时间取前 N 条。
+ * 当前草稿上的 id 不在这 N 条里时补进去，避免下拉把已填的 id 显示成空白。
+ */
+export function recentTaskOptions(tasks: readonly TaskOption[], currentId: string, limit = RECENT_TASK_PICK_LIMIT): TaskOption[] {
+  const ranked = tasks
+    .filter((task) => task.id.trim() !== '')
+    .slice()
+    .sort((a, b) => {
+      const at = Date.parse(a.updatedAt)
+      const bt = Date.parse(b.updatedAt)
+      const av = Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at
+      const bv = Number.isNaN(bt) ? Number.NEGATIVE_INFINITY : bt
+      if (av !== bv) return bv - av
+      return a.id.localeCompare(b.id)
+    })
+  const picked = ranked.slice(0, Math.max(0, limit))
+  const current = currentId.trim()
+  if (current !== '' && !picked.some((task) => task.id === current)) {
+    const found = tasks.find((task) => task.id === current)
+    picked.push(found ?? { id: current, title: current, updatedAt: '' })
+  }
+  return picked
+}
+
 export interface KnowledgeViewInput {
   knowledgeEntries: readonly KnowledgeEntry[]
   /** `knowledge_kind` 字典（容器用 `dictOf('knowledge_kind')` 取好）。 */
   knowledgeDicts: readonly Dict[]
+  /**
+   * 当前是否停在知识库页。只有这时才拉列表。
+   * 不传 = 不拉（浏览器脚手架自己拿着内存条目，不该打接口）。
+   */
+  active?: boolean
+  /** 保存 / 删除后容器递增，用来重拉。关键词与翻页不走这里。 */
+  refreshKey?: number
+  /** 容器里的全量拉取（一次、不带搜索参数）。不传则不会发请求。 */
+  loadEntries?: () => Promise<void>
 }
 
 export interface KnowledgeViewState {
@@ -132,10 +190,21 @@ export interface KnowledgeViewState {
   updateKnowledgeFilters: (patch: Partial<KnowledgeFilters>) => void
   /** 当前页（过滤 + 排序 + 分组 + 分页都算完了）。 */
   knowledgePage: ListPage<ContentItem>
+  /** 列表拉取状态。住在这个 hook 里，是因为容器的 useState 预算已经到顶。 */
+  listStatus: KnowledgeListStatus
+  /** 重拉。失败重试与进入知识库页走同一条，不会把失败吞成空数组。 */
+  reloadKnowledge: () => Promise<void>
 }
 
-export function useKnowledgeView({ knowledgeEntries, knowledgeDicts }: KnowledgeViewInput): KnowledgeViewState {
+export function useKnowledgeView({ knowledgeEntries, knowledgeDicts, active = false, refreshKey = 0, loadEntries }: KnowledgeViewInput): KnowledgeViewState {
   const [knowledgeFilters, setKnowledgeFilters] = useState<KnowledgeFilters>(() => readKnowledgeFilters())
+  /**
+   * 初值就是「加载中」：第一次打开知识库时，effect 还没跑完，不能先闪成空库。
+   * 没打开过时这个状态没人读（视图不挂载）。
+   */
+  const [listStatus, setListStatus] = useState<KnowledgeListStatus>('loading')
+  /** 后发的请求盖过先发的：慢的失败不能把已经成功的列表打成错误。 */
+  const requestGen = useRef(0)
 
   /**
    * 把「条目 + 筛选状态」交给 `listPresentation.ts` 判定，视图只渲染结果。
@@ -148,6 +217,8 @@ export function useKnowledgeView({ knowledgeEntries, knowledgeDicts }: Knowledge
       tab: selectedKind(knowledgeFilters),
       keyword: knowledgeFilters.keyword,
       tags: knowledgeFilters.tags,
+      hasLocalFile: knowledgeFilters.hasLocalFile,
+      hasLinkedTask: knowledgeFilters.hasLinkedTask,
       sortKey: knowledgeFilters.sortKey,
       sortDir: knowledgeFilters.sortDir,
       page: knowledgeFilters.page,
@@ -183,5 +254,25 @@ export function useKnowledgeView({ knowledgeEntries, knowledgeDicts }: Knowledge
     if (fixed !== null) setKnowledgeFilters(fixed)
   }, [knowledgeFilters, knowledgeDicts])
 
-  return { knowledgeFilters, updateKnowledgeFilters, knowledgePage }
+  /**
+   * 拉取与失败都记在这里，不在容器里再加 useState / useEffect
+   * （WorkbenchApp 的 hook 预算已经到顶，见 `test/workbenchAppBudget.test.mjs`）。
+   * 失败只改 `listStatus`，不清条目、也不把 rejection 吞成空库。
+   */
+  const reloadKnowledge = useCallback((): Promise<void> => {
+    if (loadEntries === undefined) return Promise.resolve()
+    const gen = ++requestGen.current
+    setListStatus('loading')
+    return loadEntries().then(
+      () => { if (requestGen.current === gen) setListStatus('ready') },
+      () => { if (requestGen.current === gen) setListStatus('error') },
+    )
+  }, [loadEntries])
+
+  useEffect(() => {
+    if (!active || loadEntries === undefined) return
+    void reloadKnowledge()
+  }, [active, refreshKey, loadEntries, reloadKnowledge])
+
+  return { knowledgeFilters, updateKnowledgeFilters, knowledgePage, listStatus, reloadKnowledge }
 }

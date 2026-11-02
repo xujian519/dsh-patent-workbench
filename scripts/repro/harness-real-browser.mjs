@@ -110,7 +110,7 @@ const toolbar = renderToStaticMarkup(createElement(KnowledgeToolbar, {
   onChange: () => {}, onClear: () => {}, onCreate: () => {}, onSummarizeDoc: () => {},
 }))
 const list = renderToStaticMarkup(createElement(KnowledgeList, { page, dicts: KINDS, selectedId: 'k2', onOpen: () => {} }))
-const pager = renderToStaticMarkup(createElement(KnowledgePager, { page, pageSize: 10, onPage: () => {}, onPageSize: () => {} }))
+const pager = renderToStaticMarkup(createElement(KnowledgePager, { page, pageSize: filters.pageSize, onPage: () => {}, onPageSize: () => {} }))
 const knowledgeMarkup = RUN_LISTVIEW
   ? `<div class="pane" id="knowledge" data-kb-harness>${toolbar}${list}${pager}</div>` : ''
 
@@ -231,7 +231,7 @@ const kb = await evaluate(`(() => {
 check('知识库：5 个 Tab 且只有一个高亮', kb.tabCount === 5 && kb.activeTabs === 1, JSON.stringify({ n: kb.tabCount, active: kb.activeTabs }))
 check('知识库：Tab 带条数徽标', kb.tabLabels.every((l) => /\d/.test(l)), JSON.stringify(kb.tabLabels))
 check('知识库：时间分组头 ≥2 且带条数', kb.groups.length >= 2 && kb.groupHeadsHaveCount, JSON.stringify(kb.groups))
-check('知识库：每页 10 行（用户定的默认）', kb.rows === 10, String(kb.rows))
+check('知识库：每页 20 行（默认）', kb.rows === 20, String(kb.rows))
 check('知识库：行有摘要/类型徽标/标签', kb.hasSummary && kb.hasChip && kb.hasTags, JSON.stringify({ s: kb.hasSummary, c: kb.hasChip, t: kb.hasTags }))
 check('知识库：选中行有 sel 态', kb.selected === 1, String(kb.selected))
 check('知识库：分页条在列表下方（没被挤到视口外）', kb.pagerBelowList === true, JSON.stringify(kb))

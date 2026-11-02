@@ -17,6 +17,7 @@
  */
 import { Icon } from '../Icon.js'
 import { KnowledgeList, KnowledgePager, KnowledgeToolbar, kindTabs, type KnowledgeFilters } from '../KnowledgeList.js'
+import type { KnowledgeListStatus } from '../../knowledgeView.js'
 import type { ContentItem, ListPage } from '../../listPresentation.js'
 import type { Dict, KnowledgeEntry } from '../../viewTypes.js'
 
@@ -38,11 +39,48 @@ export interface KnowledgeViewProps {
   onOpenEntry: (id: string) => void
   /** 「AI 总结本地文档」：打开文件选择弹窗（容器接线）。 */
   onSummarizeDoc: () => void
+  /**
+   * 列表拉取状态。不传当 `ready`（脚手架直接喂内存条目，没有一次网络拉取）。
+   * `loading` / `error` 时不画空库文案 —— 失败不能看起来像「还没有知识」。
+   */
+  listStatus?: KnowledgeListStatus
+  /** 失败后的「重试」，与进入页面时的那次拉取是同一条。 */
+  onRetry?: () => void
+}
+
+function KnowledgeLoadFeedback({ status, onRetry }: { status: 'loading' | 'error'; onRetry?: () => void }): JSX.Element {
+  switch (status) {
+    case 'loading':
+      return <div className="wb-empty" data-kb-loading style={{ padding: '28px 18px' }}>加载中…</div>
+    case 'error':
+      return (
+        <div className="wb-empty" data-kb-load-error style={{ padding: '28px 18px' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>知识列表加载失败</div>
+          <button type="button" className="wb-btn" data-kb-retry onClick={() => { onRetry?.() }}><Icon name="refresh" />重试</button>
+        </div>
+      )
+    default: {
+      const unexpected: never = status
+      throw new Error(`未知知识列表状态：${String(unexpected)}`)
+    }
+  }
 }
 
 export function KnowledgeView({
   entries, dicts, page, filters, selectedId, busy, onChange, onNew, onOpenEntry, onSummarizeDoc,
+  listStatus = 'ready', onRetry,
 }: KnowledgeViewProps): JSX.Element {
+  switch (listStatus) {
+    case 'loading':
+    case 'error':
+      return <KnowledgeLoadFeedback status={listStatus} onRetry={onRetry} />
+    case 'ready':
+      break
+    default: {
+      const unexpected: never = listStatus
+      throw new Error(`未知知识列表状态：${String(unexpected)}`)
+    }
+  }
   return (
     <>
       {/* 本地文档三件套已收进弹窗（LocalDocModal）；工具栏只留一个按钮，和「新建」「清空筛选」同一行右对齐 */}
@@ -52,7 +90,7 @@ export function KnowledgeView({
         tagCounts={page.tagCounts}
         total={page.total}
         onChange={onChange}
-        onClear={() => onChange({ keyword: '', kinds: ['all'], tags: [], page: 0 })}
+        onClear={() => onChange({ keyword: '', kinds: ['all'], tags: [], hasLocalFile: false, hasLinkedTask: false, page: 0 })}
         onCreate={onNew}
         onSummarizeDoc={onSummarizeDoc}
         busy={busy}
