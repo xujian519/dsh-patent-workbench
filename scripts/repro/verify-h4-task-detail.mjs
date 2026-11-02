@@ -147,11 +147,20 @@ try {
   // 「编辑」「归档」在任务卡**右上角**（不在动作行里，2026-10-01 用户要求搬过去）。
   await clickByText('.wb-card .wb-btn', '编辑')
   check('点「编辑」→ 容器 onEdit', await api.evaluate(callCount('edit') + ' === 1'))
+  check('闭环条在标题卡和进度卡之间（澄清 → 执行 → 验收 → 复盘）',
+    await api.evaluate(`
+      const strip = document.querySelector('.wb-task-flow');
+      const progress = document.querySelector('.wb-progress-card');
+      if (strip === null || progress === null) return false;
+      const text = strip.textContent;
+      return text.includes('澄清') && text.includes('执行') && text.includes('验收') && text.includes('复盘')
+        && Boolean(strip.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING);
+    `))
   check('AI 策略不是"可执行"时「AI 执行」禁用',
-    await api.evaluate('return [...document.querySelectorAll(".wb-detail-actions .wb-btn")].some((b) => b.textContent.includes("AI 执行") && b.disabled)'))
+    await api.evaluate('return [...document.querySelectorAll(".wb-task-flow .wb-btn")].some((b) => b.textContent.includes("AI 执行") && b.disabled)'))
   await api.evaluate('__h4.setAiPolicy("execute"); return true;')
-  await api.waitFor('return [...document.querySelectorAll(".wb-detail-actions .wb-btn")].some((b) => b.textContent.includes("AI 执行") && !b.disabled)', { description: 'AI 执行可点' })
-  await clickByText('.wb-detail-actions .wb-btn', 'AI 执行')
+  await api.waitFor('return [...document.querySelectorAll(".wb-task-flow .wb-btn")].some((b) => b.textContent.includes("AI 执行") && !b.disabled)', { description: 'AI 执行可点' })
+  await clickByText('.wb-task-flow .wb-btn', 'AI 执行')
   check('开启「可执行」后点「AI 执行」→ onStartAI("execute")',
     JSON.stringify(await api.evaluate(lastCall('startAI'))) === JSON.stringify(['execute']),
     JSON.stringify(await api.evaluate(lastCall('startAI'))))
@@ -175,7 +184,7 @@ try {
   await api.waitFor(`return document.body.textContent.includes('进入复盘会话')`, { description: '终态出现复盘入口' })
   check('已有复盘会话时按钮写「进入复盘会话」（文案由"有没有复盘会话"决定）',
     await api.evaluate(bodyHas('进入复盘会话')))
-  await clickByText('.wb-detail-actions .wb-btn', '进入复盘会话')
+  await clickByText('.wb-task-flow .wb-btn', '进入复盘会话')
   check('已完成任务点复盘入口 → onStartAI("review")',
     JSON.stringify(await api.evaluate(lastCall('startAI'))) === JSON.stringify(['review']),
     JSON.stringify(await api.evaluate(lastCall('startAI'))))
@@ -183,7 +192,7 @@ try {
   await api.waitFor(`return document.body.textContent.includes('AI 复盘')`, { description: '没有复盘会话时改文案' })
   check('没有复盘会话时按钮改「AI 复盘」（同一个入口两种文案）',
     await api.evaluate(`const t = document.body.textContent; return t.includes('AI 复盘') && !t.includes('进入复盘会话')`))
-  await clickByText('.wb-detail-actions .wb-btn', 'AI 复盘')
+  await clickByText('.wb-task-flow .wb-btn', 'AI 复盘')
   check('点「AI 复盘」同样发出 review',
     JSON.stringify(await api.evaluate(lastCall('startAI'))) === JSON.stringify(['review']),
     JSON.stringify(await api.evaluate(lastCall('startAI'))))

@@ -4,16 +4,17 @@
  * ## 边界（plan §3）
  *
  * - **传进来的**：筛不掉的当前值，以及"要不要显示某个出口"的**判定结果**
- *   （工作区来源文案 / 「不再记住」是否可见）。**没有一处 `useState`** —— 输入 / 工作区 /
- *   附件 / 技能 / 角色 / 模型全都住在容器，各有理由：
+ *   （工作区来源文案 / 「不再记住」是否可见）。输入 / 工作区 / 附件 / 技能 / 角色 / 模型
+ *   **全都住在容器**，各有理由：
  *   · 工作区预填由 `openQuickEntry` 一次性判定，而它有**行为级测试**逐字抽出来跑
  *     （`quickIntakeDefaultWiring.test.mjs`），搬走就没法测；
  *   · 附件刻意**跨开关保留**（容器不在打开时清空它），搬进来会在关闭时凭空多一次清空；
  *   · 模型选择与共享提示词弹窗**共用同一份 state**（`promptModelSelection`），
  *     搬进来就会变成"这个入口选完、那个入口还是旧的"。
- *   所以一个 state 都不搬。
- * - **留在这里的**：只有"怎么画这一块"。唯一自有的是隐藏文件输入的 `ref`（纯 UI 接线，
- *   容器一次都没读过它）。
+ *   所以这些业务 state 一个都不搬。
+ * - **留在这里的**：只有"怎么画这一块"，外加「会话设置」展开与否（纯 UI，默认收起）。
+ *   隐藏文件输入的 `ref` 仍是纯 UI 接线，容器一次都没读过它。
+ *   收起时工作区 / 技能 / 角色 / 模型不画出来，提交仍读容器里的同一份值。
  * - **不发请求**：附件解析上传、目录浏览、技能目录、模型目录都只是回调解意图。
  *
  * ## 判定不在这里
@@ -22,7 +23,7 @@
  * `quickWorkspaceDefault.ts`；角色是否沿用会话在 `personaPicker.ts`；模型能不能收图在
  * `modelCapability.ts`。这里只把判定结果画出来。
  */
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { Icon } from '../Icon.js'
 import { Modal } from '../Modal.js'
 import { ModelPicker } from '../ModelPicker.js'
@@ -32,6 +33,7 @@ import { WorkspacePicker } from '../WorkspacePicker.js'
 import {
   isQuickImageDraft, MAX_QUICK_DOCUMENTS, MAX_QUICK_IMAGES, type QuickAttachmentDraft,
 } from '../../quickAttachments.js'
+import { quickEntrySettingsSummary } from '../../quickEntrySettingsSummary.js'
 import type { SkillSummary } from '../../../shared/contracts.js'
 import type { PersonaSelection } from '../../personaPicker.js'
 import type { WorkspaceCandidate } from '../../workspacePicker.js'
@@ -102,6 +104,12 @@ export function QuickEntryModal({
   busy, onError, onNotice, onClose, onCancel, onSubmit,
 }: QuickEntryModalProps): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  /** 只决定四组选择器展不展开。默认收起，主按钮不用把整页设置滚完。 */
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsSummary = quickEntrySettingsSummary({
+    workspaceTouched, workspaceSourceLabel, skillCount: selectedSkills.length,
+    persona, modelSelection,
+  })
   return (
     <Modal
       title={<><Icon name="sparkles" />快速录入</>}
@@ -189,17 +197,20 @@ export function QuickEntryModal({
           <button type="button" className="wb-btn" disabled={busy} onClick={() => fileInputRef.current?.click()}>
             <Icon name="image" />添加附件
           </button>
-          <ModelPicker
-            runtime={runtime}
-            value={modelSelection}
-            onChange={onModelChange}
-            modalityTable={modelModalityTable}
-            disabled={busy}
-            onError={onError}
-            onLoaded={onModelLoaded}
-          />
         </div>
       </div>
+
+      {/* 会话设置：默认一行摘要。展开后仍是原来的四个选择器，不另存一份值。 */}
+      <button
+        type="button"
+        className="wb-btn wb-quick-settings"
+        aria-expanded={settingsOpen}
+        aria-controls="wb-quick-settings-panel"
+        onClick={() => setSettingsOpen((open) => !open)}
+      >
+        <span className="wb-quick-settings-label">{settingsOpen ? '收起会话设置' : '会话设置'}</span>
+        <span className="wb-quick-settings-summary">{settingsSummary}</span>
+      </button>
 
       {/* ---------------- 工作区选择（v1.14.0；2026-10-01 上移到技能/角色之前） ----------------
           说明文字一律用 <div className="wb-hint"> 而不是 <p>/<label>：
@@ -224,6 +235,8 @@ export function QuickEntryModal({
         * 由容器的 `showForget` 给出）：它是**唯一**的"清掉上次手动选择"出口，
         * 删了会让"设置里的默认工作区"永远不生效（v1.15.2 修过的缺陷）。
         */}
+      {settingsOpen && (
+      <div id="wb-quick-settings-panel">
       <WorkspacePicker
         value={workspace}
         touched={workspaceTouched}
@@ -281,9 +294,22 @@ export function QuickEntryModal({
         onNotice={onNotice}
       />
 
+      {/* 模型与上面三组同属「这次会话怎么跑」，收进同一折。选择值仍是容器那一份。 */}
+      <ModelPicker
+        runtime={runtime}
+        value={modelSelection}
+        onChange={onModelChange}
+        modalityTable={modelModalityTable}
+        disabled={busy}
+        onError={onError}
+        onLoaded={onModelLoaded}
+      />
+
       {/* ---------------- 工作区选择已上移到技能选择之前（2026-10-01） ----------------
           用户要求把「AI 会话工作区」这一组挪到技能/角色上面，所以这里不再重复渲染。
           整组（字段 + 不再记住 + 任务资料夹勾选）只有一处实现，避免两处装配打架。*/}
+      </div>
+      )}
     </Modal>
   )
 }

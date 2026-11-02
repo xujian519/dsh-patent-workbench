@@ -421,6 +421,18 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-empty { border: 1px dashed var(--wb-border-soft, rgba(127,127,127,.16)); border-radius: 12px; margin: 4px; }
 /* ---- P0: 任务详情摘要 + Tabs + 吸顶操作条 ---- */
 .wb-detail-actions { position: sticky; top: 0; z-index: 16; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; padding: 9px 12px; border: 1px solid var(--wb-border-soft, rgba(127,127,127,.18)); border-radius: 12px; background: color-mix(in srgb, var(--dsw-alias-bg-base, #111) 88%, transparent); backdrop-filter: blur(8px); box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+/* 协助 / 拆解 / 子任务：主路径在闭环条上，这一行只作次要出口 */
+.wb-detail-actions.assist { position: static; z-index: auto; margin: -4px 0 12px; padding: 0 2px; border: none; background: transparent; box-shadow: none; backdrop-filter: none; }
+.wb-detail-actions.assist .wb-btn { font-size: 12px; padding: 3px 8px; color: var(--dsw-alias-label-secondary); background: transparent; }
+.wb-task-flow { margin: 0 0 12px; padding: 8px 10px; border: 1px solid var(--wb-border-soft, rgba(127,127,127,.18)); border-radius: 12px; background: color-mix(in srgb, var(--dsw-alias-bg-base, #111) 55%, transparent); }
+.wb-task-flow ol { display: flex; align-items: center; flex-wrap: wrap; gap: 0; list-style: none; margin: 0; padding: 0; }
+.wb-task-flow li { display: flex; align-items: center; font-size: 13px; font-weight: 600; }
+.wb-task-flow li + li::before { content: "→"; margin: 0 8px; font-weight: 500; opacity: .4; }
+.wb-task-flow li.done > span::before { content: "✓ "; font-weight: 500; }
+.wb-task-flow li.done { color: var(--dsw-alias-label-secondary); }
+.wb-task-flow li.upcoming { color: var(--dsw-alias-label-secondary); opacity: .72; }
+.wb-task-flow li.current .wb-btn { font-weight: 700; }
+.wb-empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
 .wb-detail-tabs { display: flex; gap: 4px; margin: 4px 0 12px; border-bottom: 1px solid var(--wb-border-soft, rgba(127,127,127,.16)); }
 .wb-detail-tab { border: none; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; font-weight: 600; padding: 7px 13px; border-radius: 8px 8px 0 0; cursor: pointer; white-space: nowrap; }
 .wb-detail-tab:hover { color: var(--dsw-alias-label-primary); background: color-mix(in srgb, var(--dsw-alias-label-primary, #fff) 6%, transparent); }
@@ -459,6 +471,9 @@ ${panelContainerCss({ view: VIEW_ATTR, official: OFFICIAL_ATTR, active: ACTIVE_A
 .wb-quick-attach-remove:hover { background: color-mix(in srgb, #e74c3c 22%, transparent); color: inherit; }
 .wb-quick-attach-note { margin-top: 6px; font-size: 12px; color: #e0a030; }
 .wb-quick-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.wb-quick-settings { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 10px; text-align: left; }
+.wb-quick-settings-label { flex: none; font-weight: 700; }
+.wb-quick-settings-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
 .wb-quick-actions .wb-spacer { flex: 1; }
 /* ---------------------------------------------------------------------------
    模型选择浮层（v1.15.2 修「被遮挡」）

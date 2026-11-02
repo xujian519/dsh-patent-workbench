@@ -185,6 +185,8 @@ function Harness(): JSX.Element {
           selectedTaskId={selectedTaskId}
           pending={pending}
           childrenOf={childrenOf}
+          onQuickEntry={() => { calls.push({ name: 'quickEntry', args: [] }) }}
+          onNewTask={() => { calls.push({ name: 'newTask', args: [] }) }}
         />
       </div>
       <div className="wb-detail" style={{ width: '38%' }} />

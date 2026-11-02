@@ -67,6 +67,7 @@ import type {
 import { Icon } from './components/Icon.js'
 import { ModelPicker, readQuickModelSelection, reportModelDirectoryUnavailable, resolveModelDirectoryOutcomeFor, writeQuickModelSelection } from './components/ModelPicker.js'
 import { pendingCompletionMap } from './taskProgressView.js'
+import { openTaskAcceptance } from './taskAcceptanceOpen.js'
 import { ALL, buildTabs, toggleTab } from './components/TabBar.js'
 import { LocalDocModal, type LocalDirListing } from './components/LocalDocModal.js'
 import { workspaceCandidates } from './workspacePicker.js'
@@ -3482,6 +3483,8 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
               selectedTaskId={selected?.task.id}
               pending={pendingMap}
               childrenOf={childrenOf}
+              onQuickEntry={openQuickEntry}
+              onNewTask={() => setShowForm((v) => !v)}
             />
           )}
         </div>
@@ -3566,6 +3569,7 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
                 onSaveProgress={saveSelectedProgress}
                 onCompleteFromProgress={completeSelectedFromProgress}
                 onStartAI={startDetailAI}
+                onOpenAcceptance={() => { void openTaskAcceptance(selected?.task.id ?? '', { drafts: allPendingDrafts, pendingItems: pendingCompletions?.available === true ? pendingCompletions.items : [], resumePending: resumePendingDraft, resumeDeferred: resumeDeferredDraft, fetchDraft: (id) => api<{ draft: DraftView }>(`/api/workbench/drafts/${id}`).then((res) => res.draft), notify: setNotice, fail: (message) => setError(message) }) }}
                 onOpenSession={openSessionInPanel}
                 onOpenTask={openTask}
                 onAddReminder={(offsetMinutes) => void addTaskReminder(offsetMinutes)}
