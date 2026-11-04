@@ -77,6 +77,11 @@ export interface Bootstrap {
   memoryAvailable?: boolean
   /** 期限引擎是否可用（软探测；阶段 5 · 5C）。缺省按不可用处理 —— 宁可不显示，也不假装算得出。 */
   deadlineEngineAvailable?: boolean
+  /**
+   * 案卷扫描的默认工作根（服务端 `configuredWorkRoot`）。
+   * 缺省时界面仍用 `~/工作`，bootstrap 到了再对齐（含 `DSH_WORK_ROOT`）。
+   */
+  workRoot?: string
 }
 export interface TaskDetail { task: Task; children: Task[]; sessions: Array<Record<string, unknown>>; reminders: Array<{ id: string; taskId: string; offsetMinutes: number; methodCode: string; firedAt: string | null; skippedAt?: string | null; acknowledgedAt?: string | null }>; events: Array<Record<string, unknown>>; reviews: Array<Record<string, unknown>>;
   /**

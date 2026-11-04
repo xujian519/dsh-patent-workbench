@@ -30,6 +30,7 @@ import { teamMemoryAvailable } from '../review-memory.js'
 import { normalizeRecentWorkspaces } from '../shared/quickWorkspaceRecent.js'
 import type { PatentDeadlineService } from '../shared/patentDeadline.js'
 import { classifyTaskDay } from '../shared/dailyPlanPolicy.js'
+import { configuredWorkRoot } from '../shared/workRoot.js'
 import { isOpenTask } from '../shared/taskProgress.js'
 import { isAbsoluteNativePath } from '../shared/hostPath.js'
 import type { WorkbenchSettings } from '../shared/contracts.js'
@@ -372,6 +373,11 @@ export function makeRoutes(db: DatabaseSync, deps: WorkbenchRouteDeps = {}): Web
            * 探测本身在 `index.ts` 里（`probeService(ctx, 'patentDeadline')`），这里只把它读出来。
            */
           deadlineEngineAvailable: deps.patentDeadline?.() !== undefined,
+          /**
+           * 案卷扫描的默认工作根（ADR-001）。界面预填这一个值，不再各写一份 `~/工作`。
+           * 未设置 `DSH_WORK_ROOT` 时是 `~/工作`（作者机器上的例子是 `/Users/xujian/工作`）。
+           */
+          workRoot: configuredWorkRoot(process.env),
         })
       },
     },

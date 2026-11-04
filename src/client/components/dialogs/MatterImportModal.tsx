@@ -103,8 +103,10 @@ function PickStep(props: MatterImportModalProps): JSX.Element {
         />
       </label>
       <p className="wb-field-note">
-        扫描这棵目录树，把每个子目录列成候选。目录名里的申请号会自动填进「案号」，
-        其余字段可以逐条改 —— 目录名不是台账，多数案号要你自己补。
+        默认是工作根 <code>~/工作</code>（可用环境变量 <code>DSH_WORK_ROOT</code> 改；
+        作者机器上的例子是 <code>/Users/xujian/工作</code>）。
+        扫描只看目录名和文件名，把路径登记进台账；交底书等正文留在文件夹里，不进数据库。
+        目录名里的申请号会预填进「案号」，多数案号仍要你自己补。
       </p>
     </div>
   )
@@ -224,7 +226,9 @@ function DoneStep({ result }: { result: MatterImportCommitResult }): JSX.Element
     <>
       <div className="wb-import-summary">
         已建 <b>{result.created}</b> 个案卷
-        {result.failed.length > 0 ? `，${result.failed.length} 条没建出来` : ''}
+        {(result.updated ?? 0) > 0 ? <>，更新目录 <b>{result.updated}</b> 个</> : null}
+        {(result.unchanged ?? 0) > 0 ? <>，目录未变 <b>{result.unchanged}</b> 个</> : null}
+        {result.failed.length > 0 ? `，${result.failed.length} 条没写入索引` : ''}
       </div>
       {result.failed.length > 0
         ? (

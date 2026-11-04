@@ -10,9 +10,10 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  DEFAULT_SCAN_ROOT, MATTER_IMPORT_ROUTE, importableItems, initialRows, matchesQuery,
+  DEFAULT_SCAN_ROOT, MATTER_IMPORT_ROUTE, formatMatterImportNotice, importableItems, initialRows, matchesQuery,
   matterCommitUrl, matterScanUrl, rowIsImportable, selectionSummary,
 } from '../lib/client/matterImportApi.js'
+import { DEFAULT_WORK_ROOT } from '../lib/shared/workRoot.js'
 
 const CLIENT_DIR = fileURLToPath(new URL('../src/client/', import.meta.url))
 
@@ -92,6 +93,13 @@ test('请求形状：两端点 URL 与默认扫描根只有这一处定义', () 
   assert.equal(matterScanUrl(), `${MATTER_IMPORT_ROUTE}/scan`)
   assert.equal(matterCommitUrl(), `${MATTER_IMPORT_ROUTE}/commit`)
   assert.equal(DEFAULT_SCAN_ROOT, '~/工作')
+  assert.equal(DEFAULT_SCAN_ROOT, DEFAULT_WORK_ROOT, '扫描预填必须就是工作根常量，不许再抄一份')
+})
+
+test('回执文案：新建 / 更新目录 / 目录未变要分开说；全空也不能静默', () => {
+  assert.equal(formatMatterImportNotice({ created: 2, updated: 1, unchanged: 3 }), '案卷索引：新建 2 个，更新目录 1 个，目录未变 3 个')
+  assert.equal(formatMatterImportNotice({ created: 0, updated: 0, unchanged: 0 }), '没有写入案卷索引')
+  assert.equal(formatMatterImportNotice({ created: 1 }), '案卷索引：新建 1 个')
 })
 
 // --------------------------------------------------------------------------- 源码扫描

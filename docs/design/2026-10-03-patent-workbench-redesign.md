@@ -33,10 +33,17 @@
 
 ### 唯一权威源（写死，防止"同一语义两处实现"）
 
+> **2026-11-04 起案卷真源以 ADR-001 为准**（sibling 仓库 dsh-patent 的
+> `docs/adr/ADR-001-matter-folder-index.md`；本仓只留指针
+> [`docs/adr/0008-matter-folder-index.md`](../adr/0008-matter-folder-index.md)，不重开决策）。
+> 真源是可配置工作根下的案卷文件夹（默认 `~/工作`，作者机器上的例子是
+> `/Users/xujian/工作`）加上 `_matter-log.md`。工作台库是文件夹索引。
+> 下文里的 `patent-workspace/<案号>/` 是早期例子，**不是**唯一目录树，也不是「一案一个 Cursor 项目」。
+
 | 事实 | 权威源 | 本工作台角色 |
 | --- | --- | --- |
 | 法定期限计算（期限起算、送达、届满日顺延） | `@deepseek-ai/dsh-patent-deadline`（DSH Patent） | 只存事实与状态，调服务计算 |
-| 案件审计链 | `patent-workspace/<案号>/_matter-log.md` | `matter_events` 是**只读投影** |
+| 案件审计链 | 工作根下案卷目录中的 `_matter-log.md` | `matter_events` 是**只读投影** |
 | 案件阶段状态机 | `patent-matter` 技能（`open/retrieving/analyzing/drafting/review/closed`，L1–L5） | 字典 `matter_stage` 对齐同一枚举 |
 | 专利权威知识库（判例/法规/指南/图谱） | `knowledge.db`（只读） | 不并库；本库只放**办案沉淀** |
 | 办案沉淀条目 | 本工作台 `knowledge_entries` | 保留其全部设计，仅做加法 |
@@ -165,7 +172,7 @@ CREATE TABLE matters (
   inventors        TEXT,
   applicant        TEXT,
   attorney         TEXT,
-  workspace_path   TEXT,                   -- patent-workspace/<案号>/
+  workspace_path   TEXT,                   -- 工作根下的案卷目录（默认 ~/工作/…）
   closed_at        TEXT,
   extra            TEXT NOT NULL DEFAULT '{}',
   created_at       TEXT NOT NULL,
@@ -271,7 +278,7 @@ ALTER TABLE knowledge_entries ADD COLUMN matter_id TEXT;
 ## 11. 明确不做
 
 - 不复制期限/费用规则到本工作台（唯一权威源在 DSH Patent）。
-- 不把 `knowledge.db` 并入本库；本库不承载案卷原文（原文在 `patent-workspace/<案号>/`）。
+- 不把 `knowledge.db` 并入本库；本库不承载案卷原文（原文在工作根下的案卷文件夹里，默认 `~/工作`）。
 - 不改知识库召回打分公式/阈值/闸门/日志口径。
 - 不实现"工作台 → 案件文件"的反向写入。
 - 不新增数据出口（期限计算本地；云端模型仅用于公开材料）。
@@ -294,6 +301,6 @@ ALTER TABLE knowledge_entries ADD COLUMN matter_id TEXT;
 
   ⚠️ **踩过的坑**：本项原先写的写法是普通条目（`- id: patent-deadline-service` / `name: …`，不带 `insert:`）—— loader 的普通条目只能**按 id 改已有行**，对未知 id 是「warn 后静默跳过」（`config-schema/document.ts`：*Unknown targets and non-insert patches without a nonempty id are warned and skipped*）。实测：按那个写法加进 profile 补丁，`--dump-config` 里根本不出现这一行，`bootstrap.deadlineEngineAvailable` 仍是 `false`、重算仍是 409；包一层 `insert:` 后立刻变 `true`、重算 200。引擎 README「根域挂载」那段给的是 bundle 语境，直接抄进 profile 补丁同样会被静默跳过。
   验收链（2026-10-16 实测）：改前 `deadlineEngineAvailable=false` + `POST /deadlines/recompute` 409；改后 `true` + 200（6 条期限落库）+ `GET /matter-deadlines/upcoming?days=7` 有数；界面降级文案消失、「重算全部」可用。
-- [ ] 案号 vs 工作目录：`patent-workspace/<案号>/` 与用户既有 `/Users/xujian/工作/` 目录的关系（`workspace_path` 可配置，不硬编码）。
+- [x] 案号 vs 工作目录：真源是可配置工作根（默认 `~/工作`，例子 `/Users/xujian/工作/<案卷>/`），台账只存 `workspace_path`。见 ADR-001 / 本仓 `docs/adr/0008-matter-folder-index.md`。不强制独立的 `patent-workspace/<案号>/` 树。
 - [ ] 官文 PDF 字段抽取（发文日/官文类型）是走 AI 草稿门禁还是人工录入（阶段 3 决定）。
 - [ ] 服务缺失时的降级粒度：整块期限看板隐藏，还是保留手工录入（倾向后者）。

@@ -22,6 +22,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { DatabaseSync } from 'node:sqlite'
 import { assertValidFileLink } from '../db/repo.js'
 import { toNativePath } from '../shared/hostPath.js'
+import { configuredWorkRoot, WORK_ROOT_EXAMPLE } from '../shared/workRoot.js'
 import { commitMatterImport } from '../matter-import/commit.js'
 import { scanWorkspaceTree } from '../matter-import/scan.js'
 import { badRequest, methodNotAllowed, pathSegments, readJsonBody, requireLoopback, writeJson } from './routes/helpers.js'
@@ -31,13 +32,18 @@ export const MATTER_IMPORT_PREFIX = '/api/workbench/matter-import'
 /**
  * 把用户填的扫描根转成原生绝对路径。
  *
- * 只展开**开头**的 `~`（`~/工作` → `/Users/xujian/工作`）—— 界面预填的就是这个形态。
+ * `raw` 缺省（调用方没传 `root`）时用 `configuredWorkRoot`：默认 `~/工作`，
+ * 可用 `DSH_WORK_ROOT` 改。作者机器上的例子是 `/Users/xujian/工作`，这里不把
+ * 那个绝对路径写死。显式传了空串仍是错误 —— 人把输入框清空了，不能假装他要扫默认根。
+ *
+ * 只展开**开头**的 `~`（`~/工作` → 当前用户主目录下的 `工作`）。
  * 相对路径**明确拒绝**而不是「相对于 cwd 展开」：cwd 是服务进程的、用户看不见的东西，
  * 猜错了会去扫一个完全无关的目录，而用户以为自己扫的是「工作」。
  */
-export function resolveScanRoot(raw: unknown): string {
-  const text = typeof raw === 'string' ? raw.trim() : ''
-  if (text === '') throw new Error('扫描根不能为空（例如 ~/工作）')
+export function resolveScanRoot(raw: unknown, env: NodeJS.ProcessEnv = process.env): string {
+  const provided = raw === undefined || raw === null ? configuredWorkRoot(env) : raw
+  const text = typeof provided === 'string' ? provided.trim() : ''
+  if (text === '') throw new Error(`扫描根不能为空（例如 ~/工作，作者机器上即 ${WORK_ROOT_EXAMPLE}）。要换根，填绝对路径或设置 DSH_WORK_ROOT。`)
   let expanded = text
   if (text === '~') expanded = homedir()
   else if (text.startsWith('~/') || text.startsWith('~\\')) expanded = join(homedir(), text.slice(2))
@@ -75,7 +81,7 @@ export function makeMatterImportRoute(db: DatabaseSync): WebRoute[] {
         const body = await readJsonBody(req)
         if (body === undefined) return writeJson(res, 400, { error: 'invalid JSON body' })
         try {
-          const root = resolveScanRoot(body.root)
+          const root = resolveScanRoot(body.root, process.env)
           const scan = await scanWorkspaceTree(root)
           return writeJson(res, 200, { ok: true, ...scan })
         } catch (error) {

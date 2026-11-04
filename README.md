@@ -27,9 +27,9 @@
 
 - 🗂️ **案卷（一等实体）**：案号 / 申请号 / 公开号 / 申请日 / 优先权要求 / 技术领域…一屏管全；
   案卷详情带**时间线**（案件事件 ∪ 官文 ∪ 期限，三源合一）
-- 📥 **扫描导入案卷**：扫一遍本机工作目录树 → 按线索分档列出候选（目录名带申请号或含
-  `_matter-log.md` 的进高置信）→ 逐条补案号与发明名称 → 一次落库。**只读目录、不打开文件、
-  不改动你的目录**；分档只是排序，三档都能展开勾选（机器猜的绝不替你做决定）
+- 📥 **扫描导入案卷**：默认从工作根 `~/工作`（可用 `DSH_WORK_ROOT` 改）扫目录树 → 按线索分档列出候选（目录名带申请号或含
+  `_matter-log.md` 的进高置信）→ 逐条补案号与发明名称 → 写入台账索引。**只读目录名、不打开文件、
+  不把正文写入数据库、不改动你的目录**；案号已在库里则只更新目录路径。分档只是排序，三档都能展开勾选（机器猜的绝不替你做决定）
 - 📄 **官文登记 → 期限**：登记官文（发文日 / 送达方式 / 指定期限）作为**起算输入**，
   期限由 DSH Patent 的 `patentDeadline` 引擎算出后落库（可复算、可申诉；引擎缺失时明确降级，不自行推算）
 - ⏳ **期限看板**：今日视图看**跨案卷的近 7 天到期**（含已过期）；案卷详情里可重算、可标记完成/免除
@@ -82,7 +82,38 @@ dsh plugin --profile web add git+https://github.com/xujian519/dsh-patent-workben
 dsh plugin --profile web add file:/path/to/dsh-patent-workbench-<version>.tgz
 ```
 
+## 案卷放在哪
+
+案卷正文在本机**工作根**下的文件夹里，不在工作台数据库里，也不在 `knowledge.db` 里。
+默认工作根是 `~/工作`（作者机器上即 `/Users/xujian/工作`）。要换根，设环境变量
+`DSH_WORK_ROOT`（绝对路径或以 `~` 开头），不要把某台机器的绝对路径写死。
+
+一个代码仓库服务很多案卷。新建案卷不是「一案一个 Cursor / git 项目」，也不是强制另起一棵
+与工作根无关的 `patent-workspace/<案号>/`。
+
+权威决策在 sibling 仓库 **dsh-patent** 的 `docs/adr/ADR-001-matter-folder-index.md`
+（2026-11-04 Accepted）。本仓不复制一份会分叉的 ADR，只在
+[`docs/adr/0008-matter-folder-index.md`](docs/adr/0008-matter-folder-index.md) 记下落点。
+
+| 角色 | 放哪里 |
+|---|---|
+| 真源 | 案卷目录 + `_matter-log.md` |
+| 台账 | `~/.dsh/workbench` 的 SQLite：索引元数据 + `workspace_path` |
+| 知识库 | `knowledge.db` 不是案卷库；本库 `knowledge_entries` 是办案沉淀，扫描不把案卷正文写进去 |
+| bridge | `_matter-log.md` → `matter_events` 只是可读投影。写案卷文件夹不等于写台账 |
+
+删掉或重建 `~/.dsh/workbench` 里的库，案卷文件夹还在。扫描导入不会改那些文件。
+
 ## 快速上手
+
+新建案卷（四步）：
+
+1. 在工作根下**建文件夹**（例如 `~/工作/01_专利申请/<案号>-<名称>/`），正文写在磁盘上，需要时追加 `_matter-log.md`；
+2. 工作台「案卷」→「扫描导入」。根目录默认就是工作根。核对后写入台账（只登记路径和索引字段；案号已在库里则更新 `workspace_path`，不另建一条，也不覆盖你改过的名称）；
+3. **同一个代码仓库**里按案卷打开：把会话工作目录指到该文件夹；
+4. 继续**在磁盘上写**正文。
+
+日常任务：
 
 1. 侧栏点「工作台」打开面板；
 2. 「快速录入」说一句话 → AI 澄清 → 确认建任务；
@@ -125,7 +156,7 @@ pnpm build && pnpm dev:install   # 装盘到本机 profile（装完重启 dsh we
 | [`scripts/dev-verify.mjs`](scripts/dev-verify.mjs) | 研发版本验收链：构建 → 装盘 → 隔离实例重启 → 浏览器套件 → 证据包 |
 | [`docs/issues/`](docs/issues/) | 滚动维护的已知问题与待办 |
 | [`docs/constitution-alignment.md`](docs/constitution-alignment.md) | 与 `dsh-PMS` 项目宪法 v0.3.0 的对齐记录：已偿还破例、逐条状态、剩余缺口与优先级 |
-| [`docs/adr/`](docs/adr/) | 已冻结的口径决策（进度、角色、验收链、每日投入） |
+| [`docs/adr/`](docs/adr/) | 已冻结的口径决策（进度、角色、验收链、每日投入）。案卷真源见 [`0008`](docs/adr/0008-matter-folder-index.md)，权威文本在 sibling dsh-patent 的 `docs/adr/ADR-001-matter-folder-index.md` |
 
 ## 版本历史
 
@@ -222,7 +253,11 @@ pnpm build && pnpm dev:install   # 装盘到本机 profile（装完重启 dsh we
 # English
 
 **A personal workbench plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH)** —
-turn DSH into a calendar + hierarchical task list + AI assistant workbench. All data stays on your machine.
+calendar, hierarchical tasks, and a patent-matter index. Matter **files** live in a configurable
+work-root folder (default `~/工作`, example on the author's machine: `/Users/xujian/工作`).
+The workbench database at `~/.dsh/workbench` stores index metadata and `workspace_path` only.
+One coding repo serves many matters. See `docs/adr/0008-matter-folder-index.md`
+(the decision itself is ADR-001 in the sibling dsh-patent repo). All ledger data stays on your machine.
 
 ## Highlights
 

@@ -84,6 +84,7 @@ import { QuickEntryModal } from './components/dialogs/QuickEntryModal.js'
 import { MatterDraftModal } from './components/dialogs/MatterDraftModal.js'
 import { MatterImportModal } from './components/dialogs/MatterImportModal.js'
 import { useMatterImport } from './useMatterImport.js'
+import { formatMatterImportNotice } from './matterImportApi.js'
 import { NoticeDraftModal } from './components/dialogs/NoticeDraftModal.js'
 import { ReminderModal } from './components/dialogs/ReminderModal.js'
 import { DuplicatePromptModal } from './components/dialogs/DuplicatePromptModal.js'
@@ -648,9 +649,10 @@ function WorkbenchApp({ runtime, closePanel }: { runtime: WorkbenchRuntime; clos
    * 这里只留一条回执。`index.tsx` 已经三千行，再摊开两百行状态会让入口无处可找。
    */
   const matterImport = useMatterImport({
-    onImported: async (created: number) => {
+    defaultRoot: bootstrap?.workRoot,
+    onImported: async (summary) => {
       await loadMatters()
-      setNotice(created === 0 ? '没有新建案卷（选中的都已存在）' : `已导入 ${created} 个案卷`)
+      setNotice(formatMatterImportNotice(summary))
     },
   })
 
