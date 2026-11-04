@@ -306,7 +306,7 @@ export function makeMatterRoutes(db: DatabaseSync, deps: MatterRouteDeps = {}): 
                  * 猜错会把另一个案卷的日志导进来，那比"没导入"严重得多。
                  */
                 return writeJson(res, 400, {
-                  error: '案卷没有登记「案卷目录」，无法定位 _matter-log.md。请先在案卷详情里补全目录（例如 patent-workspace/<案号>）。',
+                  error: '案卷没有登记「案卷目录」，无法定位 _matter-log.md。请先在案卷详情里补全目录（工作根下的案卷文件夹，例如 ~/工作/<案卷>）。',
                 })
               }
               const logPath = join(dir, MATTER_LOG_FILENAME)

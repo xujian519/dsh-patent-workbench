@@ -447,7 +447,9 @@ export function updateMatter(db: DatabaseSync, id: string, patch: MatterPatch): 
  * ## 为什么用目录当键
  *
  * 案卷与任务/会话之间**没有**别的连接点：`matters` 是一等实体（D1），任务不承载案卷；
- * 而 `matters.workspace_path` 与会话的 `cwd` 是同一个东西 —— `patent-workspace/<案号>/`。
+ * 而 `matters.workspace_path` 与会话的 `cwd` 是同一个东西：工作根下的案卷目录
+ * （默认 `~/工作/…`，作者机器上的例子是 `/Users/xujian/工作/…`）。
+ * 它只是这条目录的索引指针。
  * 这也是本仓已有的做法：`knowledge-recall.ts#resolveTaskId` 在没有 `task_sessions` 关联时
  * 就退到"按工作目录命名"反查任务。零新表、零新状态。
  *

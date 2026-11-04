@@ -15,11 +15,11 @@
  * 因为有**失败也要看见**：983 条里可能有一条案号撞车，回执必须逐条列出原因，
  * 而不是弹个「导入完成」把失败吞掉。
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
 import {
   DEFAULT_SCAN_ROOT, importableItems, initialRows, matterCommitUrl, matterScanUrl, selectionSummary,
-  type MatterImportCommitResult, type MatterImportRow, type MatterImportRows, type MatterImportScanResult,
+  type MatterImportCommitResult, type MatterImportNoticeSummary, type MatterImportRow, type MatterImportRows, type MatterImportScanResult,
 } from './matterImportApi.js'
 
 export type MatterImportStep = 'pick' | 'review' | 'done'
@@ -52,17 +52,33 @@ export interface MatterImportController {
 
 export function useMatterImport(deps: {
   /** 落库成功后：容器刷新案卷列表（导入的案卷要立刻出现在列表里）。 */
-  onImported: (created: number) => void | Promise<void>
+  onImported: (summary: MatterImportNoticeSummary) => void | Promise<void>
+  /**
+   * 服务端配置的工作根（`bootstrap.workRoot`）。
+   * 用户还没改过输入框时，用它替换 `DEFAULT_SCAN_ROOT`，这样 `DSH_WORK_ROOT` 和界面是同一处。
+   */
+  defaultRoot?: string
 }): MatterImportController {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<MatterImportStep>('pick')
-  const [root, setRoot] = useState(DEFAULT_SCAN_ROOT)
+  const [rootTouched, setRootTouched] = useState(false)
+  const [root, setRootState] = useState(DEFAULT_SCAN_ROOT)
+  const setRoot = useCallback((value: string) => {
+    setRootTouched(true)
+    setRootState(value)
+  }, [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [scan, setScan] = useState<MatterImportScanResult | null>(null)
   const [rows, setRows] = useState<MatterImportRows>({})
   const [query, setQuery] = useState('')
   const [result, setResult] = useState<MatterImportCommitResult | null>(null)
+
+  useEffect(() => {
+    if (rootTouched) return
+    const next = deps.defaultRoot?.trim() ?? ''
+    if (next !== '') setRootState(next)
+  }, [deps.defaultRoot, rootTouched])
 
   const openImport = useCallback(() => {
     setOpen(true)
@@ -155,7 +171,7 @@ export function useMatterImport(deps: {
         })
         setResult(res)
         setStep('done')
-        await deps.onImported(res.created)
+        await deps.onImported({ created: res.created, updated: res.updated ?? 0, unchanged: res.unchanged ?? 0 })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {

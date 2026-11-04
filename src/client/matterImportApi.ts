@@ -14,11 +14,16 @@
  * 而「哪些能导入」这个判定也只有一处（`importableItems`）。
  */
 
+import { DEFAULT_WORK_ROOT } from '../shared/workRoot.js'
+
 /** 服务端前缀（与 `api/matterImportRoute.ts#MATTER_IMPORT_PREFIX` 同值）。 */
 export const MATTER_IMPORT_ROUTE = '/api/workbench/matter-import'
 
-/** 扫描根预填值：用户的实际工作目录。可改（界面里是普通输入框）。 */
-export const DEFAULT_SCAN_ROOT = '~/工作'
+/**
+ * 扫描根预填值，与 `shared/workRoot.ts` 的默认工作根是**同一个常量**。
+ * 服务端若通过 bootstrap 下发了 `DSH_WORK_ROOT`，界面改用那个值（见 `useMatterImport`）。
+ */
+export const DEFAULT_SCAN_ROOT = DEFAULT_WORK_ROOT
 
 export type MatterImportTier = 'high' | 'mid' | 'rest'
 
@@ -52,8 +57,29 @@ export interface MatterImportRow {
 export interface MatterImportCommitResult {
   ok: boolean
   created: number
+  /** 旧服务端没有这两个字段时按 0。 */
+  updated?: number
+  unchanged?: number
   failed: Array<{ index: number; caseNumber: string; title: string; reason: string }>
   matters: Array<{ id: string; caseNumber: string; title: string; workspacePath: string | null }>
+}
+
+export interface MatterImportNoticeSummary {
+  created: number
+  updated?: number
+  unchanged?: number
+}
+
+/** 导入回执的一句话（新建 / 更新目录 / 目录未变）。全是 0 时也要说出来，不许静默。 */
+export function formatMatterImportNotice(summary: MatterImportNoticeSummary): string {
+  const updated = summary.updated ?? 0
+  const unchanged = summary.unchanged ?? 0
+  const parts: string[] = []
+  if (summary.created > 0) parts.push(`新建 ${summary.created} 个`)
+  if (updated > 0) parts.push(`更新目录 ${updated} 个`)
+  if (unchanged > 0) parts.push(`目录未变 ${unchanged} 个`)
+  if (parts.length === 0) return '没有写入案卷索引'
+  return `案卷索引：${parts.join('，')}`
 }
 
 export type MatterImportRows = Record<string, MatterImportRow>

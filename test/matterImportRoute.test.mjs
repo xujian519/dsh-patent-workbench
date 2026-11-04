@@ -9,13 +9,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openWorkbenchDb } from '../lib/db/database.js'
 import { seedDictionaries } from '../lib/db/seed.js'
 import { getMatterByCaseNumber, listMatters } from '../lib/db/repo.js'
 import { makeMatterImportRoute } from '../lib/api/matterImportRoute.js'
+import { commitMatterImport } from '../lib/matter-import/commit.js'
+import { scanWorkspaceTree } from '../lib/matter-import/scan.js'
 
 const BASE = '/api/workbench/matter-import'
 
@@ -130,7 +132,6 @@ test('scan：`~` 展开成主目录（错误里能看到展开后的路径，证
 test('scan：路径问题一律 400 + 能读懂的中文原因（绝不静默返回空清单）', async () => {
   await withServer(async (base) => {
     const cases = [
-      [{}, /不能为空/],
       [{ root: '' }, /不能为空/],
       [{ root: '   ' }, /不能为空/],
       [{ root: 123 }, /不能为空/],
@@ -251,24 +252,54 @@ test('commit：同一批里自带重复案号 → 第二条进 failed，不是�
   })
 })
 
-test('commit：库内已有同案号 → 进 failed 并说明，不是静默跳过', async () => {
-  await withServer(async (base) => {
-    await post(base, '/commit', { items: [item()] })
-    const body = await (await post(base, '/commit', { items: [item(), item({ caseNumber: '202111246629' })] })).json()
-    assert.equal(body.created, 1)
-    assert.equal(body.failed.length, 1)
-    assert.equal(body.failed[0].caseNumber, '202010388021')
-    assert.match(body.failed[0].reason, /已存在/)
+test('commit：库内已有同案号且目录变了 → 只更新 workspace_path，不改名称、不另建', async () => {
+  await withServer(async (base, db) => {
+    await post(base, '/commit', { items: [item({ title: '手改过的名称', path: '/tmp/旧目录' })] })
+    const body = await (await post(base, '/commit', {
+      items: [
+        item({ title: '目录名里的新标题', path: '/tmp/新目录', relPath: '01_专利申请/新目录' }),
+        item({ caseNumber: '202111246629' }),
+      ],
+    })).json()
+    assert.equal(body.created, 1, '新案号仍然新建')
+    assert.equal(body.updated, 1)
+    assert.equal(body.unchanged, 0)
+    assert.deepEqual(body.failed, [])
+    const existing = getMatterByCaseNumber(db, '202010388021')
+    assert.equal(existing.workspacePath, '/tmp/新目录')
+    assert.equal(existing.title, '手改过的名称', '再扫一次不覆盖台账里改过的名称')
+    assert.equal(existing.extra.source.relPath, '01_专利申请/新目录')
   })
 })
 
-test('commit：整批导两次 → 第二次一条都建不出来（幂等来自案号唯一，不是靠静默去重）', async () => {
+test('commit：整批导两次且路径相同 → 第二次不新建、不报失败（目录未变）', async () => {
   await withServer(async (base) => {
     const items = [item(), item({ caseNumber: '202111246629' }), item({ caseNumber: '202210132346' })]
     assert.equal((await (await post(base, '/commit', { items })).json()).created, 3)
     const second = await (await post(base, '/commit', { items })).json()
     assert.equal(second.created, 0)
-    assert.equal(second.failed.length, 3, '三条全部如实报「已存在」')
+    assert.equal(second.updated, 0)
+    assert.equal(second.unchanged, 3, '同一路径再登记是索引确认，不是失败')
+    assert.deepEqual(second.failed, [])
+  })
+})
+
+test('commit：省略 root 的扫描使用 DSH_WORK_ROOT（与可配置工作根是同一处）', async () => {
+  await withTree({ '202010388021-一种装置': ['交底书.md'] }, async (root) => {
+    const previous = process.env.DSH_WORK_ROOT
+    process.env.DSH_WORK_ROOT = root
+    try {
+      await withServer(async (base) => {
+        const res = await post(base, '/scan', {})
+        assert.equal(res.status, 200)
+        const body = await res.json()
+        assert.equal(body.root, root)
+        assert.equal(body.candidates.some((candidate) => candidate.path === join(root, '202010388021-一种装置')), true)
+      })
+    } finally {
+      if (previous === undefined) delete process.env.DSH_WORK_ROOT
+      else process.env.DSH_WORK_ROOT = previous
+    }
   })
 })
 
@@ -287,6 +318,24 @@ test('commit：items 不是数组 / 空 / 超上限 → 400 中文原因', async
   })
 })
 
+test('commit：拒绝正文类字段，且 matters 表没有正文列', async () => {
+  await withServer(async (base, db) => {
+    const sentinel = 'MATTER_BODY_SENTINEL_不应进库'
+    const body = await (await post(base, '/commit', {
+      items: [item({ content: sentinel, contentMd: sentinel, body: sentinel })],
+    })).json()
+    assert.equal(body.created, 0)
+    assert.equal(body.updated, 0)
+    assert.match(body.failed[0].reason, /不接收案卷正文/)
+    assert.equal(getMatterByCaseNumber(db, '202010388021'), undefined)
+    const columns = db.prepare('PRAGMA table_info(matters)').all().map((column) => column.name)
+    for (const name of ['content', 'content_md', 'body', 'full_text', 'document_text']) {
+      assert.equal(columns.includes(name), false, `matters 不应有正文列 ${name}`)
+    }
+    assert.equal(columns.includes('workspace_path'), true)
+  })
+})
+
 test('commit：不写用户的盘（只写库）', async () => {
   await withTree({ '01_专利申请/某目录': ['交底书.md'] }, async (root) => {
     const before = readdirSync(root, { recursive: true }).sort()
@@ -295,4 +344,61 @@ test('commit：不写用户的盘（只写库）', async () => {
     })
     assert.deepEqual(readdirSync(root, { recursive: true }).sort(), before)
   })
+})
+
+test('扫描导入只写路径索引：正文哨兵不进库，删库后案卷文件夹仍在', async () => {
+  const sentinel = `MATTER_BODY_SENTINEL_不应进库_${'正文'.repeat(2000)}`
+  const root = mkdtempSync(join(tmpdir(), 'dsh-workbench-matter-truth-'))
+  const caseDir = join(root, '01_专利申请', '202010388021-一种装置')
+  mkdirSync(caseDir, { recursive: true })
+  const bodyPath = join(caseDir, '交底书.md')
+  const logPath = join(caseDir, '_matter-log.md')
+  writeFileSync(bodyPath, `# 交底\n${sentinel}\n`)
+  writeFileSync(logPath, `2026-11-04T00:00:00Z | 建案 | 交底书.md | 用户 | ${sentinel}\n`)
+  const ledgerDir = mkdtempSync(join(tmpdir(), 'dsh-workbench-ledger-'))
+  const dbPath = join(ledgerDir, 'workbench.db')
+  const db = openWorkbenchDb({ dbPath })
+  seedDictionaries(db)
+  try {
+    const scan = await scanWorkspaceTree(root)
+    assert.equal(JSON.stringify(scan).includes('MATTER_BODY_SENTINEL'), false, '扫描结果不得含文件正文')
+    const candidate = scan.candidates.find((entry) => entry.relPath === '01_专利申请/202010388021-一种装置')
+    assert.equal(candidate.path, caseDir)
+
+    const rejected = commitMatterImport(db, [{
+      caseNumber: '202010388021',
+      title: '一种装置',
+      matterType: 'drafting',
+      path: caseDir,
+      relPath: candidate.relPath,
+      content: sentinel,
+    }])
+    assert.equal(rejected.created, 0)
+    assert.match(rejected.failed[0].reason, /不接收案卷正文/)
+
+    const committed = commitMatterImport(db, [{
+      caseNumber: '202010388021',
+      title: '一种装置',
+      matterType: 'drafting',
+      path: caseDir,
+      relPath: candidate.relPath,
+    }])
+    assert.equal(committed.created, 1)
+    assert.equal(committed.matters[0].workspacePath, caseDir)
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM knowledge_entries').get().c, 0, '扫描导入不写知识库')
+
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()
+    for (const table of tables) {
+      const rows = db.prepare(`SELECT * FROM "${table.name}"`).all()
+      assert.equal(JSON.stringify(rows).includes('MATTER_BODY_SENTINEL'), false, `表 ${table.name} 含有案卷正文`)
+    }
+  } finally {
+    db.close()
+  }
+
+  rmSync(ledgerDir, { recursive: true, force: true })
+  assert.equal(readFileSync(bodyPath, 'utf8').includes(sentinel), true, '删掉台账后交底书还在')
+  assert.equal(readFileSync(logPath, 'utf8').includes(sentinel), true, '删掉台账后 _matter-log.md 还在')
+  assert.equal(existsSync(dbPath), false, '台账文件已经删掉')
+  rmSync(root, { recursive: true, force: true })
 })
