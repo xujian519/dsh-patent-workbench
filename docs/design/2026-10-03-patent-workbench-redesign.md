@@ -20,6 +20,8 @@
 | 6 bridge 收口 | ✅ | **投影器**：`_matter-log.md` → `matter_events`（`shared/matterLog.ts` 解析 + `projectMatterLogEvents` 幂等追加 + `POST /matters/:id/events/sync` + 工具 `workbench_sync_matter_events` + 案卷详情「同步事件日志」）。**迁移 23**（破坏性，自动备份）：bridge 遗留任务树整体**归档 + 追加标注 + 留 system 事件**，`patent_*` 类型字典保持 active。**DSH 侧 `workbench_link_patent_case` 不改**（用户决定「到此为止」） |
 
 已落地的额外事实（供阶段 3 核对）：`matter_notices.notice_kind` / `delivery_mode` 与 `matters.patent_kind` 的值域**逐字**取自 `@deepseek-ai/dsh-patent-deadline` 的 `NoticeKind` / `DeliveryMode` / `PatentKind`，起算时无需翻译层；`replaceMatterDeadlines` 重算时会保留用户已确认的期限状态（done / waived）。
+> **订正（2026-11-09，文档对齐草稿）**：上表阶段 2 的建模 SQL 仍含 `delivery_mode … DEFAULT 'electronic'`，那是设计当时的 DDL。 现行行为见迁移 26 与 [`docs/constitution-alignment.md`](../constitution-alignment.md) §一（EX-2026-001）：缺送达方式保持未登记，不再默认电子送达。 下文 SQL 块已加脚注，**勿再按 DEFAULT electronic 实现**。
+
 
 阶段 3 的取数口已按 B′ 的低成本变体落地（2026-10-03 决定，替代原先的“独立新包”）：**不新建包**，`patent-deadline` 自已被 profile 根域多注册一行（`{ provideService: true, exposeTool: false }`）即发布 `patentDeadline` 服务。理由：`adding-a-package` 门禁（tsconfig aggregate、README Model Experience/limitations、locale 对 + 翻译记录、逐文件 100% 覆盖率、工具目录重生成）的成本远超这条缝，而包装包自身没有任何逻辑。只有重复的 loader entry **id** 是致命错误，同名插件注册两行是常态。
 
@@ -184,7 +186,11 @@ CREATE TABLE matter_notices (              -- 官文登记 = patent-deadline 的
   matter_id         TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
   notice_kind       TEXT NOT NULL,         -- office-action-first / -subsequent / authorization / rejection / reexamination-notice / invalidation
   dispatch_date     TEXT NOT NULL,         -- 发文日
-  delivery_mode     TEXT NOT NULL DEFAULT 'electronic',
+  -- ⚠️ 历史 DDL（阶段 2 建模稿）。运行时以 `src/db/schema.ts` 为准：
+  -- 迁移 26 `delivery-mode-required`（提交 92a52b6 / EX-2026-001）已将
+  -- `delivery_mode` 改为**可空、无 DEFAULT**；NULL = 送达方式尚未登记，不是电子送达。
+  -- 存量行的 'electronic' 原样保留。登记表单不预选；仓储省略则中文报错不落库。
+  delivery_mode     TEXT NOT NULL DEFAULT 'electronic',  -- 历史稿；见上注
   delivery_date     TEXT,                  -- 实际送达日（可空）
   designated_months INTEGER,               -- 指定期限月数
   file_link         TEXT,                  -- 官文 PDF（复用现有 file_link 机制）

@@ -32,7 +32,13 @@
   不把正文写入数据库、不改动你的目录**；案号已在库里则只更新目录路径。分档只是排序，三档都能展开勾选（机器猜的绝不替你做决定）
 - 📄 **官文登记 → 期限**：登记官文（发文日 / 送达方式 / 指定期限）作为**起算输入**，
   期限由 DSH Patent 的 `patentDeadline` 引擎算出后落库（可复算、可申诉；引擎缺失时明确降级，不自行推算）
+- ⚖️ **送达方式缺省即不确定**：登记表单不预选；库列可空无 `DEFAULT 'electronic'`；列表对空值显示「送达方式未登记」；详见 [`docs/constitution-alignment.md`](docs/constitution-alignment.md)
 - ⏳ **期限看板**：今日视图看**跨案卷的近 7 天到期**（含已过期）；案卷详情里可重算、可标记完成/免除
+- 🚨 **今日紧迫条（方案 A）**：未滚动可见任务逾期 / 今日到期 / 期限紧迫；期限看板按已过期→今日届满→近 N 天分组，其余默认可折（PR #2）
+- 🔎 **案卷搜筛（方案 A）**：按案号/名称搜索 + 阶段过滤；详情字段/官文/期限/时间线四区可折（PR #4）
+- 🧭 **快录两段式 + 任务闭环条（方案 A）**：默认一句话采集，会话设置可展开；任务详情「澄清→执行→验收→复盘」条（PR #3）
+- 📆 **日历标记（方案 A）**：周/月格同时标截止与计划（●/○），计划加载中/失败可重试（PR #5）
+- 🏷️ **知识库筛选（方案 A）**：「有本地文件」「有关联任务」芯片 + 加载/失败反馈 + 详情关系条（PR #6）
 - 📅 **日历（周/月）+ 树状任务列表**；「今日」「日历」「任务」三视图，筛选排序可组合、保留父子层级
 - ✨ **自然语言快速录入** → AI 澄清后生成任务；支持贴图与 PDF/DOCX 附件，不收的文件逐条给原因
 - 🧠 **每个任务关联多个 AI 会话**：澄清 / 咨询 / 拆解 / 执行 / 复盘
@@ -162,6 +168,7 @@ pnpm build && pnpm dev:install   # 装盘到本机 profile（装完重启 dsh we
 
 | 版本 | 要点 |
 |---|---|
+| **1.18.0** | **方案 A UI（PR #2–#6）+ 送达默认偿还（`92a52b6`）+ ADR-001 工作根（PR #7）**：今日紧迫条与可折期限看板；案卷列表搜筛/阶段过滤与详情四区可折；快录两段式 + 任务闭环条；日历周/月截止●/计划○标记与计划加载反馈；知识库加载反馈 + 有本地文件/有关联任务筛选 + 关系条；官文 `delivery_mode` 可空无默认（缺则「未登记」、不默认电子送达，见 `docs/constitution-alignment.md`）；扫描默认根对齐可配置工作根（`DSH_WORK_ROOT` / `~/工作`）。详见 [`docs/releases/v1.18.0.md`](docs/releases/v1.18.0.md)。 |
 | **1.17.0** | **案卷目录扫描导入**：指向一个工作根目录 → 扫描出候选案卷（高 / 中 / 其余三档，带证据），勾选后批量落库（同批重复与库内重复都不重复建）；扫描**只读盘不落库**，深度上限 5、超限显式 `truncated`。夹带**深度审计批次 1–6**：安全与路径闸门唯一处、DB 安全网（一致快照备份 + 坏库拒开 + 事务）、客户端轮询门控、客户端模块真执行、变异探针安全化、**验收链在 macOS / Linux 上跑得通**。⚠️ schema 无变化（仍 23）。详见 [`docs/releases/v1.17.0.md`](docs/releases/v1.17.0.md) |
 | 1.16.4 | 知识草稿字段名有了**唯一口径**：`content_md` / `source_task_id` 这类工具参数名（snake_case）当作别名认下来 —— 修掉「建得出、确认不了」的死草稿（用户实测 `操作失败：knowledge requires content`，弹窗还看不到正文）；建草稿时缺 `title`/`contentMd` **当场 400**（中文原因 + 列出本次 payload 的键），不再静静躺在「待处理」里。详见 [`docs/releases/v1.16.4.md`](docs/releases/v1.16.4.md) |
 | **1.16.3** | 侧栏入口文案由「打开工作台（任务 / 日历 / 知识库）」统一为「**专利工作台**」（与面板内标题一致）；会话标题栏入口按钮的 `title` 收敛到 `ENTRY_TITLE` 单一来源。详见 [`docs/releases/v1.16.3.md`](docs/releases/v1.16.3.md) |
@@ -263,6 +270,12 @@ One coding repo serves many matters. See `docs/adr/0008-matter-folder-index.md`
 
 - 🗂️ **Matters as first-class entities**: case number / application no. / publication no. / filing date / priority claim / technical field — plus a **timeline** merging case events, office notices and deadlines
 - 📄 **Notice registration → deadlines**: register office notices (dispatch date / delivery mode / designated months) as the *starting point*; deadlines are computed by the DSH Patent `patentDeadline` engine and stored (recomputable, contestable; explicit degradation when the engine is absent — never guessed locally)
+- ⚖️ **Missing delivery mode means uncertain**: the notice form does not pre-select a mode; the column is nullable with no `DEFAULT 'electronic'`; empty values show as “delivery mode not registered” (EX-2026-001 / commit `92a52b6`; see `docs/constitution-alignment.md`)
+- 🚨 **Today urgency strip (scheme A)**: overdue tasks / due today / urgent deadlines visible without scrolling; deadline board groups overdue → due today → next N days, remainder collapsible (PR #2)
+- 🔎 **Matters search/filter (scheme A)**: search by case number/name + stage filter; detail sections collapsible (PR #4)
+- 🧭 **Progressive quick-entry + task flow strip (scheme A)**: one-line capture by default; clarify → execute → accept → review strip (PR #3)
+- 📆 **Calendar markers (scheme A)**: week/month cells mark due (●) and plan (○); plan load/error feedback (PR #5)
+- 🏷️ **Knowledge filters (scheme A)**: “has local file” / “has linked task” chips + load/error feedback + relation strip (PR #6)
 - ⏳ **Deadline board**: cross-matter "due within 7 days" (overdue included) on the Today view; recompute and mark done/waived per matter
 - 📅 Calendar (week/month) + tree task list; Today / Calendar / Tasks views with combinable filters that keep parent-child structure
 - ✨ Natural-language quick capture → AI clarification → task created; images and PDF/DOCX attachments supported
